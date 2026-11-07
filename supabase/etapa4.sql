@@ -636,7 +636,8 @@ returns trigger
 language plpgsql
 security definer
 set search_path = public
-as $
+as $$
+begin
 begin
   if old.status is not distinct from new.status then return new; end if;
 
@@ -677,7 +678,7 @@ begin
   end if;
   return new;
 end;
-$;
+$$;
 
 drop trigger if exists government_decisions_workflow on public.government_decisions;
 create trigger government_decisions_workflow before update of status on public.government_decisions
