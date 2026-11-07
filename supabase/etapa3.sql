@@ -543,7 +543,7 @@ returns trigger
 language plpgsql
 security definer
 set search_path = public
-as $
+as $$
 begin
   if exists (select 1 from public.platform_settings where id=true and not signup_open) then
     raise exception 'O cadastro está temporariamente fechado pelo Super Admin.';
