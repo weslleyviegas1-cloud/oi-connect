@@ -753,14 +753,15 @@ returns void
 language plpgsql
 security definer
 set search_path = public
-as $
+as $$
+begin
 begin
   update public.admin_notifications
     set is_read=true
     where id=p_notification_id and recipient_id=auth.uid();
   if not found then raise exception 'Notificação própria não encontrada.'; end if;
 end;
-$;
+$$;
 
 -- Revisão de decisões e propostas legislativas: somente o Super Admin aprova ou rejeita.
 create or replace function public.review_government_decision(
