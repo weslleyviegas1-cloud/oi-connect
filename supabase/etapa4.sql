@@ -630,6 +630,62 @@ begin
 end;
 $$;
 
+-- Protege as transições de status mesmo quando alguém chama a API diretamente.
+create or replace function public.enforce_government_workflow()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $
+begin
+  if old.status is not distinct from new.status then return new; end if;
+
+  if tg_table_name='government_decisions' then
+    if old.status='draft' and new.status='pending_approval' then
+      if not (public.is_world_admin() or public.is_country_president(new.country_id)
+        or public.has_government_permission(new.country_id,'decision.create',new.ministry_id,null)) then
+        raise exception 'Você não pode enviar esta decisão para aprovação.';
+      end if;
+    elsif old.status='pending_approval' and new.status in ('approved','rejected') then
+      if not public.is_world_admin() then raise exception 'Somente o Super Admin pode aprovar ou rejeitar decisões.'; end if;
+    elsif old.status='approved' and new.status='published' then
+      if not (public.is_world_admin() or public.is_country_president(new.country_id)) then
+        raise exception 'Somente o presidente ou o Super Admin pode publicar esta decisão.';
+      end if;
+    elsif new.status='cancelled' then
+      if not (public.is_world_admin() or public.is_country_president(new.country_id)) then
+        raise exception 'Somente o presidente ou o Super Admin pode cancelar esta decisão.';
+      end if;
+    else
+      raise exception 'Transição de status de decisão não permitida.';
+    end if;
+  elsif tg_table_name='national_legislation' then
+    if old.status='draft' and new.status='under_review' then
+      if not (public.is_world_admin() or public.is_country_president(new.country_id)
+        or public.has_government_permission(new.country_id,'legislation.create',new.ministry_id,null)) then
+        raise exception 'Você não pode enviar esta proposta para análise.';
+      end if;
+    elsif old.status='under_review' and new.status in ('approved','rejected') then
+      if not public.is_world_admin() then raise exception 'Somente o Super Admin pode aprovar ou rejeitar propostas legislativas.'; end if;
+    elsif old.status='approved' and new.status='revoked' then
+      if not (public.is_world_admin() or public.is_country_president(new.country_id)) then
+        raise exception 'Somente o presidente ou o Super Admin pode revogar esta norma.';
+      end if;
+    else
+      raise exception 'Transição de status legislativo não permitida.';
+    end if;
+  end if;
+  return new;
+end;
+$;
+
+drop trigger if exists government_decisions_workflow on public.government_decisions;
+create trigger government_decisions_workflow before update of status on public.government_decisions
+  for each row execute function public.enforce_government_workflow();
+drop trigger if exists national_legislation_workflow on public.national_legislation;
+create trigger national_legislation_workflow before update of status on public.national_legislation
+  for each row execute function public.enforce_government_workflow();
+
 -- Revisão de decisões e propostas legislativas: somente o Super Admin aprova ou rejeita.
 create or replace function public.review_government_decision(
   p_decision_id uuid,
@@ -973,6 +1029,7 @@ revoke all on function public.is_country_president(uuid) from public, anon;
 revoke all on function public.has_government_permission(uuid,text,uuid,uuid) from public, anon;
 revoke all on function public.is_government_country_citizen(uuid) from public, anon;
 revoke all on function public.validate_government_permission_scope() from public, anon;
+revoke all on function public.enforce_government_workflow() from public, anon;
 revoke all on function public.request_government_appointment(uuid,uuid,uuid,text) from public, anon;
 revoke all on function public.request_government_exoneration(uuid,text) from public, anon;
 revoke all on function public.review_government_appointment(uuid,text,text,text[]) from public, anon;
