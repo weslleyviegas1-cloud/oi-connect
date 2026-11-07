@@ -496,7 +496,7 @@ begin
 
     v_permissions := coalesce(p_permission_keys,
       case
-        when lower(v_app.position) like '%ministro%' then array['ministry.read','department.read','department.manage','announcement.create','decision.create','legislation.create','budget.read','budget.manage','infrastructure.read']
+        when lower(v_app.position) like '%ministro%' then array['ministry.read','department.read','department.manage','announcement.create','decision.create','legislation.create','budget.read','infrastructure.read']
         when lower(v_app.position) like '%vice%' then array['ministry.read','department.read','announcement.create','decision.create']
         else array['department.read']
       end
