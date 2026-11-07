@@ -449,6 +449,7 @@ declare
   v_application_id uuid;
 begin
   if v_uid is null then raise exception 'É necessário entrar na conta.'; end if;
+  if exists (select 1 from public.platform_settings where id=true and not signup_open) then raise exception 'O cadastro está temporariamente fechado pelo Super Admin.'; end if;
   if p_type is null or p_type not in ('citizen','president') then raise exception 'Tipo de jogador inválido.'; end if;
   select * into v_profile from public.profiles where id=v_uid for update;
   if not found then raise exception 'Perfil do jogador não encontrado.'; end if;
@@ -476,6 +477,52 @@ begin
 end;
 $$;
 
+-- Cadastro com nickname Minecraft, sem criar uma segunda tabela de usuários.
+create or replace function public.register_player_v3(
+  p_type text,
+  p_country_id uuid,
+  p_minecraft_username text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $
+declare v_result jsonb; v_uid uuid := auth.uid();
+begin
+  if v_uid is null then raise exception 'É necessário entrar na conta.'; end if;
+  if length(trim(coalesce(p_minecraft_username,''))) < 3 or length(trim(p_minecraft_username)) > 32 then
+    raise exception 'Informe um nickname Minecraft entre 3 e 32 caracteres.';
+  end if;
+  v_result := public.register_player(p_type,p_country_id);
+  update public.profiles
+  set minecraft_username=trim(p_minecraft_username)
+  where id=v_uid and role <> 'super_admin';
+  return v_result;
+end;
+$;
+
+-- Aviso administrativo para novas contas criadas no Supabase Auth.
+create or replace function public.notify_admin_new_auth_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $
+begin
+  insert into public.admin_notifications(recipient_id,event_type,title,description,object_type,object_id)
+  values(null,'user.created','Novo cadastro de jogador',
+    'Uma nova conta foi criada: '||coalesce(new.email,'e-mail não informado')||'.',
+    'user',new.id);
+  return new;
+end;
+$;
+
+drop trigger if exists admin_notify_new_auth_user on auth.users;
+create trigger admin_notify_new_auth_user
+after insert on auth.users
+for each row execute function public.notify_admin_new_auth_user();
+
 -- Função de revisão já existente; trigger acima gera aviso ao jogador e registro de auditoria.
 revoke all on function public.admin_dashboard_stats() from public, anon;
 revoke all on function public.admin_list_players(text) from public, anon;
@@ -485,6 +532,7 @@ revoke all on function public.admin_save_platform_settings(text,text,text,boolea
 revoke all on function public.admin_set_player_status(uuid,text,text) from public, anon;
 revoke all on function public.admin_mark_notification_read(uuid) from public, anon;
 revoke all on function public.register_player(text,uuid) from public, anon;
+revoke all on function public.register_player_v3(text,uuid,text) from public, anon;
 
 grant execute on function public.admin_dashboard_stats() to authenticated;
 grant execute on function public.admin_list_players(text) to authenticated;
@@ -494,3 +542,4 @@ grant execute on function public.admin_save_platform_settings(text,text,text,boo
 grant execute on function public.admin_set_player_status(uuid,text,text) to authenticated;
 grant execute on function public.admin_mark_notification_read(uuid) to authenticated;
 grant execute on function public.register_player(text,uuid) to authenticated;
+grant execute on function public.register_player_v3(text,uuid,text) to authenticated;
