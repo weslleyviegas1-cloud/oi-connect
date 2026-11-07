@@ -397,6 +397,35 @@ begin
 end;
 $$;
 
+create or replace function public.admin_remove_president(
+  p_player_id uuid,
+  p_note text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $
+declare v_player public.profiles%rowtype; v_old jsonb;
+begin
+  if not public.is_world_admin() then raise exception 'Apenas o Super Admin pode remover presidentes.'; end if;
+  select * into v_player from public.profiles where id=p_player_id and role='president' for update;
+  if not found then raise exception 'Presidente não encontrado.'; end if;
+  v_old:=to_jsonb(v_player);
+  update public.profiles set role='citizen',registration_status='active' where id=p_player_id;
+  update public.countries set president_available=true,updated_at=now()
+    where id=v_player.country_id and is_active=true;
+  insert into public.admin_audit_logs(actor_id,operation,object_type,object_id,description,old_values,new_values)
+  values(auth.uid(),'president.removed','player',p_player_id::text,
+    'Presidência removida de '||v_player.username||coalesce(': '||nullif(trim(p_note),''),''),
+    v_old,(select to_jsonb(p) from public.profiles p where p.id=p_player_id));
+  insert into public.admin_notifications(recipient_id,event_type,title,description,object_type,object_id)
+  values(p_player_id,'presidency.removed','Presidência encerrada',
+    'Sua função de presidente foi removida pelo Super Admin.'||coalesce(' Motivo: '||nullif(trim(p_note),''),''),
+    'player',p_player_id);
+end;
+$;
+
 -- Auditoria e notificações automáticas para novos pedidos e revisões presidenciais.
 create or replace function public.handle_president_application_events()
 returns trigger
@@ -531,6 +560,7 @@ revoke all on function public.admin_save_world_spawn(text,text,numeric,numeric,n
 revoke all on function public.admin_save_platform_settings(text,text,text,boolean,boolean,text,timestamptz,boolean) from public, anon;
 revoke all on function public.admin_set_player_status(uuid,text,text) from public, anon;
 revoke all on function public.admin_mark_notification_read(uuid) from public, anon;
+revoke all on function public.admin_remove_president(uuid,text) from public, anon;
 revoke all on function public.register_player(text,uuid) from public, anon;
 revoke all on function public.register_player_v3(text,uuid,text) from public, anon;
 
@@ -541,5 +571,6 @@ grant execute on function public.admin_save_world_spawn(text,text,numeric,numeri
 grant execute on function public.admin_save_platform_settings(text,text,text,boolean,boolean,text,timestamptz,boolean) to authenticated;
 grant execute on function public.admin_set_player_status(uuid,text,text) to authenticated;
 grant execute on function public.admin_mark_notification_read(uuid) to authenticated;
+grant execute on function public.admin_remove_president(uuid,text) to authenticated;
 grant execute on function public.register_player(text,uuid) to authenticated;
 grant execute on function public.register_player_v3(text,uuid,text) to authenticated;
