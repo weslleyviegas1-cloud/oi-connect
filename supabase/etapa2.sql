@@ -55,14 +55,6 @@ create unique index if not exists president_applications_one_pending_per_country
 alter table public.countries enable row level security;
 alter table public.president_applications enable row level security;
 
--- A conta pode ler países ativos; administradores podem ler todos.
-drop policy if exists "Países ativos visíveis" on public.countries;
-create policy "Países ativos visíveis" on public.countries
-  for select to anon, authenticated using (is_active or public.is_world_admin());
-drop policy if exists "Admin gerencia países" on public.countries;
-create policy "Admin gerencia países" on public.countries
-  for all to authenticated using (public.is_world_admin()) with check (public.is_world_admin());
-
 -- Perfis públicos para exibir identidade, mas campos de privilégio não podem ser alterados pelo cliente.
 revoke update on public.profiles from authenticated;
 grant update (username, avatar_url) on public.profiles to authenticated;
