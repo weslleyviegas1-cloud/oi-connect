@@ -464,7 +464,7 @@ begin
       case
         when lower(v_app.position) like '%ministro%' then array['ministry.read','department.read','department.manage','announcement.create','decision.create','legislation.create','budget.read','infrastructure.read']
         when lower(v_app.position) like '%vice%' then array['ministry.read','department.read','announcement.create','decision.create']
-        else array['department.read','announcement.create']
+        else array['department.read']
       end
     );
     foreach v_key in array v_permissions loop
@@ -589,6 +589,96 @@ begin
   if tg_op='DELETE' then return old; else return new; end if;
 end;
 $$;
+
+-- Revisão de decisões e propostas legislativas: somente o Super Admin aprova ou rejeita.
+create or replace function public.review_government_decision(
+  p_decision_id uuid,
+  p_decision text,
+  p_note text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $
+begin
+  if not public.is_world_admin() then raise exception 'Apenas o Super Admin pode revisar decisões governamentais.'; end if;
+  if p_decision not in ('approved','rejected') then raise exception 'Decisão de revisão inválida.'; end if;
+  update public.government_decisions
+    set status=p_decision, reviewed_by=auth.uid(), review_note=nullif(trim(p_note),''),
+        updated_at=now()
+    where id=p_decision_id and status='pending_approval';
+  if not found then raise exception 'Decisão pendente não encontrada.'; end if;
+end;
+$;
+
+create or replace function public.review_national_legislation(
+  p_legislation_id uuid,
+  p_decision text,
+  p_note text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $
+begin
+  if not public.is_world_admin() then raise exception 'Apenas o Super Admin pode revisar propostas legislativas.'; end if;
+  if p_decision not in ('approved','rejected') then raise exception 'Decisão de revisão inválida.'; end if;
+  update public.national_legislation
+    set status=p_decision, reviewed_by=auth.uid(), review_note=nullif(trim(p_note),''),
+        updated_at=now()
+    where id=p_legislation_id and status='under_review';
+  if not found then raise exception 'Proposta legislativa em análise não encontrada.'; end if;
+end;
+$;
+
+-- Notificações reais quando um comunicado, decisão ou lei muda para estado público.
+create or replace function public.notify_government_publication()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $
+declare
+  v_event text;
+  v_title text;
+  v_description text;
+  v_object_type text;
+begin
+  if tg_table_name='government_announcements' and new.status='published'
+     and (tg_op='INSERT' or old.status is distinct from new.status) then
+    v_event:='government.announcement.published';
+    v_title:='Novo comunicado oficial';
+    v_description:=new.title;
+    v_object_type:='government_announcement';
+  elsif tg_table_name='government_decisions' and new.status='published'
+     and (tg_op='INSERT' or old.status is distinct from new.status) then
+    v_event:='government.decision.published';
+    v_title:='Nova decisão governamental publicada';
+    v_description:=new.title;
+    v_object_type:='government_decision';
+  elsif tg_table_name='national_legislation' and new.status='approved'
+     and (tg_op='INSERT' or old.status is distinct from new.status) then
+    v_event:='government.legislation.approved';
+    v_title:='Proposta legislativa aprovada';
+    v_description:=new.title;
+    v_object_type:='national_legislation';
+  else
+    return new;
+  end if;
+
+  insert into public.admin_notifications(recipient_id,event_type,title,description,object_type,object_id)
+  select p.id,v_event,v_title,v_description,v_object_type,new.id
+  from public.profiles p
+  where p.country_id=new.country_id
+    and p.id is distinct from auth.uid()
+    and p.registration_status='active'
+    and coalesce(p.account_status,'active')='active';
+
+  return new;
+end;
+$;
 
 -- RLS: leitura pública somente do conteúdo publicado do país; alterações sempre por autoridade do país/permissão.
 alter table public.ministries enable row level security;
@@ -791,6 +881,16 @@ drop trigger if exists government_budget_allocations_audit on public.government_
 create trigger government_budget_allocations_audit after insert or update or delete on public.government_budget_allocations
   for each row execute function public.log_government_change();
 
+drop trigger if exists government_announcements_notify on public.government_announcements;
+create trigger government_announcements_notify after insert or update of status on public.government_announcements
+  for each row execute function public.notify_government_publication();
+drop trigger if exists government_decisions_notify on public.government_decisions;
+create trigger government_decisions_notify after insert or update of status on public.government_decisions
+  for each row execute function public.notify_government_publication();
+drop trigger if exists national_legislation_notify on public.national_legislation;
+create trigger national_legislation_notify after insert or update of status on public.national_legislation
+  for each row execute function public.notify_government_publication();
+
 grant execute on function public.is_country_president(uuid) to authenticated;
 grant execute on function public.has_government_permission(uuid,text,uuid,uuid) to authenticated;
 grant execute on function public.is_government_country_citizen(uuid) to authenticated;
@@ -798,5 +898,7 @@ grant execute on function public.request_government_appointment(uuid,uuid,uuid,t
 grant execute on function public.request_government_exoneration(uuid,text) to authenticated;
 grant execute on function public.review_government_appointment(uuid,text,text,text[]) to authenticated;
 grant execute on function public.get_government_dashboard(uuid) to authenticated;
+grant execute on function public.review_government_decision(uuid,text,text) to authenticated;
+grant execute on function public.review_national_legislation(uuid,text,text) to authenticated;
 
 -- O dashboard não recebe país arbitrário de cidadão ou presidente: o RPC valida o vínculo no backend.
