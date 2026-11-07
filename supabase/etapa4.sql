@@ -107,6 +107,7 @@ create unique index if not exists government_member_permissions_scoped_uidx
 create table if not exists public.government_decisions (
   id uuid primary key default gen_random_uuid(),
   country_id uuid not null references public.countries(id),
+  ministry_id uuid,
   title text not null,
   description text not null,
   category text not null default 'administrative',
@@ -123,6 +124,7 @@ create table if not exists public.government_decisions (
 create table if not exists public.national_legislation (
   id uuid primary key default gen_random_uuid(),
   country_id uuid not null references public.countries(id),
+  ministry_id uuid,
   reference_number text,
   title text not null,
   description text not null,
@@ -139,6 +141,7 @@ create table if not exists public.national_legislation (
 create table if not exists public.government_announcements (
   id uuid primary key default gen_random_uuid(),
   country_id uuid not null references public.countries(id),
+  ministry_id uuid,
   title text not null,
   content text not null,
   category text not null default 'official',
@@ -152,6 +155,7 @@ create table if not exists public.government_announcements (
 create table if not exists public.national_infrastructure (
   id uuid primary key default gen_random_uuid(),
   country_id uuid not null references public.countries(id),
+  ministry_id uuid,
   name text not null,
   category text not null,
   description text,
@@ -171,6 +175,7 @@ create table if not exists public.national_infrastructure (
 create table if not exists public.government_budgets (
   id uuid primary key default gen_random_uuid(),
   country_id uuid not null references public.countries(id),
+  ministry_id uuid,
   title text not null,
   fiscal_period text,
   budget_type text not null default 'planned'
@@ -212,6 +217,11 @@ create table if not exists public.government_audit_logs (
 -- Campos aditivos para instalações já criadas durante a preparação da etapa.
 alter table public.government_departments
   add column if not exists responsible_member_id uuid;
+alter table public.government_decisions add column if not exists ministry_id uuid;
+alter table public.national_legislation add column if not exists ministry_id uuid;
+alter table public.government_announcements add column if not exists ministry_id uuid;
+alter table public.national_infrastructure add column if not exists ministry_id uuid;
+alter table public.government_budgets add column if not exists ministry_id uuid;
 alter table public.government_departments
   add column if not exists purpose text;
 alter table public.government_departments
@@ -227,6 +237,30 @@ begin
       references public.government_members(id, country_id);
   end if;
 end $$;
+
+do $
+begin
+  if not exists (select 1 from pg_constraint where conname='government_decisions_ministry_country_fk' and conrelid='public.government_decisions'::regclass) then
+    alter table public.government_decisions add constraint government_decisions_ministry_country_fk
+      foreign key (ministry_id,country_id) references public.ministries(id,country_id);
+  end if;
+  if not exists (select 1 from pg_constraint where conname='national_legislation_ministry_country_fk' and conrelid='public.national_legislation'::regclass) then
+    alter table public.national_legislation add constraint national_legislation_ministry_country_fk
+      foreign key (ministry_id,country_id) references public.ministries(id,country_id);
+  end if;
+  if not exists (select 1 from pg_constraint where conname='government_announcements_ministry_country_fk' and conrelid='public.government_announcements'::regclass) then
+    alter table public.government_announcements add constraint government_announcements_ministry_country_fk
+      foreign key (ministry_id,country_id) references public.ministries(id,country_id);
+  end if;
+  if not exists (select 1 from pg_constraint where conname='national_infrastructure_ministry_country_fk' and conrelid='public.national_infrastructure'::regclass) then
+    alter table public.national_infrastructure add constraint national_infrastructure_ministry_country_fk
+      foreign key (ministry_id,country_id) references public.ministries(id,country_id);
+  end if;
+  if not exists (select 1 from pg_constraint where conname='government_budgets_ministry_country_fk' and conrelid='public.government_budgets'::regclass) then
+    alter table public.government_budgets add constraint government_budgets_ministry_country_fk
+      foreign key (ministry_id,country_id) references public.ministries(id,country_id);
+  end if;
+end $;
 
 -- Índices de consulta e integridade.
 create index if not exists ministries_country_status_idx on public.ministries(country_id,status);
@@ -651,7 +685,7 @@ create policy member_permissions_admin_write on public.government_member_permiss
 create policy decisions_read_public on public.government_decisions for select to authenticated
   using ((status='published' and public.is_government_country_citizen(country_id))
     or public.is_world_admin() or public.is_country_president(country_id)
-    or public.has_government_permission(country_id,'decision.create',null,null));
+    or public.has_government_permission(country_id,'decision.create',ministry_id,null));
 create policy decisions_insert_authorized on public.government_decisions for insert to authenticated
   with check ((public.is_country_president(country_id) or public.has_government_permission(country_id,'decision.create',null,null))
     and author_id=auth.uid());
@@ -664,7 +698,7 @@ create policy decisions_update_authorized on public.government_decisions for upd
 create policy legislation_read_public on public.national_legislation for select to authenticated
   using ((status in ('approved','revoked') and public.is_government_country_citizen(country_id))
     or public.is_world_admin() or public.is_country_president(country_id)
-    or public.has_government_permission(country_id,'legislation.create',null,null));
+    or public.has_government_permission(country_id,'legislation.create',ministry_id,null));
 create policy legislation_insert_authorized on public.national_legislation for insert to authenticated
   with check ((public.is_country_president(country_id) or public.has_government_permission(country_id,'legislation.create',null,null))
     and author_id=auth.uid());
@@ -677,7 +711,7 @@ create policy legislation_update_authorized on public.national_legislation for u
 create policy announcements_read_public on public.government_announcements for select to authenticated
   using ((status='published' and public.is_government_country_citizen(country_id))
     or public.is_world_admin() or public.is_country_president(country_id)
-    or public.has_government_permission(country_id,'announcement.create',null,null));
+    or public.has_government_permission(country_id,'announcement.create',ministry_id,null));
 create policy announcements_insert_authorized on public.government_announcements for insert to authenticated
   with check ((public.is_country_president(country_id) or public.has_government_permission(country_id,'announcement.create',null,null))
     and author_id=auth.uid());
@@ -690,9 +724,9 @@ create policy announcements_update_authorized on public.government_announcements
 create policy infrastructure_read_public on public.national_infrastructure for select to authenticated
   using ((status='active' and public.is_government_country_citizen(country_id))
     or public.is_world_admin() or public.is_country_president(country_id)
-    or public.has_government_permission(country_id,'infrastructure.read',null,null));
+    or public.has_government_permission(country_id,'infrastructure.read',ministry_id,null));
 create policy infrastructure_insert_authorized on public.national_infrastructure for insert to authenticated
-  with check ((public.is_country_president(country_id) or public.has_government_permission(country_id,'infrastructure.manage',null,null))
+  with check ((public.is_country_president(country_id) or public.has_government_permission(country_id,'infrastructure.manage',ministry_id,null))
     and created_by=auth.uid());
 create policy infrastructure_update_authorized on public.national_infrastructure for update to authenticated
   using (public.is_world_admin() or public.is_country_president(country_id)
@@ -702,7 +736,7 @@ create policy infrastructure_update_authorized on public.national_infrastructure
 
 create policy budgets_read_authorized on public.government_budgets for select to authenticated
   using (public.is_world_admin() or public.is_country_president(country_id)
-    or public.has_government_permission(country_id,'budget.read',null,null));
+    or public.has_government_permission(country_id,'budget.read',ministry_id,null));
 create policy budgets_insert_authorized on public.government_budgets for insert to authenticated
   with check ((public.is_country_president(country_id) or public.has_government_permission(country_id,'budget.read',null,null))
     and created_by=auth.uid());
