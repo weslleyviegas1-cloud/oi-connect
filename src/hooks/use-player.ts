@@ -12,7 +12,7 @@ export function usePlayer() {
   const loadProfile = useCallback(async (u: User | null) => {
     if (!u) { setProfile(null); return; }
     const { data } = await supabase.from("profiles").select("id, username, avatar_url").eq("id", u.id).maybeSingle();
-    setProfile((data as Profile | null) ?? { id: u.id, username: (u.user_metadata?.username as string) ?? "Jogador", avatar_url: null });
+    setProfile((data as Profile | null) ?? { id: u.id, username: (u.user_metadata?.["username"] as string) ?? "Jogador", avatar_url: null });
   }, []);
 
   useEffect(() => {
