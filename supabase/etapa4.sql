@@ -299,7 +299,7 @@ as $$
       and p.registration_status = 'active'
       and exists (select 1 from public.countries c where c.id=p_country_id and c.is_active)
   );
-$;
+$$;
 
 create or replace function public.has_government_permission(
   p_country_id uuid,
@@ -350,7 +350,8 @@ returns trigger
 language plpgsql
 security definer
 set search_path = public
-as $
+as $$
+
 begin
   if new.scope_type='ministry' and not exists (
     select 1 from public.ministries m where m.id=new.scope_id and m.country_id=new.country_id
@@ -363,7 +364,7 @@ begin
   end if;
   return new;
 end;
-$;
+$$;
 
 drop trigger if exists government_permission_scope_check on public.government_member_permissions;
 create trigger government_permission_scope_check
@@ -629,7 +630,8 @@ returns void
 language plpgsql
 security definer
 set search_path = public
-as $
+as $$
+
 begin
   if not public.is_world_admin() then raise exception 'Apenas o Super Admin pode revisar decisões governamentais.'; end if;
   if p_decision not in ('approved','rejected') then raise exception 'Decisão de revisão inválida.'; end if;
@@ -639,7 +641,7 @@ begin
     where id=p_decision_id and status='pending_approval';
   if not found then raise exception 'Decisão pendente não encontrada.'; end if;
 end;
-$;
+$$;
 
 create or replace function public.review_national_legislation(
   p_legislation_id uuid,
@@ -650,7 +652,8 @@ returns void
 language plpgsql
 security definer
 set search_path = public
-as $
+as $$
+
 begin
   if not public.is_world_admin() then raise exception 'Apenas o Super Admin pode revisar propostas legislativas.'; end if;
   if p_decision not in ('approved','rejected') then raise exception 'Decisão de revisão inválida.'; end if;
@@ -660,7 +663,7 @@ begin
     where id=p_legislation_id and status='under_review';
   if not found then raise exception 'Proposta legislativa em análise não encontrada.'; end if;
 end;
-$;
+$$;
 
 -- Notificações reais quando um comunicado, decisão ou lei muda para estado público.
 create or replace function public.notify_government_publication()
@@ -668,7 +671,8 @@ returns trigger
 language plpgsql
 security definer
 set search_path = public
-as $
+as $$
+
 declare
   v_event text;
   v_title text;
@@ -707,7 +711,7 @@ begin
 
   return new;
 end;
-$;
+$$;
 
 -- RLS: leitura pública somente do conteúdo publicado do país; alterações sempre por autoridade do país/permissão.
 alter table public.ministries enable row level security;
