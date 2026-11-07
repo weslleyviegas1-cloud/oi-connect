@@ -13,6 +13,8 @@ type GovernmentProfile = {
   player_number?: number | null;
   minecraft_username?: string | null;
 };
+// Supabase returns table-specific row shapes at runtime; this shared view model is intentionally dynamic.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Row = Record<string, any>;
 type Tab = "overview" | "ministries" | "departments" | "appointments" | "decisions" | "legislation" | "announcements" | "infrastructure" | "budget" | "notifications" | "audit";
 
@@ -202,7 +204,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
     } finally {
       setLoading(false);
     }
-  }, [countryId, isAdmin, notify, profile.id, selectedCountryId]);
+  }, [countryId, isAdmin, isPresident, notify, profile.id, selectedCountryId]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -234,7 +236,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
     members: members.filter(row => row.status === "active").length,
   }), [ministries, departments, members]);
 
-  const run = async (operation: () => PromiseLike<{ error: any }>, success: string) => {
+  const run = async (operation: () => PromiseLike<{ error: unknown }>, success: string) => {
     setBusy(true);
     try {
       const result = await operation();
