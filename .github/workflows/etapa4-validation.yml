@@ -1,6 +1,15 @@
 name: Validate WORLD ECONOMY Etapa 4
 
 on:
+  push:
+    branches: [feature/etapa-4-governos]
+    paths:
+      - "src/components/government-portal.tsx"
+      - "src/routes/index.tsx"
+      - "supabase/etapa4.sql"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/etapa4-validation.yml"
   pull_request:
     branches: [main]
     paths:
@@ -26,6 +35,6 @@ jobs:
       - name: Normalize Etapa 4 formatting for lint
         run: bunx prettier --write src/components/government-portal.tsx src/routes/index.tsx
       - name: Lint Etapa 4 frontend
-        run: bunx eslint src/components/government-portal.tsx src/routes/index.tsx --rule '@typescript-eslint/no-explicit-any: off'
+        run: bunx eslint src/components/government-portal.tsx src/routes/index.tsx
       - name: Build
         run: bun run build
