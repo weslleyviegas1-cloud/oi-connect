@@ -325,6 +325,9 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
       status: "published", published_at: new Date().toISOString(),
     }).eq("id", row.id), "Comunicado publicado.");
   };
+  const archiveAnnouncement = async (row: Row) => {
+    await run(() => supabase.from("government_announcements").update({ status: "archived", updated_at: new Date().toISOString() }).eq("id", row.id), "Comunicado arquivado.");
+  };
   const changeMinistryStatus = async (row: Row) => {
     await run(() => supabase.from("ministries").update({
       status: row.status === "active" ? "inactive" : "active", updated_at: new Date().toISOString(),
@@ -396,7 +399,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
           <button className="we-primary" disabled={busy || !selectedCandidate}><Plus/> Solicitar nomeação</button>
         </form>
       </div>}
-      {appointments.map(row => <article className="we-admin-row" key={row.id}><div><b>{row.action_type === "exoneration" ? "Exoneração" : row.position}</b><small>{row.action_type === "appointment" ? `Indicado: ${row.candidate_profile_id}` : `Integrante: ${row.member_id}`} • {getName(row.ministry_id)} • {dateLabel(row.requested_at)}</small></div>{isAdmin && <><button type="button" disabled={busy} onClick={() => reviewAppointment(row,"approved")}><Check/> Aprovar</button><button type="button" disabled={busy} onClick={() => reviewAppointment(row,"rejected")}><X/> Rejeitar</button></>}</article>)}
+      {appointments.map(row => <article className="we-admin-row" key={row.id}><div><b>{row.action_type === "exoneration" ? "Exoneração" : row.position}</b><small>{row.action_type === "appointment" ? `Indicado: ${row.candidate?.username ?? row.candidate_profile_id} • #${row.candidate?.player_number ?? "—"}` : `Integrante: ${row.memberProfile?.username ?? row.member_id} • ${row.member?.position ?? ""}`} • {getName(row.ministry_id)} • {dateLabel(row.requested_at)}</small></div>{isAdmin && <><button type="button" disabled={busy} onClick={() => reviewAppointment(row,"approved")}><Check/> Aprovar</button><button type="button" disabled={busy} onClick={() => reviewAppointment(row,"rejected")}><X/> Rejeitar</button></>}</article>)}
       {!appointments.length && <div className="we-empty">Nenhuma solicitação pendente.</div>}
       {members.filter(row => row.status === "active").map(row => <article className="we-admin-row" key={row.id}><div><b>{row.position}</b><small>{getName(row.ministry_id)} • {getDepartmentName(row.department_id)} • Integrante ativo</small></div>{isPresident && <button type="button" disabled={busy} onClick={() => requestExoneration(row)}>Solicitar exoneração</button>}</article>)}
     </>}
@@ -433,7 +436,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
         <label>Situação<select value={announcementForm.status} onChange={e => setAnnouncementForm(s => ({ ...s, status: e.target.value }))}><option value="draft">Rascunho</option><option value="published">Publicar agora</option></select></label>
         <button className="we-primary" disabled={busy}><Plus/> Salvar comunicado</button>
       </form>}
-      {announcements.map(row => <article className="we-admin-row" key={row.id}><div><b>{row.title}</b><small>{row.category} • {row.status} • {dateLabel(row.published_at ?? row.created_at)}</small><small>{row.content}</small></div>{canManage && row.status === "draft" && <button type="button" disabled={busy} onClick={() => void publishAnnouncement(row)}>Publicar</button>}</article>)}
+      {announcements.map(row => <article className="we-admin-row" key={row.id}><div><b>{row.title}</b><small>{row.category} • {row.status} • {dateLabel(row.published_at ?? row.created_at)}</small><small>{row.content}</small></div>{canManage && row.status === "draft" && <button type="button" disabled={busy} onClick={() => void publishAnnouncement(row)}>Publicar</button>}{canManage && row.status === "published" && <button type="button" disabled={busy} onClick={() => void archiveAnnouncement(row)}>Arquivar</button>}</article>)}
       {!announcements.length && <div className="we-empty">Nenhum comunicado cadastrado.</div>}
     </>}
 
