@@ -51,19 +51,21 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
   const [announcements, setAnnouncements] = useState<Row[]>([]);
   const [infrastructure, setInfrastructure] = useState<Row[]>([]);
   const [budgets, setBudgets] = useState<Row[]>([]);
+  const [allocations, setAllocations] = useState<Row[]>([]);
   const [candidateSearch, setCandidateSearch] = useState("");
   const [candidates, setCandidates] = useState<Row[]>([]);
   const [selectedCandidate, setSelectedCandidate] = useState("");
   const [ministryForm, setMinistryForm] = useState({ name: "", description: "", purpose: "", category: "Administrativa" });
   const [editingMinistryId, setEditingMinistryId] = useState<string | null>(null);
-  const [departmentForm, setDepartmentForm] = useState({ ministry_id: "", name: "", description: "" });
+  const [departmentForm, setDepartmentForm] = useState({ ministry_id: "", name: "", description: "", responsible_member_id: "" });
   const [editingDepartmentId, setEditingDepartmentId] = useState<string | null>(null);
   const [appointmentForm, setAppointmentForm] = useState({ ministry_id: "", department_id: "", position: "Ministro" });
   const [announcementForm, setAnnouncementForm] = useState({ title: "", content: "", category: "Comunicado oficial", status: "draft", ministry_id: "" });
   const [decisionForm, setDecisionForm] = useState({ title: "", description: "", category: "administrative", ministry_id: "" });
   const [legislationForm, setLegislationForm] = useState({ title: "", description: "", category: "administrative", reference_number: "", ministry_id: "" });
-  const [infrastructureForm, setInfrastructureForm] = useState({ name: "", category: "Cidade", description: "", location_name: "", coord_x: "", coord_y: "", coord_z: "", ministry_id: "" });
+  const [infrastructureForm, setInfrastructureForm] = useState({ name: "", category: "Cidade", description: "", location_name: "", coord_x: "", coord_y: "", coord_z: "", ministry_id: "", responsible_member_id: "" });
   const [budgetForm, setBudgetForm] = useState({ title: "", fiscal_period: "", budget_type: "planned", planned_amount: "0", description: "", ministry_id: "" });
+  const [allocationForm, setAllocationForm] = useState({ budget_id: "", ministry_id: "", planned_amount: "0", description: "" });
 
   const isAdmin = profile.role === "super_admin";
   const isPresident = profile.role === "president";
@@ -75,7 +77,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
     setLoading(true);
     try {
       if (countryId) {
-        const [countryRes, presidentRes, dashboardRes, ministryRes, departmentRes, memberRes, decisionRes, lawRes, announcementRes, infraRes, budgetRes] = await Promise.all([
+        const [countryRes, presidentRes, dashboardRes, ministryRes, departmentRes, memberRes, decisionRes, lawRes, announcementRes, infraRes, budgetRes, allocationRes] = await Promise.all([
           supabase.from("countries").select("id,name,flag,capital,continent,currency_name,currency_code").eq("id", countryId).maybeSingle(),
           supabase.from("profiles").select("id,username,player_number").eq("country_id", countryId).eq("role", "president").maybeSingle(),
           supabase.rpc("get_government_dashboard", { p_country_id: countryId }),
@@ -87,6 +89,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
           supabase.from("government_announcements").select("*").eq("country_id", countryId).order("created_at", { ascending: false }).limit(50),
           supabase.from("national_infrastructure").select("*").eq("country_id", countryId).order("created_at", { ascending: false }).limit(100),
           supabase.from("government_budgets").select("*").eq("country_id", countryId).order("created_at", { ascending: false }).limit(50),
+          supabase.from("government_budget_allocations").select("*").eq("country_id", countryId).order("created_at", { ascending: false }).limit(100),
         ]);
         if (countryRes.error) throw countryRes.error;
         setCountry(countryRes.data);
@@ -114,10 +117,11 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
         setAnnouncements(announcementRes.data ?? []);
         setInfrastructure(infraRes.data ?? []);
         setBudgets(budgetRes.data ?? []);
-        const errors = [ministryRes, departmentRes, memberRes, decisionRes, lawRes, announcementRes, infraRes, budgetRes].filter(result => result.error);
+        setAllocations(allocationRes.data ?? []);
+        const errors = [ministryRes, departmentRes, memberRes, decisionRes, lawRes, announcementRes, infraRes, budgetRes, allocationRes].filter(result => result.error);
         if (errors.length) notify("Algumas áreas não puderam ser carregadas. Confira as permissões da Etapa 4 no Supabase.");
       } else {
-        setCountry(null); setPresident(null); setDashboard(null); setMemberPermissions([]);
+        setCountry(null); setPresident(null); setDashboard(null); setMemberPermissions([]); setAllocations([]);
       }
 
       let appointmentQuery = supabase.from("government_appointments").select("*").eq("status", "pending").order("requested_at", { ascending: false });
@@ -222,15 +226,15 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
     const operation = editingDepartmentId
       ? () => supabase.from("government_departments").update({
           ministry_id: departmentForm.ministry_id, name: departmentForm.name,
-          description: departmentForm.description, updated_at: new Date().toISOString(),
+          description: departmentForm.description, responsible_member_id: departmentForm.responsible_member_id || null, updated_at: new Date().toISOString(),
         }).eq("id", editingDepartmentId)
       : () => supabase.from("government_departments").insert({
           country_id: countryId, ministry_id: departmentForm.ministry_id,
-          name: departmentForm.name, description: departmentForm.description, created_by: profile.id,
+          name: departmentForm.name, description: departmentForm.description, responsible_member_id: departmentForm.responsible_member_id || null, created_by: profile.id,
         });
     void run(operation, editingDepartmentId ? "Departamento atualizado." : "Departamento cadastrado.");
     setEditingDepartmentId(null);
-    setDepartmentForm({ ministry_id: "", name: "", description: "" });
+    setDepartmentForm({ ministry_id: "", name: "", description: "", responsible_member_id: "" });
   };
 
   const requestAppointment = (event: FormEvent) => {
@@ -303,9 +307,9 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
     void run(() => supabase.from("national_infrastructure").insert({
       ...infrastructureForm, ministry_id: infrastructureForm.ministry_id || null, country_id: countryId, created_by: profile.id,
       coord_x: numberOrNull(infrastructureForm.coord_x), coord_y: numberOrNull(infrastructureForm.coord_y),
-      coord_z: numberOrNull(infrastructureForm.coord_z),
+      coord_z: numberOrNull(infrastructureForm.coord_z), responsible_member_id: infrastructureForm.responsible_member_id || null,
     }), "Registro de infraestrutura cadastrado.");
-    setInfrastructureForm({ name: "", category: "Cidade", description: "", location_name: "", coord_x: "", coord_y: "", coord_z: "", ministry_id: "" });
+    setInfrastructureForm({ name: "", category: "Cidade", description: "", location_name: "", coord_x: "", coord_y: "", coord_z: "", ministry_id: "", responsible_member_id: "" });
   };
 
   const saveBudget = (event: FormEvent) => {
@@ -316,6 +320,16 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
       planned_amount: Number(budgetForm.planned_amount || 0),
     }), "Planejamento orçamentário salvo. Nenhum saldo foi movimentado.");
     setBudgetForm({ title: "", fiscal_period: "", budget_type: "planned", planned_amount: "0", description: "", ministry_id: "" });
+  };
+
+  const saveAllocation = (event: FormEvent) => {
+    event.preventDefault();
+    if (!countryId) return;
+    void run(() => supabase.from("government_budget_allocations").insert({
+      country_id: countryId, budget_id: allocationForm.budget_id, ministry_id: allocationForm.ministry_id,
+      planned_amount: Number(allocationForm.planned_amount || 0), description: allocationForm.description,
+    }), "Distribuição planejada registrada. Nenhum saldo foi movimentado.");
+    setAllocationForm({ budget_id: "", ministry_id: "", planned_amount: "0", description: "" });
   };
 
   const submitDecision = async (row: Row) => {
