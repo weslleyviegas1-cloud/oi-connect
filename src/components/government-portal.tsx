@@ -388,8 +388,12 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
     await run(() => supabase.from("government_announcements").update({ status: "archived", updated_at: new Date().toISOString() }).eq("id", row.id), "Comunicado arquivado.");
   };
   const markNotificationRead = async (id: string) => {
+    const notification = notifications.find(row => row.id === id);
+    const rpcName = isAdmin && notification?.recipient_id == null
+      ? "admin_mark_notification_read"
+      : "mark_own_notification_read";
     await run(async () => {
-      const result = await supabase.rpc("admin_mark_notification_read", { p_notification_id: id });
+      const result = await supabase.rpc(rpcName, { p_notification_id: id });
       return { error: result.error };
     }, "Notificação marcada como lida.");
   };
