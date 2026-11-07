@@ -810,39 +810,39 @@ create policy decisions_read_public on public.government_decisions for select to
     or public.is_world_admin() or public.is_country_president(country_id)
     or public.has_government_permission(country_id,'decision.create',ministry_id,null));
 create policy decisions_insert_authorized on public.government_decisions for insert to authenticated
-  with check ((public.is_country_president(country_id) or public.has_government_permission(country_id,'decision.create',null,null))
+  with check ((public.is_country_president(country_id) or public.has_government_permission(country_id,'decision.create',ministry_id,null))
     and author_id=auth.uid());
 create policy decisions_update_authorized on public.government_decisions for update to authenticated
   using (public.is_world_admin() or public.is_country_president(country_id)
-    or public.has_government_permission(country_id,'decision.create',null,null))
+    or public.has_government_permission(country_id,'decision.create',ministry_id,null))
   with check (public.is_world_admin() or public.is_country_president(country_id)
-    or public.has_government_permission(country_id,'decision.create',null,null));
+    or public.has_government_permission(country_id,'decision.create',ministry_id,null));
 
 create policy legislation_read_public on public.national_legislation for select to authenticated
   using ((status in ('approved','revoked') and public.is_government_country_citizen(country_id))
     or public.is_world_admin() or public.is_country_president(country_id)
     or public.has_government_permission(country_id,'legislation.create',ministry_id,null));
 create policy legislation_insert_authorized on public.national_legislation for insert to authenticated
-  with check ((public.is_country_president(country_id) or public.has_government_permission(country_id,'legislation.create',null,null))
+  with check ((public.is_country_president(country_id) or public.has_government_permission(country_id,'legislation.create',ministry_id,null))
     and author_id=auth.uid());
 create policy legislation_update_authorized on public.national_legislation for update to authenticated
   using (public.is_world_admin() or public.is_country_president(country_id)
-    or public.has_government_permission(country_id,'legislation.create',null,null))
+    or public.has_government_permission(country_id,'legislation.create',ministry_id,null))
   with check (public.is_world_admin() or public.is_country_president(country_id)
-    or public.has_government_permission(country_id,'legislation.create',null,null));
+    or public.has_government_permission(country_id,'legislation.create',ministry_id,null));
 
 create policy announcements_read_public on public.government_announcements for select to authenticated
   using ((status='published' and public.is_government_country_citizen(country_id))
     or public.is_world_admin() or public.is_country_president(country_id)
     or public.has_government_permission(country_id,'announcement.create',ministry_id,null));
 create policy announcements_insert_authorized on public.government_announcements for insert to authenticated
-  with check ((public.is_country_president(country_id) or public.has_government_permission(country_id,'announcement.create',null,null))
+  with check ((public.is_country_president(country_id) or public.has_government_permission(country_id,'announcement.create',ministry_id,null))
     and author_id=auth.uid());
 create policy announcements_update_authorized on public.government_announcements for update to authenticated
   using (public.is_world_admin() or public.is_country_president(country_id)
-    or public.has_government_permission(country_id,'announcement.create',null,null))
+    or public.has_government_permission(country_id,'announcement.create',ministry_id,null))
   with check (public.is_world_admin() or public.is_country_president(country_id)
-    or public.has_government_permission(country_id,'announcement.create',null,null));
+    or public.has_government_permission(country_id,'announcement.create',ministry_id,null));
 
 create policy infrastructure_read_public on public.national_infrastructure for select to authenticated
   using ((status='active' and public.is_government_country_citizen(country_id))
@@ -853,15 +853,15 @@ create policy infrastructure_insert_authorized on public.national_infrastructure
     and created_by=auth.uid());
 create policy infrastructure_update_authorized on public.national_infrastructure for update to authenticated
   using (public.is_world_admin() or public.is_country_president(country_id)
-    or public.has_government_permission(country_id,'infrastructure.manage',null,null))
+    or public.has_government_permission(country_id,'infrastructure.manage',ministry_id,null))
   with check (public.is_world_admin() or public.is_country_president(country_id)
-    or public.has_government_permission(country_id,'infrastructure.manage',null,null));
+    or public.has_government_permission(country_id,'infrastructure.manage',ministry_id,null));
 
 create policy budgets_read_authorized on public.government_budgets for select to authenticated
   using (public.is_world_admin() or public.is_country_president(country_id)
     or public.has_government_permission(country_id,'budget.read',ministry_id,null));
 create policy budgets_insert_authorized on public.government_budgets for insert to authenticated
-  with check ((public.is_country_president(country_id) or public.has_government_permission(country_id,'budget.read',null,null))
+  with check ((public.is_country_president(country_id) or public.has_government_permission(country_id,'budget.read',ministry_id,null))
     and created_by=auth.uid());
 create policy budgets_update_authorized on public.government_budgets for update to authenticated
   using (public.is_world_admin() or public.is_country_president(country_id))
