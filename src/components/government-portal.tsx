@@ -57,6 +57,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
   const [ministryForm, setMinistryForm] = useState({ name: "", description: "", purpose: "", category: "Administrativa" });
   const [editingMinistryId, setEditingMinistryId] = useState<string | null>(null);
   const [departmentForm, setDepartmentForm] = useState({ ministry_id: "", name: "", description: "" });
+  const [editingDepartmentId, setEditingDepartmentId] = useState<string | null>(null);
   const [appointmentForm, setAppointmentForm] = useState({ ministry_id: "", department_id: "", position: "Ministro" });
   const [announcementForm, setAnnouncementForm] = useState({ title: "", content: "", category: "Comunicado oficial", status: "draft", ministry_id: "" });
   const [decisionForm, setDecisionForm] = useState({ title: "", description: "", category: "administrative", ministry_id: "" });
@@ -184,10 +185,17 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
   const saveDepartment = (event: FormEvent) => {
     event.preventDefault();
     if (!countryId) return;
-    void run(() => supabase.from("government_departments").insert({
-      country_id: countryId, ministry_id: departmentForm.ministry_id,
-      name: departmentForm.name, description: departmentForm.description, created_by: profile.id,
-    }), "Departamento cadastrado.");
+    const operation = editingDepartmentId
+      ? () => supabase.from("government_departments").update({
+          ministry_id: departmentForm.ministry_id, name: departmentForm.name,
+          description: departmentForm.description, updated_at: new Date().toISOString(),
+        }).eq("id", editingDepartmentId)
+      : () => supabase.from("government_departments").insert({
+          country_id: countryId, ministry_id: departmentForm.ministry_id,
+          name: departmentForm.name, description: departmentForm.description, created_by: profile.id,
+        });
+    void run(operation, editingDepartmentId ? "Departamento atualizado." : "Departamento cadastrado.");
+    setEditingDepartmentId(null);
     setDepartmentForm({ ministry_id: "", name: "", description: "" });
   };
 
@@ -348,12 +356,13 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
 
     {tab === "departments" && <>
       {(canManage || hasAnyPermission("department.manage")) && countryId && <form className="we-form" onSubmit={saveDepartment}>
+        {editingDepartmentId && <div className="we-admin-form-title"><b>Editando departamento</b><button type="button" onClick={() => { setEditingDepartmentId(null); setDepartmentForm({ ministry_id: "", name: "", description: "" }); }}>Cancelar</button></div>}
         <label>Ministério<select value={departmentForm.ministry_id} onChange={e => setDepartmentForm(s => ({ ...s, ministry_id: e.target.value }))} required><option value="">Selecione</option>{ministries.filter(row => row.status === "active").map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
         <label>Nome do departamento<input value={departmentForm.name} onChange={e => setDepartmentForm(s => ({ ...s, name: e.target.value }))} required/></label>
         <label className="we-admin-wide">Descrição<input value={departmentForm.description} onChange={e => setDepartmentForm(s => ({ ...s, description: e.target.value }))}/></label>
-        <button className="we-primary we-admin-wide" disabled={busy}><Plus/> Criar departamento</button>
+        <button className="we-primary we-admin-wide" disabled={busy}><Plus/> {editingDepartmentId ? "Salvar alterações" : "Criar departamento"}</button>
       </form>}
-      <section className="we-panel">{departments.map(row => <article className="we-admin-row" key={row.id}><div><b>{row.name}</b><small>{getName(row.ministry_id)} • {row.description || "Sem descrição"} • {row.status === "active" ? "Ativo" : "Inativo"}</small></div></article>)}{!departments.length && <div className="we-empty">Nenhum departamento cadastrado.</div>}</section>
+      <section className="we-panel">{departments.map(row => <article className="we-admin-row" key={row.id}><div><b>{row.name}</b><small>{getName(row.ministry_id)} • {row.description || "Sem descrição"} • {row.status === "active" ? "Ativo" : "Inativo"}</small></div>{(canManage || hasAnyPermission("department.manage")) && <><button type="button" disabled={busy} onClick={() => { setEditingDepartmentId(row.id); setDepartmentForm({ ministry_id: row.ministry_id, name: row.name, description: row.description ?? "" }); window.scrollTo({ top: 0, behavior: "smooth" }); }}>Editar</button><button type="button" disabled={busy} onClick={() => void run(() => supabase.from("government_departments").update({status:row.status === "active" ? "inactive" : "active",updated_at:new Date().toISOString()}).eq("id",row.id),"Situação do departamento atualizada.")}>{row.status === "active" ? "Desativar" : "Reativar"}</button></>}</article>)}{!departments.length && <div className="we-empty">Nenhum departamento cadastrado.</div>}</section>
     </>}
 
     {tab === "appointments" && <>
