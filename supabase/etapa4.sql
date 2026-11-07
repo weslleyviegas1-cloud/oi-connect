@@ -297,8 +297,9 @@ as $$
       and p.country_id = p_country_id
       and coalesce(p.account_status,'active') = 'active'
       and p.registration_status = 'active'
+      and exists (select 1 from public.countries c where c.id=p_country_id and c.is_active)
   );
-$$;
+$;
 
 create or replace function public.has_government_permission(
   p_country_id uuid,
