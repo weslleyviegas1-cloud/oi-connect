@@ -9,6 +9,8 @@ export type Profile = {
   player_number: number | null;
   role: "citizen" | "president" | "super_admin";
   country_id: string | null;
+  country_name?: string | null;
+  country_flag?: string | null;
   registration_status: "active" | "pending_presidency" | "rejected";
 };
 
@@ -25,7 +27,13 @@ export function usePlayer() {
       .eq("id", u.id)
       .maybeSingle();
     if (error) throw error;
-    setProfile((data as Profile | null) ?? null);
+    const current = (data as Profile | null) ?? null;
+    if (current?.country_id) {
+      const { data: country } = await supabase.from("countries").select("name,flag").eq("id", current.country_id).maybeSingle();
+      setProfile({ ...current, country_name: country?.name ?? null, country_flag: country?.flag ?? null });
+    } else {
+      setProfile(current);
+    }
   }, []);
 
   useEffect(() => {
