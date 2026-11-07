@@ -491,6 +491,3 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
 function Stat({ label, value, Icon }: { label: string; value: string | number; Icon: typeof Landmark }) {
   return <article className="we-admin-stat"><span><Icon/></span><div><small>{label}</small><strong>{Number(value).toLocaleString("pt-BR")}</strong></div></article>;
 }
-function Rows({ rows, titleKey, detail, empty }: { rows: Row[]; titleKey: string; detail: (row: Row) => string; empty: string }) {
-  return <section className="we-panel">{rows.map(row => <article className="we-admin-row" key={row.id}><div><b>{row[titleKey]}</b><small>{detail(row)}</small><small>{row.description}</small></div></article>)}{!rows.length && <div className="we-empty">{empty}</div>}</section>;
-}
