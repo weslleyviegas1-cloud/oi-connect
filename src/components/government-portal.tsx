@@ -44,6 +44,8 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
   const [members, setMembers] = useState<Row[]>([]);
   const [memberPermissions, setMemberPermissions] = useState<Row[]>([]);
   const [appointments, setAppointments] = useState<Row[]>([]);
+  const [pendingDecisions, setPendingDecisions] = useState<Row[]>([]);
+  const [pendingLegislation, setPendingLegislation] = useState<Row[]>([]);
   const [decisions, setDecisions] = useState<Row[]>([]);
   const [legislation, setLegislation] = useState<Row[]>([]);
   const [announcements, setAnnouncements] = useState<Row[]>([]);
@@ -114,12 +116,22 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
         if (result.error) throw result.error;
         setAppointments(result.data ?? []);
       } else setAppointments([]);
+      if (isAdmin) {
+        const [decisionQueue, legislationQueue] = await Promise.all([
+          supabase.from("government_decisions").select("*").eq("status", "pending_approval").order("created_at", { ascending: false }),
+          supabase.from("national_legislation").select("*").eq("status", "under_review").order("created_at", { ascending: false }),
+        ]);
+        if (decisionQueue.error) throw decisionQueue.error;
+        if (legislationQueue.error) throw legislationQueue.error;
+        setPendingDecisions(decisionQueue.data ?? []);
+        setPendingLegislation(legislationQueue.data ?? []);
+      } else { setPendingDecisions([]); setPendingLegislation([]); }
     } catch (error) {
       notify("Não foi possível carregar o governo: " + errorMessage(error));
     } finally {
       setLoading(false);
     }
-  }, [countryId, isAdmin, notify]);
+  }, [countryId, isAdmin, notify, profile.id]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -259,6 +271,23 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
     setBudgetForm({ title: "", fiscal_period: "", budget_type: "planned", planned_amount: "0", description: "", ministry_id: "" });
   };
 
+  const submitDecision = async (row: Row) => {
+    await run(() => supabase.from("government_decisions").update({ status: "pending_approval", updated_at: new Date().toISOString() }).eq("id", row.id), "Decisão enviada para análise do Super Admin.");
+  };
+  const publishDecision = async (row: Row) => {
+    await run(() => supabase.from("government_decisions").update({ status: "published", published_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", row.id), "Decisão publicada para os cidadãos do país.");
+  };
+  const submitLegislation = async (row: Row) => {
+    await run(() => supabase.from("national_legislation").update({ status: "under_review", updated_at: new Date().toISOString() }).eq("id", row.id), "Proposta enviada para análise do Super Admin.");
+  };
+  const reviewContent = async (table: "government_decisions" | "national_legislation", id: string, decision: "approved" | "rejected") => {
+    await run(async () => {
+      const result = table === "government_decisions"
+        ? await supabase.rpc("review_government_decision", { p_decision_id: id, p_decision: decision, p_note: null })
+        : await supabase.rpc("review_national_legislation", { p_legislation_id: id, p_decision: decision, p_note: null });
+      return { error: result.error };
+    }, decision === "approved" ? "Registro aprovado." : "Registro rejeitado.");
+  };
   const publishAnnouncement = async (row: Row) => {
     await run(() => supabase.from("government_announcements").update({
       status: "published", published_at: new Date().toISOString(),
