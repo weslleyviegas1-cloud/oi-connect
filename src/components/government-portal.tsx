@@ -94,8 +94,17 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
         if (!dashboardRes.error) setDashboard(dashboardRes.data as Row);
         setMinistries(ministryRes.data ?? []);
         setDepartments(departmentRes.data ?? []);
-        setMembers(memberRes.data ?? []);
-        const ownMember = (memberRes.data ?? []).find((member: Row) => member.profile_id === profile.id && member.status === "active");
+        const memberRows = memberRes.data ?? [];
+        const memberProfileIds = memberRows.map((member: Row) => member.profile_id);
+        const memberProfilesResult = memberProfileIds.length
+          ? await supabase.from("profiles").select("id,username,player_number,minecraft_username,avatar_url").in("id", memberProfileIds)
+          : { data: [], error: null };
+        if (memberProfilesResult.error) throw memberProfilesResult.error;
+        setMembers(memberRows.map((member: Row) => ({
+          ...member,
+          profile: (memberProfilesResult.data ?? []).find(person => person.id === member.profile_id),
+        })));
+        const ownMember = memberRows.find((member: Row) => member.profile_id === profile.id && member.status === "active");
         if (ownMember) {
           const permissionResult = await supabase.from("government_member_permissions").select("permission_key,scope_type,scope_id").eq("member_id", ownMember.id);
           setMemberPermissions(permissionResult.data ?? []);
@@ -175,6 +184,8 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
     const timer = window.setTimeout(() => { void search(); }, 250);
     return () => window.clearTimeout(timer);
   }, [candidateSearch, countryId, isPresident]);
+
+  const ownMembership = members.find(member => member.profile_id === profile.id && member.status === "active");
 
   const counts = useMemo(() => ({
     ministries: ministries.filter(row => row.status === "active").length,
@@ -346,7 +357,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
     <div className="we-admin-toolbar"><div><small>WORLD ECONOMY / GOVERNO NACIONAL</small><h2>{tabs.find(item => item.id === tab)?.label}</h2></div><button className="we-admin-refresh" type="button" onClick={() => void load()} disabled={loading}><RefreshCw/> Atualizar</button></div>
     {loading && <div className="we-empty">Carregando dados oficiais do governo...</div>}
     {!countryId && !isAdmin && <div className="we-note">Sua conta ainda não está vinculada a um país. As informações governamentais aparecerão após a definição do vínculo nacional.</div>}
-    {country && <section className="we-panel"><header><h2><Flag/> {country.flag || "🌐"} {country.name}</h2><span className="we-tag">{isPresident ? "Painel presidencial" : isAdmin ? "Super Admin" : "Meu Governo"}</span></header><div className="we-admin-notice">{country.capital || "Capital não cadastrada"} • {country.continent || "Continente não cadastrado"} • {country.currency_name ? `${country.currency_name} (${country.currency_code ?? "código não informado"})` : "Moeda não cadastrada"}<br/>Presidente: {president?.username ?? "Nenhum presidente aprovado"}</div></section>}
+    {country && <section className="we-panel"><header><h2><Flag/> {country.flag || "🌐"} {country.name}</h2><span className="we-tag">{isPresident ? "Painel presidencial" : isAdmin ? "Super Admin" : "Meu Governo"}</span></header><div className="we-admin-notice">{country.capital || "Capital não cadastrada"} • {country.continent || "Continente não cadastrado"} • {country.currency_name ? `${country.currency_name} (${country.currency_code ?? "código não informado"})` : "Moeda não cadastrada"}<br/>Presidente: {president?.username ?? "Nenhum presidente aprovado"}{ownMembership && <><br/>Seu cargo: {ownMembership.position} • {getName(ownMembership.ministry_id)}</>}</div></section>}
 
     {tab === "overview" && <>
       {countryId && <div className="we-admin-stat-grid">
@@ -405,7 +416,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
       </div>}
       {appointments.map(row => <article className="we-admin-row" key={row.id}><div><b>{row.action_type === "exoneration" ? "Exoneração" : row.position}</b><small>{row.action_type === "appointment" ? `Indicado: ${row.candidate?.username ?? row.candidate_profile_id} • #${row.candidate?.player_number ?? "—"}` : `Integrante: ${row.memberProfile?.username ?? row.member_id} • ${row.member?.position ?? ""}`} • {getName(row.ministry_id)} • {dateLabel(row.requested_at)}</small></div>{isAdmin && <><button type="button" disabled={busy} onClick={() => reviewAppointment(row,"approved")}><Check/> Aprovar</button><button type="button" disabled={busy} onClick={() => reviewAppointment(row,"rejected")}><X/> Rejeitar</button></>}</article>)}
       {!appointments.length && <div className="we-empty">Nenhuma solicitação pendente.</div>}
-      {members.filter(row => row.status === "active").map(row => <article className="we-admin-row" key={row.id}><div><b>{row.position}</b><small>{getName(row.ministry_id)} • {getDepartmentName(row.department_id)} • Integrante ativo</small></div>{isPresident && <button type="button" disabled={busy} onClick={() => requestExoneration(row)}>Solicitar exoneração</button>}</article>)}
+      {members.filter(row => row.status === "active").map(row => <article className="we-admin-row" key={row.id}><div><b>{row.profile?.username ?? "Integrante"} — {row.position}</b><small>{getName(row.ministry_id)} • {getDepartmentName(row.department_id)} • Integrante ativo</small></div>{isPresident && <button type="button" disabled={busy} onClick={() => requestExoneration(row)}>Solicitar exoneração</button>}</article>)}
     </>}
 
     {tab === "decisions" && <>
