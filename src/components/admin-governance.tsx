@@ -85,13 +85,13 @@ export function AdminGovernance({ notify }: { notify: (message: string) => void 
     await load();
   };
 
-  return <div className="we-stack">
+  return <div style={{display:"grid",gap:16}}>
     <section className="we-panel">
       <header><h2><Flag/> Cadastro e disponibilidade de países</h2></header>
       <form className="we-form" onSubmit={createCountry}>
         <label>Nome do país<input value={name} onChange={event => setName(event.target.value)} placeholder="Ex.: Brasil" minLength={2} required /></label>
         <label>Bandeira (emoji opcional)<input value={flag} onChange={event => setFlag(event.target.value)} placeholder="Ex.: 🇧🇷" maxLength={8} /></label>
-        <label className="we-check"><input type="checkbox" checked={presidentAvailable} onChange={event => setPresidentAvailable(event.target.checked)} /> Aceitar solicitações de presidência</label>
+        <label style={{display:"flex",alignItems:"center",gap:8}}><input style={{width:"auto"}} type="checkbox" checked={presidentAvailable} onChange={event => setPresidentAvailable(event.target.checked)} /> Aceitar solicitações de presidência</label>
         <button className="we-primary" type="submit" disabled={busy}><Plus/> Adicionar país</button>
       </form>
       <div className="we-list">
@@ -99,7 +99,7 @@ export function AdminGovernance({ notify }: { notify: (message: string) => void 
           <article key={country.id}>
             <span>{country.flag || "🌐"}</span>
             <div><b>{country.name}</b><small>{country.is_active ? "Ativo" : "Inativo"} • {country.president_available ? "Aceitando pedidos de presidência" : "Presidência fechada"}</small></div>
-            <button className="we-secondary" type="button" onClick={() => void toggleAvailability(country)}>{country.president_available ? "Fechar vaga" : "Abrir vaga"}</button>
+            <button className="we-primary" type="button" onClick={() => void toggleAvailability(country)}>{country.president_available ? "Fechar vaga" : "Abrir vaga"}</button>
           </article>
         )}
       </div>
