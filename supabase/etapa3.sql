@@ -369,9 +369,11 @@ declare v_old jsonb; v_player public.profiles%rowtype;
 begin
   if not public.is_world_admin() then raise exception 'Apenas o Super Admin pode alterar contas.'; end if;
   if p_status not in ('active','suspended') then raise exception 'Status de conta inválido.'; end if;
-  if p_player_id=auth.uid() and p_status='suspended' then raise exception 'A conta do Super Admin principal não pode ser suspensa por este painel.'; end if;
   select * into v_player from public.profiles where id=p_player_id for update;
   if not found then raise exception 'Jogador não encontrado.'; end if;
+  if v_player.role='super_admin' and p_status='suspended' then
+    raise exception 'Contas Super Admin não podem ser suspensas por este painel.';
+  end if;
   v_old:=to_jsonb(v_player);
   update public.profiles set account_status=p_status,
     suspended_at=case when p_status='suspended' then now() else null end,
