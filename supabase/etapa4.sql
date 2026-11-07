@@ -721,8 +721,17 @@ begin
   end if;
 
   if v_notify_author then
-    insert into public.admin_notifications(recipient_id,event_type,title,description,object_type,object_id)
-    values (new.author_id,v_event,v_title,v_description,v_object_type,new.id);
+    if new.status='approved' then
+      insert into public.admin_notifications(recipient_id,event_type,title,description,object_type,object_id)
+      select p.id,v_event,v_title,v_description,v_object_type,new.id
+      from public.profiles p
+      where p.id=new.author_id
+        or (p.country_id=new.country_id and p.id is distinct from auth.uid()
+          and p.registration_status='active' and coalesce(p.account_status,'active')='active');
+    else
+      insert into public.admin_notifications(recipient_id,event_type,title,description,object_type,object_id)
+      values (new.author_id,v_event,v_title,v_description,v_object_type,new.id);
+    end if;
     return new;
   end if;
 
