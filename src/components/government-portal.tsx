@@ -207,7 +207,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
     members: members.filter(row => row.status === "active").length,
   }), [ministries, departments, members]);
 
-  const run = async (operation: () => Promise<{ error: any }>, success: string) => {
+  const run = async (operation: () => PromiseLike<{ error: any }>, success: string) => {
     setBusy(true);
     try {
       const result = await operation();
