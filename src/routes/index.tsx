@@ -36,7 +36,7 @@ function WorldEconomy(){
  useEffect(()=>{if(loaded)localStorage.setItem(STORE_KEY,JSON.stringify(state));},[state,loaded]);
  const notify=useCallback((s:string)=>{setNotice(s);window.setTimeout(()=>setNotice(""),3000)},[]);
  const country=player.profile?.country_name?{name:player.profile.country_name,flag:player.profile.country_flag??"🌐"}:{name:"Não definido",flag:"🌐"};
- const roleName=role==="admin"?"Administrador Global":role==="president"?"Presidente": "Jogador";
+ const roleName=role==="admin"?"Super Admin":role==="president"?"Presidente": "Jogador";
  const go=(s:string)=>{setActive(s);setDrawer(false);};
  const transfer=(e:FormEvent)=>{e.preventDefault();const value=Number(amount.replace(",", "."));if(!recipient.trim()){notify("Informe o destinatário.");return;}if(!Number.isFinite(value)||value<=0){notify("Informe um valor válido.");return;}if(value>state.balance){notify("Saldo insuficiente para esta transferência.");return;}const tx:Tx={id:crypto.randomUUID(),kind:"Saída",description:"Transferência para "+recipient.trim(),amount:-value,date:new Date().toLocaleString("pt-BR")};setState(s=>({...s,balance:Number((s.balance-value).toFixed(2)),transactions:[tx,...s.transactions]}));setRecipient("");setAmount("");notify("Transferência simulada registrada no seu navegador.");};
  const createCompany=(e:FormEvent)=>{e.preventDefault();if(companyName.trim().length<2){notify("Digite um nome de empresa válido.");return;}const item={id:crypto.randomUUID(),name:companyName.trim(),sector,createdAt:new Date().toLocaleDateString("pt-BR")};setState(s=>({...s,companies:[item,...s.companies]}));setCompanyName("");notify("Empresa adicionada à sua simulação local.");};
