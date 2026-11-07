@@ -193,7 +193,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
         /^\\d+$/.test(q) ? base().eq("player_number", Number(q)).limit(12) : Promise.resolve({ data: [], error: null }),
       ]);
       const error = searches.find(result => result.error)?.error;
-      if (!error) setCandidates(Array.from(new Map(searches.flatMap(result => result.data ?? []).map(person => [person.id, person])).values()).slice(0, 12));
+      if (!error) setCandidates(Array.from(new Map(searches.flatMap(result => result.data ?? []).map(person => [person.id, person] as const)).values()).slice(0, 12));
     };
     const timer = window.setTimeout(() => { void search(); }, 250);
     return () => window.clearTimeout(timer);
