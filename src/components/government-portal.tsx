@@ -497,9 +497,21 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
         <label className="we-admin-wide">Descrição<textarea value={budgetForm.description} onChange={e => setBudgetForm(s => ({ ...s, description: e.target.value }))}/></label>
         <button className="we-primary we-admin-wide" disabled={busy}><Plus/> Salvar planejamento</button>
       </form>}
+      {canManage && countryId && budgets.length > 0 && ministries.length > 0 && <form className="we-form" onSubmit={saveAllocation}>
+        <div className="we-admin-form-title"><div><small>DISTRIBUIÇÃO POR MINISTÉRIO</small><h3>Planejar alocação</h3></div></div>
+        <label>Orçamento<select value={allocationForm.budget_id} onChange={e => setAllocationForm(s => ({ ...s, budget_id: e.target.value }))} required><option value="">Selecione</option>{budgets.map(row => <option key={row.id} value={row.id}>{row.title}</option>)}</select></label>
+        <label>Ministério<select value={allocationForm.ministry_id} onChange={e => setAllocationForm(s => ({ ...s, ministry_id: e.target.value }))} required><option value="">Selecione</option>{ministries.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
+        <label>Valor planejado<input type="number" min="0" step="0.01" value={allocationForm.planned_amount} onChange={e => setAllocationForm(s => ({ ...s, planned_amount: e.target.value }))}/></label>
+        <label>Descrição<input value={allocationForm.description} onChange={e => setAllocationForm(s => ({ ...s, description: e.target.value }))}/></label>
+        <button className="we-primary we-admin-wide" disabled={busy}><Plus/> Registrar distribuição planejada</button>
+      </form>}
       <div className="we-note">Valores exclusivamente previstos. Este módulo não cria dinheiro, não altera saldos e não executa pagamentos.</div>
       {budgets.map(row => <article className="we-admin-row" key={row.id}><div><b>{row.title}</b><small>{row.fiscal_period || "Período não informado"} • {row.budget_type} • {Number(row.planned_amount).toLocaleString("pt-BR",{minimumFractionDigits:2})} • {row.status}</small></div></article>)}
       {!budgets.length && <div className="we-empty">Nenhum planejamento orçamentário cadastrado.</div>}
+      <section className="we-panel"><header><h2><Wallet/> Distribuição planejada por ministério</h2></header>
+        {allocations.map(row => <article className="we-admin-row" key={row.id}><div><b>{getName(row.ministry_id)}</b><small>{budgets.find(budget => budget.id === row.budget_id)?.title ?? "Orçamento"} • {Number(row.planned_amount).toLocaleString("pt-BR",{minimumFractionDigits:2})} • {row.description || "Sem descrição"}</small></div></article>)}
+        {!allocations.length && <div className="we-empty">Nenhuma distribuição orçamentária cadastrada.</div>}
+      </section>
     </>}
   </div>;
 }
