@@ -516,6 +516,12 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
   </div>;
 }
 
+function CountryMark({ value, label }: { value?: string | null; label: string }) {
+  if (!value) return <span aria-label={`Bandeira de ${label}`}>🌐</span>;
+  if (/^https?:\/\//i.test(value)) return <img src={value} alt={`Bandeira de ${label}`} style={{ width: 34, height: 24, objectFit: "contain", verticalAlign: "middle" }} />;
+  return <span aria-label={`Bandeira de ${label}`} style={{ fontSize: 22 }}>{value}</span>;
+}
+
 function Stat({ label, value, Icon }: { label: string; value: string | number; Icon: typeof Landmark }) {
   return <article className="we-admin-stat"><span><Icon/></span><div><small>{label}</small><strong>{typeof value === "number" ? value.toLocaleString("pt-BR") : value}</strong></div></article>;
 }
