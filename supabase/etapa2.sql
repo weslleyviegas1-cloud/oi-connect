@@ -68,11 +68,6 @@ revoke insert, update, delete on public.countries from public, anon, authenticat
 
 -- Perfis públicos para exibir identidade, mas campos de privilégio não podem ser alterados pelo cliente.
 
-drop policy if exists "Solicitações visíveis ao dono e admin" on public.president_applications;
-create policy "Solicitações visíveis ao dono e admin" on public.president_applications
-  for select to authenticated
-  using (player_id = auth.uid() or public.is_world_admin());
-
 create or replace function public.is_world_admin()
 returns boolean
 language sql stable security definer
@@ -82,7 +77,12 @@ as $$
     select 1 from public.profiles p
     where p.id = auth.uid() and p.role = 'super_admin'
   );
-$$;
+$;
+
+drop policy if exists "Solicitações visíveis ao dono e admin" on public.president_applications;
+create policy "Solicitações visíveis ao dono e admin" on public.president_applications
+  for select to authenticated
+  using (player_id = auth.uid() or public.is_world_admin());
 
 -- Recria a policy de países após criar a função de autorização.
 drop policy if exists "Países ativos visíveis" on public.countries;
