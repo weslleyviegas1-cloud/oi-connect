@@ -18,10 +18,9 @@ export const Route = createFileRoute("/")({
 type Role = "player" | "president" | "admin";
 type Tx = { id: string; kind: string; description: string; amount: number; date: string };
 type Company = { id: string; name: string; sector: string; createdAt: string };
-type GameState = { balance: number; country: string; transactions: Tx[]; companies: Company[]; documents: string[] };
+type GameState = { balance: number; transactions: Tx[]; companies: Company[]; documents: string[] };
 const STORE_KEY = "world-economy-demo-v1";
-const initialState: GameState = { balance: 12450.75, country: "Brasil", transactions: [], companies: [], documents: [] };
-const nations = [{flag:"🇧🇷",name:"Brasil"},{flag:"🇺🇸",name:"Estados Unidos"},{flag:"🇩🇪",name:"Alemanha"},{flag:"🇫🇷",name:"França"},{flag:"🇯🇵",name:"Japão"},{flag:"🇨🇦",name:"Canadá"},{flag:"🇬🇧",name:"Reino Unido"},{flag:"🇮🇹",name:"Itália"},{flag:"🇪🇸",name:"Espanha"},{flag:"🇦🇷",name:"Argentina"}];
+const initialState: GameState = { balance: 12450.75, transactions: [], companies: [], documents: [] };
 const menu = [{label:"Início",Icon:Home},{label:"Perfil",Icon:Users},{label:"Países",Icon:Flag},{label:"Economia",Icon:ChartNoAxesCombined},{label:"Bancos",Icon:Landmark},{label:"Empresas",Icon:Building2},{label:"Documentos",Icon:FileText},{label:"Veículos",Icon:Car},{label:"Forças Armadas",Icon:Shield},{label:"Configurações",Icon:Settings}];
 const money=(n:number)=>n.toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
 function WorldEconomy(){
@@ -36,7 +35,7 @@ function WorldEconomy(){
  useEffect(()=>{try{const saved=localStorage.getItem(STORE_KEY);if(saved){const parsed=JSON.parse(saved) as Partial<GameState>;setState({...initialState,...parsed});}}catch{localStorage.removeItem(STORE_KEY);}setLoaded(true);},[]);
  useEffect(()=>{if(loaded)localStorage.setItem(STORE_KEY,JSON.stringify(state));},[state,loaded]);
  const notify=useCallback((s:string)=>{setNotice(s);window.setTimeout(()=>setNotice(""),3000)},[]);
- const country=player.profile?.country_name?{name:player.profile.country_name,flag:player.profile.country_flag??"🌐"}:role==="admin"?{name:"Sem país atribuído",flag:"🌐"}:(nations.find(n=>n.name===state.country)??nations[0]!);
+ const country=player.profile?.country_name?{name:player.profile.country_name,flag:player.profile.country_flag??"🌐"}:{name:"Não definido",flag:"🌐"};
  const roleName=role==="admin"?"Administrador Global":role==="president"?"Presidente": "Jogador";
  const go=(s:string)=>{setActive(s);setDrawer(false);};
  const transfer=(e:FormEvent)=>{e.preventDefault();const value=Number(amount.replace(",", "."));if(!recipient.trim()){notify("Informe o destinatário.");return;}if(!Number.isFinite(value)||value<=0){notify("Informe um valor válido.");return;}if(value>state.balance){notify("Saldo insuficiente para esta transferência.");return;}const tx:Tx={id:crypto.randomUUID(),kind:"Saída",description:"Transferência para "+recipient.trim(),amount:-value,date:new Date().toLocaleString("pt-BR")};setState(s=>({...s,balance:Number((s.balance-value).toFixed(2)),transactions:[tx,...s.transactions]}));setRecipient("");setAmount("");notify("Transferência simulada registrada no seu navegador.");};
