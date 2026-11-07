@@ -55,9 +55,18 @@ create unique index if not exists president_applications_one_pending_per_country
 alter table public.countries enable row level security;
 alter table public.president_applications enable row level security;
 
--- Perfis públicos para exibir identidade, mas campos de privilégio não podem ser alterados pelo cliente.
-revoke update on public.profiles from authenticated;
+-- Remove privilégios diretos que poderiam permitir escalada de função.
+-- O trigger cria perfis; o cliente só pode editar nickname e foto.
+revoke insert, update, delete on public.profiles from public, anon, authenticated;
+grant select on public.profiles to anon, authenticated;
 grant update (username, avatar_url) on public.profiles to authenticated;
+drop policy if exists "Inserir o próprio perfil" on public.profiles;
+
+-- Solicitações e países são alterados exclusivamente pelas funções administrativas/registro.
+revoke insert, update, delete on public.president_applications from public, anon, authenticated;
+revoke insert, update, delete on public.countries from public, anon, authenticated;
+
+-- Perfis públicos para exibir identidade, mas campos de privilégio não podem ser alterados pelo cliente.
 
 drop policy if exists "Solicitações visíveis ao dono e admin" on public.president_applications;
 create policy "Solicitações visíveis ao dono e admin" on public.president_applications
