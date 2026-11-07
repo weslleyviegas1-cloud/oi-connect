@@ -219,3 +219,43 @@ body{margin:0;background:#050913;color:#f4f7ff}
 .we-coming{display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding:20px;border:1px dashed #36516f;border-radius:8px;background:#0b1523}
 .we-coming>svg{width:30px;height:30px;color:#68bfff}.we-coming>b{font-size:16px}.we-coming p{max-width:650px;margin:0 0 7px;color:#a8b9d0;font-size:12px;line-height:1.6}
 @media(max-width:700px){.we-module{padding:14px}.we-module-heading{gap:10px}.we-module-heading>span{width:38px;height:38px}.we-module-heading h1{font-size:21px}.we-country-list{grid-template-columns:1fr}.we-form,.we-company-form{grid-template-columns:1fr}.we-form .we-primary{width:100%}.we-economy-grid{grid-template-columns:1fr}.we-settings-row{align-items:flex-start;flex-direction:column}.we-bank-balance strong{font-size:26px}.we-list article{gap:8px}.we-tag{font-size:8px}}
+
+
+/* Correção de foco e digitação em campos de formulário, especialmente no Android */
+.we-form label {
+  min-width: 0;
+  position: relative;
+}
+.we-form input,
+.we-form select,
+.we-form textarea {
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
+  touch-action: manipulation;
+  caret-color: #ffffff;
+  color: #f5f8ff;
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+.we-form input:not([type="file"]):focus,
+.we-form select:focus,
+.we-form textarea:focus {
+  caret-color: #ffffff;
+  outline: 2px solid #168fff;
+  outline-offset: 1px;
+}
+.we-form input:not([type="file"]) {
+  cursor: text;
+}
+@media (max-width: 700px) {
+  .we-form input:not([type="file"]),
+  .we-form select,
+  .we-form textarea {
+    min-height: 46px;
+    font-size: 16px;
+    -webkit-user-select: text;
+    user-select: text;
+  }
+}
