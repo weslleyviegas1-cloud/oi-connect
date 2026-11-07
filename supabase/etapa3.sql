@@ -187,7 +187,7 @@ begin
         and not exists (select 1 from public.profiles p where p.country_id=c.id and p.role='president')
     ),
     'citizens_total', (select count(*) from public.profiles where role='citizen'),
-    'presidents_total', (select count(*) from public.profiles where role='president'),
+    'presidents_total', (select count(*) from public.profiles where role='president' and coalesce(account_status,'active')='active'),
     'applications_pending', (select count(*) from public.president_applications where status='pending'),
     'users_total', (select count(*) from auth.users)
   ) into v_result;
@@ -270,6 +270,10 @@ begin
   if length(trim(coalesce(p_identifier,''))) < 2 then raise exception 'Informe o identificador exclusivo.'; end if;
   if p_is_active = false and p_president_available then
     raise exception 'Um país suspenso não pode aceitar solicitações presidenciais.';
+  end if;
+  if p_id is not null and p_president_available
+     and exists (select 1 from public.profiles where country_id=p_id and role='president') then
+    raise exception 'Remova o presidente atual antes de liberar uma nova vaga.';
   end if;
   if p_id is not null then
     select to_jsonb(c) into v_old from public.countries c where c.id=p_id for update;
