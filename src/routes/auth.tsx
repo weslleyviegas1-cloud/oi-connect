@@ -37,6 +37,7 @@ function AuthPage() {
 
   useEffect(() => {
     const loadRegistrationOptions = async () => {
+      setLoadingCountries(true);
       const [countryResult, settingsResult] = await Promise.all([
         supabase.from("countries").select("id,name,flag,president_available,citizens_available").eq("is_active", true).order("name"),
         supabase.from("platform_settings").select("signup_open,login_enabled").eq("id", true).maybeSingle(),
