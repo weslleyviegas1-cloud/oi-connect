@@ -321,6 +321,7 @@ as $$
     where gp.country_id = p_country_id
       and gp.permission_key = p_permission_key
       and gm.profile_id = auth.uid()
+      and exists (select 1 from public.countries c where c.id=p_country_id and c.is_active)
       and (
         gp.scope_type = 'country'
         or (gp.scope_type = 'ministry' and gp.scope_id = p_ministry_id)
@@ -405,6 +406,9 @@ begin
     where id=p_department_id and country_id=v_country_id and ministry_id=p_ministry_id and status='active'
   ) then raise exception 'Departamento inválido para este ministério.'; end if;
   if length(trim(coalesce(p_position,''))) < 2 then raise exception 'Informe o cargo pretendido.'; end if;
+  if lower(trim(p_position)) like '%ministro%' and p_ministry_id is null then
+    raise exception 'Vincule o ministro a um ministério antes de enviar a nomeação.';
+  end if;
   insert into public.government_appointments(
     country_id,action_type,candidate_profile_id,ministry_id,department_id,position,requested_by
   ) values (v_country_id,'appointment',p_candidate_profile_id,p_ministry_id,p_department_id,trim(p_position),auth.uid())
@@ -678,6 +682,7 @@ declare
   v_title text;
   v_description text;
   v_object_type text;
+  v_notify_author boolean := false;
 begin
   if tg_table_name='government_announcements' and new.status='published'
      and (tg_op='INSERT' or old.status is distinct from new.status) then
@@ -685,12 +690,26 @@ begin
     v_title:='Novo comunicado oficial';
     v_description:=new.title;
     v_object_type:='government_announcement';
+  elsif tg_table_name='government_decisions' and new.status in ('approved','rejected')
+     and tg_op='UPDATE' and old.status is distinct from new.status then
+    v_event:='government.decision.'||new.status;
+    v_title:=case when new.status='approved' then 'Decisão aprovada' else 'Decisão rejeitada' end;
+    v_description:=new.title;
+    v_object_type:='government_decision';
+    v_notify_author:=true;
   elsif tg_table_name='government_decisions' and new.status='published'
      and (tg_op='INSERT' or old.status is distinct from new.status) then
     v_event:='government.decision.published';
     v_title:='Nova decisão governamental publicada';
     v_description:=new.title;
     v_object_type:='government_decision';
+  elsif tg_table_name='national_legislation' and new.status in ('approved','rejected')
+     and tg_op='UPDATE' and old.status is distinct from new.status then
+    v_event:='government.legislation.'||new.status;
+    v_title:=case when new.status='approved' then 'Proposta legislativa aprovada' else 'Proposta legislativa rejeitada' end;
+    v_description:=new.title;
+    v_object_type:='national_legislation';
+    v_notify_author:=true;
   elsif tg_table_name='national_legislation' and new.status='approved'
      and (tg_op='INSERT' or old.status is distinct from new.status) then
     v_event:='government.legislation.approved';
@@ -698,6 +717,12 @@ begin
     v_description:=new.title;
     v_object_type:='national_legislation';
   else
+    return new;
+  end if;
+
+  if v_notify_author then
+    insert into public.admin_notifications(recipient_id,event_type,title,description,object_type,object_id)
+    values (new.author_id,v_event,v_title,v_description,v_object_type,new.id);
     return new;
   end if;
 
