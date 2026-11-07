@@ -64,7 +64,6 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
   const isAdmin = profile.role === "super_admin";
   const isPresident = profile.role === "president";
   const canManage = isAdmin || isPresident;
-  const hasPermission = (key: string, ministryId?: string) => isAdmin || isPresident || memberPermissions.some(permission => permission.permission_key === key && (permission.scope_type === "country" || (permission.scope_type === "ministry" && !!ministryId && permission.scope_id === ministryId)));
   const hasAnyPermission = (key: string) => isAdmin || isPresident || memberPermissions.some(permission => permission.permission_key === key);
   const countryId = profile.country_id;
 
@@ -335,6 +334,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
 
     {tab === "decisions" && <>
       {(canManage || hasAnyPermission("decision.create")) && countryId && <form className="we-form" onSubmit={saveDecision}>
+        <label>Ministério<select value={decisionForm.ministry_id} onChange={e => setDecisionForm(s => ({ ...s, ministry_id: e.target.value }))}><option value="">Nacional / Presidência</option>{ministries.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
         <label>Título<input value={decisionForm.title} onChange={e => setDecisionForm(s => ({ ...s, title: e.target.value }))} required/></label>
         <label>Categoria<select value={decisionForm.category} onChange={e => setDecisionForm(s => ({ ...s, category: e.target.value }))}>{categories.map(value => <option key={value} value={value.toLowerCase().replaceAll(" ","_")}>{value}</option>)}</select></label>
         <label className="we-admin-wide">Descrição<textarea value={decisionForm.description} onChange={e => setDecisionForm(s => ({ ...s, description: e.target.value }))} required/></label>
@@ -345,6 +345,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
 
     {tab === "legislation" && <>
       {(canManage || hasAnyPermission("legislation.create")) && countryId && <form className="we-form" onSubmit={saveLegislation}>
+        <label>Ministério<select value={legislationForm.ministry_id} onChange={e => setLegislationForm(s => ({ ...s, ministry_id: e.target.value }))}><option value="">Nacional / Presidência</option>{ministries.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
         <label>Identificação<input value={legislationForm.reference_number} onChange={e => setLegislationForm(s => ({ ...s, reference_number: e.target.value }))} placeholder="Opcional"/></label>
         <label>Título<input value={legislationForm.title} onChange={e => setLegislationForm(s => ({ ...s, title: e.target.value }))} required/></label>
         <label>Categoria<select value={legislationForm.category} onChange={e => setLegislationForm(s => ({ ...s, category: e.target.value }))}>{categories.map(value => <option key={value} value={value.toLowerCase().replaceAll(" ","_")}>{value}</option>)}</select></label>
@@ -356,6 +357,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
 
     {tab === "announcements" && <>
       {(canManage || hasAnyPermission("announcement.create")) && countryId && <form className="we-form" onSubmit={saveAnnouncement}>
+        <label>Ministério<select value={announcementForm.ministry_id} onChange={e => setAnnouncementForm(s => ({ ...s, ministry_id: e.target.value }))}><option value="">Nacional / Presidência</option>{ministries.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
         <label>Título<input value={announcementForm.title} onChange={e => setAnnouncementForm(s => ({ ...s, title: e.target.value }))} required/></label>
         <label>Categoria<input value={announcementForm.category} onChange={e => setAnnouncementForm(s => ({ ...s, category: e.target.value }))}/></label>
         <label className="we-admin-wide">Conteúdo<textarea value={announcementForm.content} onChange={e => setAnnouncementForm(s => ({ ...s, content: e.target.value }))} required/></label>
@@ -368,6 +370,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
 
     {tab === "infrastructure" && <>
       {canManage && countryId && <form className="we-form" onSubmit={saveInfrastructure}>
+        <label>Ministério responsável<select value={infrastructureForm.ministry_id} onChange={e => setInfrastructureForm(s => ({ ...s, ministry_id: e.target.value }))}><option value="">Sem ministério vinculado</option>{ministries.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
         <label>Nome<input value={infrastructureForm.name} onChange={e => setInfrastructureForm(s => ({ ...s, name: e.target.value }))} required/></label>
         <label>Categoria<select value={infrastructureForm.category} onChange={e => setInfrastructureForm(s => ({ ...s, category: e.target.value }))}>{["Cidade","Região","Aeroporto","Porto","Rodovia","Ferrovia","Hospital","Escola","Instalação pública","Outra"].map(value => <option key={value}>{value}</option>)}</select></label>
         <label className="we-admin-wide">Descrição<input value={infrastructureForm.description} onChange={e => setInfrastructureForm(s => ({ ...s, description: e.target.value }))}/></label>
@@ -383,6 +386,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
 
     {tab === "budget" && <>
       {(canManage || hasAnyPermission("budget.read")) && countryId && <form className="we-form" onSubmit={saveBudget}>
+        <label>Ministério<select value={budgetForm.ministry_id} onChange={e => setBudgetForm(s => ({ ...s, ministry_id: e.target.value }))}><option value="">Orçamento nacional</option>{ministries.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
         <label>Título do planejamento<input value={budgetForm.title} onChange={e => setBudgetForm(s => ({ ...s, title: e.target.value }))} required/></label>
         <label>Período fiscal<input value={budgetForm.fiscal_period} onChange={e => setBudgetForm(s => ({ ...s, fiscal_period: e.target.value }))} placeholder="Ex.: 2027"/></label>
         <label>Tipo<select value={budgetForm.budget_type} onChange={e => setBudgetForm(s => ({ ...s, budget_type: e.target.value }))}><option value="planned">Orçamento previsto</option><option value="expense_plan">Despesas planejadas</option><option value="investment_plan">Investimentos planejados</option></select></label>
