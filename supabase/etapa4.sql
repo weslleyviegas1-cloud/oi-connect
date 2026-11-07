@@ -274,6 +274,9 @@ create index if not exists government_appointments_candidate_idx on public.gover
 create unique index if not exists government_appointments_one_pending_candidate_idx
   on public.government_appointments(country_id,candidate_profile_id)
   where action_type='appointment' and status='pending';
+create unique index if not exists government_appointments_one_pending_exoneration_idx
+  on public.government_appointments(member_id)
+  where action_type='exoneration' and status='pending';
 create index if not exists government_decisions_country_created_idx on public.government_decisions(country_id,created_at desc);
 create index if not exists national_legislation_country_status_idx on public.national_legislation(country_id,status);
 create index if not exists government_announcements_country_published_idx on public.government_announcements(country_id,published_at desc);
@@ -499,8 +502,8 @@ begin
 
     v_permissions := coalesce(p_permission_keys,
       case
+        when lower(v_app.position) like '%vice-ministro%' then array['ministry.read','department.read','announcement.create','decision.create']
         when lower(v_app.position) like '%ministro%' then array['ministry.read','department.read','department.manage','announcement.create','decision.create','legislation.create','budget.read','infrastructure.read']
-        when lower(v_app.position) like '%vice%' then array['ministry.read','department.read','announcement.create','decision.create']
         else array['department.read']
       end
     );
