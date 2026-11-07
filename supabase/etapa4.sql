@@ -598,6 +598,58 @@ begin
 end;
 $$;
 
+-- Impede que as alocações planejadas ultrapassem o valor previsto do orçamento.
+create or replace function public.validate_government_budget_allocation()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $
+declare
+  v_budget_amount numeric(20,2);
+  v_allocated_amount numeric(20,2);
+begin
+  select planned_amount into v_budget_amount
+  from public.government_budgets
+  where id=new.budget_id and country_id=new.country_id
+  for update;
+  if not found then raise exception 'Orçamento não encontrado neste país.'; end if;
+
+  select coalesce(sum(planned_amount),0) into v_allocated_amount
+  from public.government_budget_allocations
+  where budget_id=new.budget_id and id is distinct from new.id;
+
+  if v_allocated_amount + new.planned_amount > v_budget_amount then
+    raise exception 'A soma das alocações ultrapassa o orçamento planejado.';
+  end if;
+  return new;
+end;
+$;
+
+create or replace function public.validate_government_budget_total()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $
+declare v_allocated_amount numeric(20,2);
+begin
+  select coalesce(sum(planned_amount),0) into v_allocated_amount
+  from public.government_budget_allocations where budget_id=new.id;
+  if new.planned_amount < v_allocated_amount then
+    raise exception 'O orçamento previsto não pode ficar abaixo das alocações já registradas.';
+  end if;
+  return new;
+end;
+$;
+
+drop trigger if exists government_budget_allocation_limit on public.government_budget_allocations;
+create trigger government_budget_allocation_limit before insert or update on public.government_budget_allocations
+  for each row execute function public.validate_government_budget_allocation();
+drop trigger if exists government_budget_total_limit on public.government_budgets;
+create trigger government_budget_total_limit before update of planned_amount on public.government_budgets
+  for each row execute function public.validate_government_budget_total();
+
 -- Auditoria automática: registra operações feitas nas tabelas governamentais.
 create or replace function public.log_government_change()
 returns trigger
@@ -1031,6 +1083,8 @@ revoke all on function public.has_government_permission(uuid,text,uuid,uuid) fro
 revoke all on function public.is_government_country_citizen(uuid) from public, anon;
 revoke all on function public.validate_government_permission_scope() from public, anon;
 revoke all on function public.enforce_government_workflow() from public, anon;
+revoke all on function public.validate_government_budget_allocation() from public, anon;
+revoke all on function public.validate_government_budget_total() from public, anon;
 revoke all on function public.request_government_appointment(uuid,uuid,uuid,text) from public, anon;
 revoke all on function public.request_government_exoneration(uuid,text) from public, anon;
 revoke all on function public.review_government_appointment(uuid,text,text,text[]) from public, anon;
