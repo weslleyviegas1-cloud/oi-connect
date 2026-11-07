@@ -131,7 +131,7 @@ function AuthPage() {
               <select value={countryId} onChange={e => setCountryId(e.target.value)} required disabled={loadingCountries || availableCountries.length === 0}>
                 {availableCountries.length === 0
                   ? <option value="">{loadingCountries ? "Carregando países..." : "Nenhum país disponível"}</option>
-                  : availableCountries.map(country => <option key={country.id} value={country.id}>{country.flag ? country.flag + " " : ""}{country.name}</option>)}
+                  : availableCountries.map(country => <option key={country.id} value={country.id}>{country.flag && !/^(https?:|data:image\\/)/i.test(country.flag) ? country.flag + " " : "🏳️ "}{country.name}</option>)}
               </select>
             </label>
             {playerType === "president" && <p className="we-note">Sua solicitação será analisada pelo Super Admin. Você só será presidente depois da aprovação.</p>}
