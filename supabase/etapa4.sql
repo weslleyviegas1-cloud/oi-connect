@@ -185,18 +185,20 @@ create table if not exists public.government_budgets (
   status text not null default 'draft' check (status in ('draft','approved','archived')),
   created_by uuid not null references public.profiles(id),
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  unique (id, country_id)
 );
 
 create table if not exists public.government_budget_allocations (
   id uuid primary key default gen_random_uuid(),
   country_id uuid not null references public.countries(id),
-  budget_id uuid not null references public.government_budgets(id) on delete restrict,
+  budget_id uuid not null,
   ministry_id uuid not null,
   planned_amount numeric(20,2) not null default 0 check (planned_amount >= 0),
   description text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
+  foreign key (budget_id, country_id) references public.government_budgets(id, country_id) on delete restrict,
   foreign key (ministry_id, country_id) references public.ministries(id, country_id),
   unique (budget_id, ministry_id)
 );
