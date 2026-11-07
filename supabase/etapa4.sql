@@ -576,6 +576,9 @@ begin
     raise exception 'Acesso permitido somente ao próprio país.';
   end if;
   if v_country_id is null then raise exception 'Sua conta ainda não está vinculada a um país.'; end if;
+  if not public.is_world_admin() and not public.is_government_country_citizen(v_country_id) then
+    raise exception 'Sua conta não está ativa para consultar o governo deste país.';
+  end if;
 
   select jsonb_build_object(
     'country', (select to_jsonb(c) from public.countries c where c.id=v_country_id),
