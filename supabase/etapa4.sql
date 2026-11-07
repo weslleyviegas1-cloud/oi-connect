@@ -604,7 +604,8 @@ returns trigger
 language plpgsql
 security definer
 set search_path = public
-as $
+as $$
+declare
 declare
   v_budget_amount numeric(20,2);
   v_allocated_amount numeric(20,2);
@@ -624,14 +625,15 @@ begin
   end if;
   return new;
 end;
-$;
+$$;
 
 create or replace function public.validate_government_budget_total()
 returns trigger
 language plpgsql
 security definer
 set search_path = public
-as $
+as $$
+declare
 declare v_allocated_amount numeric(20,2);
 begin
   select coalesce(sum(planned_amount),0) into v_allocated_amount
@@ -641,7 +643,7 @@ begin
   end if;
   return new;
 end;
-$;
+$$;
 
 drop trigger if exists government_budget_allocation_limit on public.government_budget_allocations;
 create trigger government_budget_allocation_limit before insert or update on public.government_budget_allocations
