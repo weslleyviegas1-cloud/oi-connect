@@ -1,0 +1,32 @@
+name: Validate WORLD ECONOMY Etapa 4
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/components/government-portal.tsx"
+      - "src/routes/index.tsx"
+      - "supabase/etapa4.sql"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/etapa4-validation.yml"
+  workflow_dispatch:
+
+jobs:
+  frontend:
+    name: Lint and production build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Build
+        run: npm run build
