@@ -14,7 +14,7 @@ type GovernmentProfile = {
   minecraft_username?: string | null;
 };
 type Row = Record<string, any>;
-type Tab = "overview" | "ministries" | "departments" | "appointments" | "decisions" | "legislation" | "announcements" | "infrastructure" | "budget";
+type Tab = "overview" | "ministries" | "departments" | "appointments" | "decisions" | "legislation" | "announcements" | "infrastructure" | "budget" | "notifications";
 
 const tabs: { id: Tab; label: string; Icon: typeof Landmark }[] = [
   { id: "overview", label: "Visão geral", Icon: Activity },
@@ -26,6 +26,7 @@ const tabs: { id: Tab; label: string; Icon: typeof Landmark }[] = [
   { id: "announcements", label: "Comunicados", Icon: Bell },
   { id: "infrastructure", label: "Infraestrutura", Icon: MapPin },
   { id: "budget", label: "Orçamento", Icon: Wallet },
+  { id: "notifications", label: "Notificações", Icon: Bell },
 ];
 
 const dateLabel = (value?: string | null) => value ? new Date(value).toLocaleString("pt-BR") : "—";
@@ -52,6 +53,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
   const [infrastructure, setInfrastructure] = useState<Row[]>([]);
   const [budgets, setBudgets] = useState<Row[]>([]);
   const [allocations, setAllocations] = useState<Row[]>([]);
+  const [notifications, setNotifications] = useState<Row[]>([]);
   const [candidateSearch, setCandidateSearch] = useState("");
   const [candidates, setCandidates] = useState<Row[]>([]);
   const [selectedCandidate, setSelectedCandidate] = useState("");
@@ -151,6 +153,13 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
           memberProfile: (memberProfiles.data ?? []).find(person => person.id === (memberResult.data ?? []).find(member => member.id === row.member_id)?.profile_id),
         })));
       } else setAppointments([]);
+      const notificationQuery = isAdmin
+        ? supabase.from("admin_notifications").select("*").or("recipient_id.eq." + profile.id + ",recipient_id.is.null").order("created_at", { ascending: false }).limit(100)
+        : supabase.from("admin_notifications").select("*").eq("recipient_id", profile.id).order("created_at", { ascending: false }).limit(100);
+      const notificationResult = await notificationQuery;
+      if (notificationResult.error) throw notificationResult.error;
+      setNotifications(notificationResult.data ?? []);
+
       if (isAdmin) {
         const [decisionQueue, legislationQueue] = await Promise.all([
           supabase.from("government_decisions").select("*").eq("status", "pending_approval").order("created_at", { ascending: false }),
@@ -366,6 +375,12 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
   const archiveAnnouncement = async (row: Row) => {
     await run(() => supabase.from("government_announcements").update({ status: "archived", updated_at: new Date().toISOString() }).eq("id", row.id), "Comunicado arquivado.");
   };
+  const markNotificationRead = async (id: string) => {
+    await run(async () => {
+      const result = await supabase.rpc("admin_mark_notification_read", { p_notification_id: id });
+      return { error: result.error };
+    }, "Notificação marcada como lida.");
+  };
   const changeMinistryStatus = async (row: Row) => {
     await run(() => supabase.from("ministries").update({
       status: row.status === "active" ? "inactive" : "active", updated_at: new Date().toISOString(),
@@ -495,6 +510,13 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
       </form>}
       {infrastructure.map(row => <article className="we-admin-row" key={row.id}><div><b>{row.name} • {row.category}</b><small>{row.location_name || "Localização não informada"} • {row.coord_x ?? "—"}, {row.coord_y ?? "—"}, {row.coord_z ?? "—"} • {row.status}</small></div></article>)}
       {!infrastructure.length && <div className="we-empty">Nenhuma infraestrutura cadastrada.</div>}
+    </>}
+
+    {tab === "notifications" && <>
+      <section className="we-panel"><header><h2><Bell/> Notificações do governo</h2></header>
+        {notifications.map(row => <article className="we-admin-row" key={row.id}><div><b>{row.title}</b><small>{row.description} • {dateLabel(row.created_at)} • {row.is_read ? "Lida" : "Não lida"}</small></div>{!row.is_read && <button type="button" disabled={busy} onClick={() => void markNotificationRead(row.id)}>Marcar como lida</button>}</article>)}
+        {!notifications.length && <div className="we-empty">Nenhuma notificação recebida.</div>}
+      </section>
     </>}
 
     {tab === "budget" && <>
