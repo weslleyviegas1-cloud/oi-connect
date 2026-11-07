@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   Activity, Bell, BookOpen, Building2, Check, ClipboardList, Flag, Landmark,
-  MapPin, Plus, RefreshCw, Search, ShieldCheck, Users, Wallet, X,
+  MapPin, Plus, RefreshCw, ShieldCheck, Users, Wallet, X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
@@ -116,7 +116,26 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
       if (isAdmin || countryId) {
         const result = await appointmentQuery.limit(100);
         if (result.error) throw result.error;
-        setAppointments(result.data ?? []);
+        const appointmentRows = result.data ?? [];
+        const candidateIds = appointmentRows.map(row => row.candidate_profile_id).filter(Boolean);
+        const memberIds = appointmentRows.map(row => row.member_id).filter(Boolean);
+        const [candidateResult, memberResult] = await Promise.all([
+          candidateIds.length ? supabase.from("profiles").select("id,username,player_number,minecraft_username").in("id", candidateIds) : Promise.resolve({ data: [], error: null }),
+          memberIds.length ? supabase.from("government_members").select("id,profile_id,position").in("id", memberIds) : Promise.resolve({ data: [], error: null }),
+        ]);
+        if (candidateResult.error) throw candidateResult.error;
+        if (memberResult.error) throw memberResult.error;
+        const memberProfileIds = (memberResult.data ?? []).map(row => row.profile_id);
+        const memberProfiles = memberProfileIds.length
+          ? await supabase.from("profiles").select("id,username,player_number").in("id", memberProfileIds)
+          : { data: [], error: null };
+        if (memberProfiles.error) throw memberProfiles.error;
+        setAppointments(appointmentRows.map(row => ({
+          ...row,
+          candidate: (candidateResult.data ?? []).find(person => person.id === row.candidate_profile_id),
+          member: (memberResult.data ?? []).find(member => member.id === row.member_id),
+          memberProfile: (memberProfiles.data ?? []).find(person => person.id === (memberResult.data ?? []).find(member => member.id === row.member_id)?.profile_id),
+        })));
       } else setAppointments([]);
       if (isAdmin) {
         const [decisionQueue, legislationQueue] = await Promise.all([
