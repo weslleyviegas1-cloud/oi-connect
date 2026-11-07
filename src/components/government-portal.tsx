@@ -480,6 +480,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
         <label>Coordenada X<input type="number" value={infrastructureForm.coord_x} onChange={e => setInfrastructureForm(s => ({ ...s, coord_x: e.target.value }))}/></label>
         <label>Coordenada Y<input type="number" value={infrastructureForm.coord_y} onChange={e => setInfrastructureForm(s => ({ ...s, coord_y: e.target.value }))}/></label>
         <label>Coordenada Z<input type="number" value={infrastructureForm.coord_z} onChange={e => setInfrastructureForm(s => ({ ...s, coord_z: e.target.value }))}/></label>
+        <label>Responsável<select value={infrastructureForm.responsible_member_id} onChange={e => setInfrastructureForm(s => ({ ...s, responsible_member_id: e.target.value }))}><option value="">Sem responsável</option>{members.filter(member => member.status === "active").map(member => <option key={member.id} value={member.id}>{member.profile?.username ?? member.position} — {member.position}</option>)}</select></label>
         <button className="we-primary we-admin-wide" disabled={busy}><Plus/> Cadastrar infraestrutura</button>
       </form>}
       {infrastructure.map(row => <article className="we-admin-row" key={row.id}><div><b>{row.name} • {row.category}</b><small>{row.location_name || "Localização não informada"} • {row.coord_x ?? "—"}, {row.coord_y ?? "—"}, {row.coord_z ?? "—"} • {row.status}</small></div></article>)}
