@@ -520,7 +520,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
     </>}
 
     {tab === "budget" && <>
-      {(canManage || hasAnyPermission("budget.read")) && countryId && <form className="we-form" onSubmit={saveBudget}>
+      {(canManage || hasAnyPermission("budget.manage")) && countryId && <form className="we-form" onSubmit={saveBudget}>
         <label>Ministério<select value={budgetForm.ministry_id} onChange={e => setBudgetForm(s => ({ ...s, ministry_id: e.target.value }))}><option value="">Orçamento nacional</option>{ministries.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
         <label>Título do planejamento<input value={budgetForm.title} onChange={e => setBudgetForm(s => ({ ...s, title: e.target.value }))} required/></label>
         <label>Período fiscal<input value={budgetForm.fiscal_period} onChange={e => setBudgetForm(s => ({ ...s, fiscal_period: e.target.value }))} placeholder="Ex.: 2027"/></label>
@@ -529,7 +529,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
         <label className="we-admin-wide">Descrição<textarea value={budgetForm.description} onChange={e => setBudgetForm(s => ({ ...s, description: e.target.value }))}/></label>
         <button className="we-primary we-admin-wide" disabled={busy}><Plus/> Salvar planejamento</button>
       </form>}
-      {canManage && countryId && budgets.length > 0 && ministries.length > 0 && <form className="we-form" onSubmit={saveAllocation}>
+      {(canManage || hasAnyPermission("budget.manage")) && countryId && budgets.length > 0 && ministries.length > 0 && <form className="we-form" onSubmit={saveAllocation}>
         <div className="we-admin-form-title"><div><small>DISTRIBUIÇÃO POR MINISTÉRIO</small><h3>Planejar alocação</h3></div></div>
         <label>Orçamento<select value={allocationForm.budget_id} onChange={e => setAllocationForm(s => ({ ...s, budget_id: e.target.value }))} required><option value="">Selecione</option>{budgets.map(row => <option key={row.id} value={row.id}>{row.title}</option>)}</select></label>
         <label>Ministério<select value={allocationForm.ministry_id} onChange={e => setAllocationForm(s => ({ ...s, ministry_id: e.target.value }))} required><option value="">Selecione</option>{ministries.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
