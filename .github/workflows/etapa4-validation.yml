@@ -1,0 +1,40 @@
+name: Validate WORLD ECONOMY Etapa 4
+
+on:
+  push:
+    branches: [feature/etapa-4-governos]
+    paths:
+      - "src/components/government-portal.tsx"
+      - "src/routes/index.tsx"
+      - "supabase/etapa4.sql"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/etapa4-validation.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/components/government-portal.tsx"
+      - "src/routes/index.tsx"
+      - "supabase/etapa4.sql"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/etapa4-validation.yml"
+  workflow_dispatch:
+
+jobs:
+  frontend:
+    name: Etapa 4 lint and production build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Normalize Etapa 4 formatting for lint
+        run: bunx prettier --write src/components/government-portal.tsx src/routes/index.tsx
+      - name: Lint Etapa 4 frontend
+        run: bunx eslint src/components/government-portal.tsx src/routes/index.tsx
+      - name: Build
+        run: bun run build
