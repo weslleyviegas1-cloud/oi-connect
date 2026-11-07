@@ -28,3 +28,5 @@ use the editor.
   own key and store it in Secrets.
 - **Secrets.** Lovable manages them. Do not put secret values in the repo.
 <!-- LOVABLE:END -->
+
+- Backend is the user's external Supabase via `src/lib/supabase.ts` (publishable key in code, access enforced by RLS) — Lovable Cloud is not used.
