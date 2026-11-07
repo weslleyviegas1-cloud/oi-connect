@@ -138,7 +138,15 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
         if (isAdmin || isPresident) {
           const auditResult = await supabase.from("government_audit_logs").select("*").eq("country_id", countryId).order("created_at", { ascending: false }).limit(100);
           if (auditResult.error) throw auditResult.error;
-          setAuditLogs(auditResult.data ?? []);
+          const actorIds = (auditResult.data ?? []).map(row => row.actor_id).filter(Boolean);
+          const actors = actorIds.length
+            ? await supabase.from("profiles").select("id,username,player_number").in("id", actorIds)
+            : { data: [], error: null };
+          if (actors.error) throw actors.error;
+          setAuditLogs((auditResult.data ?? []).map(row => ({
+            ...row,
+            actor: (actors.data ?? []).find(person => person.id === row.actor_id),
+          })));
         } else setAuditLogs([]);
         const errors = [ministryRes, departmentRes, memberRes, decisionRes, lawRes, announcementRes, infraRes, budgetRes, allocationRes].filter(result => result.error);
         if (errors.length) notify("Algumas áreas não puderam ser carregadas. Confira as permissões da Etapa 4 no Supabase.");
@@ -541,7 +549,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
 
     {tab === "audit" && <>
       {(isAdmin || isPresident) ? <section className="we-panel"><header><h2><ClipboardList/> Histórico administrativo</h2></header>
-        {auditLogs.map(row => <article className="we-admin-row" key={row.id}><div><b>{row.description}</b><small>{row.operation} • {row.object_type} • Registro: {row.object_id ?? "—"}</small><small>Responsável: {row.actor_id ?? "Sistema"} • {dateLabel(row.created_at)}</small></div></article>)}
+        {auditLogs.map(row => <article className="we-admin-row" key={row.id}><div><b>{row.description}</b><small>{row.operation} • {row.object_type} • Registro: {row.object_id ?? "—"}</small><small>Responsável: {row.actor?.username ?? (row.actor_id ? row.actor_id : "Sistema")} {row.actor?.player_number ? `• #${row.actor.player_number}` : ""} • {dateLabel(row.created_at)}</small></div></article>)}
         {!auditLogs.length && <div className="we-empty">Nenhuma operação administrativa registrada.</div>}
       </section> : <div className="we-note">O histórico administrativo é restrito à Presidência e ao Super Admin.</div>}
     </>}
