@@ -160,13 +160,17 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
     const search = async () => {
       if (!isPresident || !countryId || candidateSearch.trim().length < 2) { setCandidates([]); return; }
       const q = candidateSearch.trim();
-      const { data, error } = await supabase.from("profiles")
+      const base = () => supabase.from("profiles")
         .select("id,username,minecraft_username,player_number,avatar_url")
         .eq("country_id", countryId).eq("role", "citizen")
-        .eq("registration_status", "active").eq("account_status", "active")
-        .or(`username.ilike.%${q}%,minecraft_username.ilike.%${q}%,player_number.eq.${/^\\d+$/.test(q) ? q : "-1"}`)
-        .limit(12);
-      if (!error) setCandidates(data ?? []);
+        .eq("registration_status", "active").eq("account_status", "active");
+      const searches = await Promise.all([
+        base().ilike("username", `%${q}%`).limit(12),
+        base().ilike("minecraft_username", `%${q}%`).limit(12),
+        /^\\d+$/.test(q) ? base().eq("player_number", Number(q)).limit(12) : Promise.resolve({ data: [], error: null }),
+      ]);
+      const error = searches.find(result => result.error)?.error;
+      if (!error) setCandidates(Array.from(new Map(searches.flatMap(result => result.data ?? []).map(person => [person.id, person])).values()).slice(0, 12));
     };
     const timer = window.setTimeout(() => { void search(); }, 250);
     return () => window.clearTimeout(timer);
