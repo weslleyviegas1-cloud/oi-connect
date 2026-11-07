@@ -284,7 +284,7 @@ export function AdminGovernance({ notify }: { notify: (message: string) => void 
       </div>
       <div className="we-admin-country-grid">{filteredCountries.map(country => {
         const president = players.find(p => p.country_id === country.id && p.role === "president");
-        const citizenCount = players.filter(p => p.country_id === country.id && p.role === "citizen").length;
+        const citizenCount = players.filter(p => p.country_id === country.id && p.role === "citizen" && p.account_status !== "suspended").length;
         return <article className="we-admin-country-card" key={country.id}>{country.flag ? (isFlagImage(country.flag) ? <img src={country.flag} alt={`Bandeira de ${country.name}`}/> : <span className="we-admin-no-flag">{country.flag}</span>) : <span className="we-admin-no-flag">🌐</span>}<div className="we-admin-country-copy"><b>{country.name}</b><small>{country.capital || "Capital não informada"} • {country.continent || "Continente não informado"}</small><small>Presidente: {president?.username ?? "Nenhum"} • Cidadãos: {citizenCount}</small><small>{country.is_active ? "Ativo" : "Suspenso"} • {country.president_available ? "Vaga liberada" : "Vaga fechada"}</small></div><button type="button" onClick={() => editCountry(country)}>Editar <ChevronRight/></button>{president && <button type="button" className="we-danger" disabled={busy} onClick={() => void removePresident(president)}>Remover presidente</button>}</article>;
       })}{!filteredCountries.length && <div className="we-empty">Nenhum país corresponde aos filtros.</div>}</div>
     </>}
