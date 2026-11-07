@@ -344,6 +344,32 @@ as $$
   );
 $$;
 
+-- Valida o escopo da permissão antes de gravá-la, impedindo referências a outro país.
+create or replace function public.validate_government_permission_scope()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $
+begin
+  if new.scope_type='ministry' and not exists (
+    select 1 from public.ministries m where m.id=new.scope_id and m.country_id=new.country_id
+  ) then
+    raise exception 'O ministério da permissão não pertence ao país do integrante.';
+  elsif new.scope_type='department' and not exists (
+    select 1 from public.government_departments d where d.id=new.scope_id and d.country_id=new.country_id
+  ) then
+    raise exception 'O departamento da permissão não pertence ao país do integrante.';
+  end if;
+  return new;
+end;
+$;
+
+drop trigger if exists government_permission_scope_check on public.government_member_permissions;
+create trigger government_permission_scope_check
+before insert or update on public.government_member_permissions
+for each row execute function public.validate_government_permission_scope();
+
 -- Solicitação de nomeação: apenas o presidente do país pode indicar um cidadão do mesmo país.
 create or replace function public.request_government_appointment(
   p_candidate_profile_id uuid,
