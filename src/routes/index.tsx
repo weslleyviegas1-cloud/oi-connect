@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { Activity, ArrowDownUp, ArrowRight, Bell, Building2, Car, ChartNoAxesCombined, ChevronRight, Coins, FileText, Flag, Globe2, Home, Landmark, LogOut, MapPin, Menu, Plane, Settings, Shield, Trophy, Users, Wallet, X, Zap, Plus, Copy, CheckCircle2, Search, BriefcaseBusiness, ScrollText } from "lucide-react";
+import { Activity, ArrowDownUp, ArrowRight, Bell, Building2, Car, ChartNoAxesCombined, ChevronRight, FileText, Flag, Globe2, Home, Landmark, LogOut, MapPin, Menu, Settings, Shield, Trophy, Users, Wallet, X, Zap, Plus, Copy, CheckCircle2, Search, BriefcaseBusiness, ScrollText } from "lucide-react";
 
 export const Route = createFileRoute("/")({ component: WorldEconomy });
 type Role = "player" | "president" | "admin";
