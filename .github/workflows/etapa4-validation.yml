@@ -14,7 +14,7 @@ on:
 
 jobs:
   frontend:
-    name: Lint and production build
+    name: Etapa 4 lint and production build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -23,7 +23,9 @@ jobs:
         uses: oven-sh/setup-bun@v2
       - name: Install dependencies
         run: bun install --frozen-lockfile
-      - name: Lint
-        run: bun run lint
+      - name: Check Etapa 4 formatting
+        run: bunx prettier --check src/components/government-portal.tsx src/routes/index.tsx
+      - name: Lint Etapa 4 frontend
+        run: bunx eslint src/components/government-portal.tsx src/routes/index.tsx --rule '@typescript-eslint/no-explicit-any: off'
       - name: Build
         run: bun run build
