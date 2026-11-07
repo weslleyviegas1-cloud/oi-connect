@@ -1,23 +1,29 @@
+import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
+import { Activity, ArrowDownUp, ArrowRight, Bell, Building2, Car, ChartNoAxesCombined, ChevronRight, Coins, FileText, Flag, Globe2, Home, Landmark, LogOut, MapPin, Menu, Plane, Settings, Shield, Trophy, Users, Wallet, X, Zap } from "lucide-react";
 
-// The home route ships no og:image, so serve-time hosting can inject the
-// project's social preview (explicit og:image or latest screenshot).
-export const Route = createFileRoute("/")({
-  component: Index,
-});
-
-// IMPORTANT: Replace this placeholder. See ./README.md for routing conventions.
-function Index() {
-  return (
-    <div
-      className="flex min-h-screen items-center justify-center"
-      style={{ backgroundColor: "#fcfbf8" }}
-    >
-      <img
-        data-lovable-blank-page-placeholder="REMOVE_THIS"
-        src="https://cdn.gpteng.co/blank-app-v1.svg"
-        alt="Your app will live here!"
-      />
-    </div>
-  );
+export const Route = createFileRoute("/")({ component: WorldEconomy });
+type Role = "player" | "president" | "admin";
+const menu = [{label:"Início",Icon:Home},{label:"Países",Icon:Flag},{label:"Economia",Icon:ChartNoAxesCombined},{label:"Bancos",Icon:Landmark},{label:"Empresas",Icon:Building2},{label:"Documentos",Icon:FileText},{label:"Veículos",Icon:Car},{label:"Forças Armadas",Icon:Shield},{label:"Configurações",Icon:Settings}];
+const nations = [["🇧🇷","Brasil"],["🇺🇸","Estados Unidos"],["🇩🇪","Alemanha"],["🇫🇷","França"],["🇯🇵","Japão"],["🇨🇦","Canadá"],["🇬🇧","Reino Unido"],["🇮🇹","Itália"],["🇪🇸","Espanha"],["🇦🇷","Argentina"]];
+const headlines = ["Acordos comerciais movimentam a economia global","Indicadores econômicos registram novas variações","Projetos de infraestrutura avançam em diversos países"];
+function WorldEconomy(){
+ const [role,setRole]=useState<Role>("player"),[active,setActive]=useState("Início"),[drawer,setDrawer]=useState(false),[notice,setNotice]=useState("");
+ const notify=(s:string)=>{setNotice(s);window.setTimeout(()=>setNotice(""),2600)};
+ const roleName=role==="admin"?"Administrador Global":role==="president"?"Presidente do Brasil":"Jogador";
+ const actions=role==="admin"?[[Flag,"Gerenciar países"],[Landmark,"Gerenciar bancos"],[Users,"Gerenciar jogadores"],[Activity,"Logs do sistema"],[Settings,"Configurações globais"]] : role==="president"?[[Coins,"Administrar economia"],[FileText,"Criar leis e decretos"],[Users,"Gerenciar ministérios"],[Shield,"Defesa nacional"],[Building2,"Infraestrutura"]] : [[Trophy,"Ranking global"],[ArrowDownUp,"Transferências bancárias"],[FileText,"Documentos e passaporte"],[Building2,"Empresas e empregos"],[MapPin,"Teletransporte para seu país"]];
+ const go=(s:string)=>{setActive(s);setDrawer(false);if(s!=="Início")notify("Módulo visual selecionado. As operações serão conectadas nas próximas etapas.")};
+ return <main className="we-app">
+  <header className="we-topbar"><button className="we-icon we-menu-button" onClick={()=>setDrawer(!drawer)} aria-label="Menu">{drawer?<X/>:<Menu/>}</button><a className="we-brand" href="/"><span className="we-globe"><Globe2/></span><span><b>WORLD ECONOMY</b><small>SIMULADOR GLOBAL DE PAÍSES</small></span></a><nav className="we-topnav">{menu.slice(0,5).map(({label,Icon})=><button key={label} className={active===label?"on":""} onClick={()=>go(label)}><Icon/><span>{label}</span></button>)}</nav><div className="we-user"><button className="we-icon" onClick={()=>notify("Você não tem novas notificações.")}><Bell/></button><span className="we-avatar">🧑🏻‍💻</span><span><b>WesleyViegas</b><small><i/> Online</small></span></div></header>
+  <div className="we-layout"><aside className={`we-sidebar ${drawer?"show":""}`}><div className="we-side-brand"><span className="we-globe big"><Globe2/></span><b>WORLD ECONOMY</b><small>Simulação Global de Países</small></div><label className="we-role">PERFIL DE VISUALIZAÇÃO<select value={role} onChange={e=>{setRole(e.target.value as Role);setActive("Início")}}><option value="player">Jogador</option><option value="president">Presidente</option><option value="admin">Administrador global</option></select></label>{menu.map(({label,Icon})=><button key={label} className={active===label?"active":""} onClick={()=>go(label)}><Icon/><span>{label==="Início"?"Painel Principal":label}</span></button>)}<button onClick={()=>notify("Sessão demonstrativa: nenhuma conta foi desconectada.")}><LogOut/><span>Sair</span></button><div className="we-server"><i/> Servidor online<small>WORLD ECONOMY • v1.0.0</small></div></aside>
+  <section className="we-content"><section className={`we-hero hero-${role}`}><div className="we-hero-copy"><small>WORLD ECONOMY / {roleName.toUpperCase()}</small><h1>{role==="admin"?"Bem-vindo, Administrador!":role==="president"?"Painel Presidencial — Brasil":"Bem-vindo(a), WesleyViegas!"}</h1><p>{role==="admin"?"Acompanhe os indicadores e a atividade geral do mundo.":role==="president"?"Gerencie seu país, sua economia e tome decisões importantes.":"Gerencie sua vida, sua economia e seu país no mundo de World Economy."}</p><button className="we-primary" onClick={()=>go(role==="player"?"Países":"Economia")}>Acessar {role==="player"?"meu país":"painel"} <ArrowRight/></button></div><div className="we-hero-stamp"><Globe2/><b>{role==="admin"?"PAINEL GLOBAL":"BRASIL"}</b><small><i/> Sistema conectado</small></div></section>
+  {active!=="Início"&&<section className="we-module"><small>WORLD ECONOMY / MÓDULO</small><h2>{active}</h2><p>Área visual do módulo. As operações serão conectadas aos dados persistentes do jogo nas próximas etapas.</p><button onClick={()=>setActive("Início")}>Voltar ao painel</button></section>}
+  <section className="we-metrics"><Metric Icon={role==="admin"?Flag:Wallet} title={role==="admin"?"Países cadastrados":"Seu banco"} value={role==="admin"?"195":"R$ 12.450,75"} detail={role==="admin"?"Indicador demonstrativo":"▲ +2,5% neste período"} tone="blue"/><Metric Icon={role==="admin"?Users:Flag} title={role==="admin"?"Jogadores ativos":"Seu país"} value={role==="admin"?"1.248.763":"🇧🇷 Brasil"} detail={role==="admin"?"Indicador demonstrativo":"Cidadão • ID #1024"} tone="green"/><Metric Icon={role==="admin"?Landmark:Trophy} title={role==="admin"?"Instituições bancárias":"Posição global"} value={role==="admin"?"856":"#48º"} detail="Ranking mundial" tone="gold"/><Metric Icon={ChartNoAxesCombined} title={role==="president"?"PIB nacional":"Nacionalidade"} value={role==="president"?"A conectar":"Brasileiro"} detail="Dados aguardando integração" tone="purple"/></section>
+  <section className="we-dashboard"><div className="we-column"><Panel title={role==="admin"?"Países mais poderosos":"Notícias do Mundo"} Icon={role==="admin"?Trophy:Globe2}><div className="we-news">{(role==="admin"?nations.slice(1,6).map(n=>n[0]+" "+n[1]+" — dados a integrar"):headlines).map((s,i)=><article key={i}><span className="we-thumb">{role==="admin"?"🏳️":["🌐","📈","🏙️"][i]}</span><div><b>{s}</b><small>Hoje, {["09:45","09:30","09:20"][i%3]}</small></div><ChevronRight/></article>)}</div></Panel><Panel title="Países disponíveis" Icon={Flag}><div className="we-countries">{nations.map(([flag,name])=><button key={name} onClick={()=>notify(name+" — consulta demonstrativa selecionada.")}><b>{flag}</b><span>{name}</span></button>)}</div></Panel></div>
+  <div className="we-column"><Panel title={role==="admin"?"Ações administrativas":role==="president"?"Ações presidenciais":"Acesso rápido"} Icon={Zap}><div className="we-actions">{actions.map(([Icon,label]:any)=><button key={label} onClick={()=>notify(label+" será habilitado após integração do módulo.")}><Icon/><span>{label}</span><ChevronRight/></button>)}</div></Panel><Panel title="Seu país em destaque" Icon={Globe2}><div className="we-country-feature"><b>🇧🇷</b><span><strong>Brasil</strong><small>Seu país • Dados nacionais</small></span><button onClick={()=>go("Países")}>Ver país</button></div><div className="we-coordinates"><MapPin/><code>/tp 1250 72 -840</code><button onClick={()=>{navigator.clipboard?.writeText("/tp 1250 72 -840");notify("Comando copiado.")}}>Copiar</button></div></Panel></div></section>
+  <footer className="we-footer"><span>WORLD ECONOMY v1.0.0 | Simulação Global • Economia • Política</span><span><i/> Interface inicial</span></footer></section></div>
+  <nav className="we-mobile-tabs">{[[Home,"Início"],[Flag,"Países"],[ChartNoAxesCombined,"Economia"],[Users,"Perfil"]].map(([Icon,label]:any)=><button key={label} onClick={()=>label==="Perfil"?notify("Área de perfil em preparação."):go(label)}><Icon/><span>{label}</span></button>)}</nav>{notice&&<div className="we-toast"><span>✓</span>{notice}</div>}
+ </main>
 }
+function Metric({Icon,title,value,detail,tone}:any){return <article className="we-metric"><span className={`we-metric-icon ${tone}`}><Icon/></span><div><small>{title}</small><strong>{value}</strong><em>{detail}</em></div></article>}
+function Panel({title,Icon,children}:any){return <section className="we-panel"><header><h2><Icon/>{title}</h2><button onClick={()=>{}} aria-label="Mais opções"><ChevronRight/></button></header>{children}</section>}
