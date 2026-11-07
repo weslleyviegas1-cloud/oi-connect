@@ -277,7 +277,7 @@ begin
     update public.countries set
       name=trim(p_name), short_name=nullif(trim(p_short_name),''), identifier=lower(trim(p_identifier)),
       flag=nullif(trim(p_flag),''), description=nullif(trim(p_description),''), capital=nullif(trim(p_capital),''),
-      continent=nullif(trim(p_continent),''), currency_name=nullif(trim(p_currency_name),
+      continent=nullif(trim(p_continent),''), currency_name=nullif(trim(p_currency_name),''),
       currency_code=nullif(upper(trim(p_currency_code)),''), coord_x=p_coord_x, coord_y=p_coord_y, coord_z=p_coord_z,
       spawn_x=p_spawn_x, spawn_y=p_spawn_y, spawn_z=p_spawn_z, spawn_name=nullif(trim(p_spawn_name),''),
       spawn_description=nullif(trim(p_spawn_description),''), is_active=p_is_active,
