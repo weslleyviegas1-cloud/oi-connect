@@ -318,6 +318,9 @@ as $$
     from public.government_member_permissions gp
     join public.government_members gm on gm.id = gp.member_id
       and gm.country_id = gp.country_id and gm.status = 'active'
+    join public.profiles member_profile on member_profile.id = gm.profile_id
+      and coalesce(member_profile.account_status,'active') = 'active'
+      and member_profile.registration_status = 'active'
     where gp.country_id = p_country_id
       and gp.permission_key = p_permission_key
       and gm.profile_id = auth.uid()
