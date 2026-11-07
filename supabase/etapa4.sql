@@ -747,6 +747,21 @@ drop trigger if exists national_legislation_workflow on public.national_legislat
 create trigger national_legislation_workflow before update of status on public.national_legislation
   for each row execute function public.enforce_government_workflow();
 
+-- Usuários podem marcar somente as próprias notificações como lidas.
+create or replace function public.mark_own_notification_read(p_notification_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $
+begin
+  update public.admin_notifications
+    set is_read=true
+    where id=p_notification_id and recipient_id=auth.uid();
+  if not found then raise exception 'Notificação própria não encontrada.'; end if;
+end;
+$;
+
 -- Revisão de decisões e propostas legislativas: somente o Super Admin aprova ou rejeita.
 create or replace function public.review_government_decision(
   p_decision_id uuid,
@@ -1093,6 +1108,7 @@ revoke all on function public.validate_government_permission_scope() from public
 revoke all on function public.enforce_government_workflow() from public, anon;
 revoke all on function public.validate_government_budget_allocation() from public, anon;
 revoke all on function public.validate_government_budget_total() from public, anon;
+revoke all on function public.mark_own_notification_read(uuid) from public, anon;
 revoke all on function public.request_government_appointment(uuid,uuid,uuid,text) from public, anon;
 revoke all on function public.request_government_exoneration(uuid,text) from public, anon;
 revoke all on function public.review_government_appointment(uuid,text,text,text[]) from public, anon;
@@ -1105,6 +1121,7 @@ revoke all on function public.notify_government_publication() from public, anon;
 grant execute on function public.is_country_president(uuid) to authenticated;
 grant execute on function public.has_government_permission(uuid,text,uuid,uuid) to authenticated;
 grant execute on function public.is_government_country_citizen(uuid) to authenticated;
+grant execute on function public.mark_own_notification_read(uuid) to authenticated;
 grant execute on function public.request_government_appointment(uuid,uuid,uuid,text) to authenticated;
 grant execute on function public.request_government_exoneration(uuid,text) to authenticated;
 grant execute on function public.review_government_appointment(uuid,text,text,text[]) to authenticated;
