@@ -508,9 +508,12 @@ begin
       end
     );
     foreach v_key in array v_permissions loop
-      if v_key not in ('ministry.read','department.read','department.manage','announcement.create',
+      if v_key not in ('ministry.read','ministry.manage','department.read','department.manage','announcement.create',
         'decision.create','legislation.create','budget.read','budget.manage','infrastructure.read','infrastructure.manage') then
         raise exception 'Permissão não autorizada: %',v_key;
+      end if;
+      if v_scope_type='department' and v_key not in ('department.read','department.manage') then
+        raise exception 'Permissão % não pode ser concedida no escopo de departamento.',v_key;
       end if;
       insert into public.government_member_permissions(
         country_id,member_id,permission_key,scope_type,scope_id,granted_by
