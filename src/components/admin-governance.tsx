@@ -41,6 +41,7 @@ const tabItems: { id: Tab; label: string; Icon: typeof Globe2 }[] = [
 ];
 const asNumber = (value: string) => value.trim() === "" ? null : Number(value);
 const dateTime = (value: string) => new Date(value).toLocaleString("pt-BR");
+const isFlagImage = (value: string | null | undefined) => !!value && /^(https?:|data:image\/)/i.test(value);
 
 export function AdminGovernance({ notify }: { notify: (message: string) => void }) {
   const [tab, setTab] = useState<Tab>("overview");
@@ -250,7 +251,7 @@ export function AdminGovernance({ notify }: { notify: (message: string) => void 
       <div className="we-admin-stat-grid">{statCards.map(([label, value, Icon]) => <article className="we-admin-stat" key={label}><span><Icon/></span><div><small>{label}</small><strong>{value.toLocaleString("pt-BR")}</strong></div></article>)}</div>
       <div className="we-admin-columns">
         <section className="we-panel"><header><h2><ShieldCheck/> Solicitações pendentes</h2><button type="button" onClick={() => setTab("applications")}>Ver todas <ChevronRight/></button></header>
-          {applications.length ? applications.slice(0,5).map(app => <article className="we-admin-row" key={app.id}><div><b>{app.player?.username ?? "Jogador"} • #{app.player?.player_number ?? "—"}</b><small>{app.country?.flag ?? "🌐"} {app.country?.name ?? "País"} • {dateTime(app.requested_at)}</small></div><button type="button" onClick={() => setTab("applications")}>Analisar</button></article>) : <div className="we-empty">Nenhuma solicitação pendente.</div>}
+          {applications.length ? applications.slice(0,5).map(app => <article className="we-admin-row" key={app.id}><div><b>{app.player?.username ?? "Jogador"} • #{app.player?.player_number ?? "—"}</b><small>{app.country?.flag && !isFlagImage(app.country.flag) ? app.country.flag : "🌐"} {app.country?.name ?? "País"} • {dateTime(app.requested_at)}</small></div><button type="button" onClick={() => setTab("applications")}>Analisar</button></article>) : <div className="we-empty">Nenhuma solicitação pendente.</div>}
         </section>
         <section className="we-panel"><header><h2><Activity/> Atividades recentes</h2><button type="button" onClick={() => setTab("audit")}>Auditoria <ChevronRight/></button></header>
           {audit.slice(0,6).map(item => <article className="we-admin-row" key={item.id}><div><b>{item.description}</b><small>{item.operation} • {dateTime(item.created_at)}</small></div></article>)}
@@ -269,7 +270,7 @@ export function AdminGovernance({ notify }: { notify: (message: string) => void 
         {input("Capital","capital")}{input("Continente","continent")}
         {input("Nome da moeda","currency_name")}{input("Código da moeda","currency_code")}
         <label className="we-admin-wide">Descrição<textarea value={countryForm.description} onChange={e => setCountryForm((s: any) => ({ ...s, description: e.target.value }))}/></label>
-        <div className="we-admin-flag-upload"><label>Bandeira nacional — upload de imagem<input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" onChange={e => { const file = e.target.files?.[0] ?? null; setFlagFile(file); setFlagPreview(file ? URL.createObjectURL(file) : countryForm.flag); }}/></label>{flagPreview ? <img src={flagPreview} alt="Pré-visualização da bandeira"/> : <span><ImagePlus/> Pré-visualização da bandeira</span>}</div>
+        <div className="we-admin-flag-upload"><label>Bandeira nacional — upload de imagem<input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" onChange={e => { const file = e.target.files?.[0] ?? null; setFlagFile(file); setFlagPreview(file ? URL.createObjectURL(file) : countryForm.flag); }}/></label>{flagPreview ? (isFlagImage(flagPreview) ? <img src={flagPreview} alt="Pré-visualização da bandeira"/> : <strong className="we-admin-flag-emoji">{flagPreview}</strong>) : <span><ImagePlus/> Pré-visualização da bandeira</span>}</div>
         <div className="we-admin-subheading">Coordenadas oficiais do país</div>
         {input("Coordenada X","coord_x","number")}{input("Coordenada Y","coord_y","number")}{input("Coordenada Z","coord_z","number")}
         <div className="we-admin-subheading">Ponto de nascimento do país</div>
@@ -284,7 +285,7 @@ export function AdminGovernance({ notify }: { notify: (message: string) => void 
       <div className="we-admin-country-grid">{filteredCountries.map(country => {
         const president = players.find(p => p.country_id === country.id && p.role === "president");
         const citizenCount = players.filter(p => p.country_id === country.id && p.role === "citizen").length;
-        return <article className="we-admin-country-card" key={country.id}>{country.flag ? <img src={country.flag} alt={`Bandeira de ${country.name}`}/> : <span className="we-admin-no-flag">🌐</span>}<div className="we-admin-country-copy"><b>{country.name}</b><small>{country.capital || "Capital não informada"} • {country.continent || "Continente não informado"}</small><small>Presidente: {president?.username ?? "Nenhum"} • Cidadãos: {citizenCount}</small><small>{country.is_active ? "Ativo" : "Suspenso"} • {country.president_available ? "Vaga liberada" : "Vaga fechada"}</small></div><button type="button" onClick={() => editCountry(country)}>Editar <ChevronRight/></button>{president && <button type="button" className="we-danger" disabled={busy} onClick={() => void removePresident(president)}>Remover presidente</button>}</article>;
+        return <article className="we-admin-country-card" key={country.id}>{country.flag ? (isFlagImage(country.flag) ? <img src={country.flag} alt={`Bandeira de ${country.name}`}/> : <span className="we-admin-no-flag">{country.flag}</span>) : <span className="we-admin-no-flag">🌐</span>}<div className="we-admin-country-copy"><b>{country.name}</b><small>{country.capital || "Capital não informada"} • {country.continent || "Continente não informado"}</small><small>Presidente: {president?.username ?? "Nenhum"} • Cidadãos: {citizenCount}</small><small>{country.is_active ? "Ativo" : "Suspenso"} • {country.president_available ? "Vaga liberada" : "Vaga fechada"}</small></div><button type="button" onClick={() => editCountry(country)}>Editar <ChevronRight/></button>{president && <button type="button" className="we-danger" disabled={busy} onClick={() => void removePresident(president)}>Remover presidente</button>}</article>;
       })}{!filteredCountries.length && <div className="we-empty">Nenhum país corresponde aos filtros.</div>}</div>
     </>}
 
@@ -311,7 +312,7 @@ export function AdminGovernance({ notify }: { notify: (message: string) => void 
         <div className="we-coordinates we-admin-wide"><MapPin/><code>/tp {spawn.coord_x} {spawn.coord_y} {spawn.coord_z}</code><button type="button" onClick={()=>void copyCommand(spawn.coord_x,spawn.coord_y,spawn.coord_z)}><Clipboard/> Copiar comando</button></div>
       </form>
       <section className="we-panel"><header><h2><MapPin/> Pontos de nascimento por país</h2></header>
-        {countries.map(country=><article className="we-admin-row" key={country.id}><div><b>{country.flag ?? "🌐"} {country.name} — {country.spawn_name || "Ponto não nomeado"}</b><small>{country.spawn_x ?? "—"}, {country.spawn_y ?? "—"}, {country.spawn_z ?? "—"} • {country.spawn_description || "Sem descrição"}</small></div><button type="button" onClick={()=>{editCountry(country);setTab("countries");}}>Editar ponto</button>{country.spawn_x != null && country.spawn_y != null && country.spawn_z != null && <button type="button" onClick={()=>void copyCommand(country.spawn_x!,country.spawn_y!,country.spawn_z!)}>Copiar /tp</button>}</article>)}
+        {countries.map(country=><article className="we-admin-row" key={country.id}><div><b>{country.flag && !isFlagImage(country.flag) ? country.flag : "🌐"} {country.name} — {country.spawn_name || "Ponto não nomeado"}</b><small>{country.spawn_x ?? "—"}, {country.spawn_y ?? "—"}, {country.spawn_z ?? "—"} • {country.spawn_description || "Sem descrição"}</small></div><button type="button" onClick={()=>{editCountry(country);setTab("countries");}}>Editar ponto</button>{country.spawn_x != null && country.spawn_y != null && country.spawn_z != null && <button type="button" onClick={()=>void copyCommand(country.spawn_x!,country.spawn_y!,country.spawn_z!)}>Copiar /tp</button>}</article>)}
       </section>
     </>}
 
