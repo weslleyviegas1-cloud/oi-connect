@@ -12,6 +12,16 @@ export type Profile = {
   country_name?: string | null;
   country_flag?: string | null;
   registration_status: "active" | "pending_presidency" | "rejected";
+  minecraft_username?: string | null;
+  account_status?: "active" | "suspended";
+  country_spawn_x?: number | null;
+  country_spawn_y?: number | null;
+  country_spawn_z?: number | null;
+  country_spawn_name?: string | null;
+  global_spawn_x?: number | null;
+  global_spawn_y?: number | null;
+  global_spawn_z?: number | null;
+  global_spawn_name?: string | null;
 };
 
 export function usePlayer() {
@@ -23,17 +33,39 @@ export function usePlayer() {
     if (!u) { setProfile(null); return; }
     const { data, error } = await supabase
       .from("profiles")
-      .select("id, username, avatar_url, player_number, role, country_id, registration_status")
+      .select("id, username, avatar_url, player_number, role, country_id, registration_status, minecraft_username, account_status")
       .eq("id", u.id)
       .maybeSingle();
     if (error) throw error;
     const current = (data as Profile | null) ?? null;
-    if (current?.country_id) {
-      const { data: country } = await supabase.from("countries").select("name,flag").eq("id", current.country_id).maybeSingle();
-      setProfile({ ...current, country_name: country?.name ?? null, country_flag: country?.flag ?? null });
-    } else {
+    if (current?.account_status === "suspended") {
       setProfile(current);
+      await supabase.auth.signOut();
+      setUser(null);
+      setProfile(null);
+      return;
     }
+    const [countryResult, spawnResult] = await Promise.all([
+      current?.country_id
+        ? supabase.from("countries").select("name,flag,spawn_x,spawn_y,spawn_z,spawn_name").eq("id", current.country_id).maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
+      supabase.from("world_spawn").select("name,coord_x,coord_y,coord_z").eq("id", true).maybeSingle(),
+    ]);
+    const country = countryResult.data;
+    const globalSpawn = spawnResult.data;
+    setProfile(current ? {
+      ...current,
+      country_name: country?.name ?? null,
+      country_flag: country?.flag ?? null,
+      country_spawn_x: country?.spawn_x ?? null,
+      country_spawn_y: country?.spawn_y ?? null,
+      country_spawn_z: country?.spawn_z ?? null,
+      country_spawn_name: country?.spawn_name ?? null,
+      global_spawn_x: globalSpawn?.coord_x ?? null,
+      global_spawn_y: globalSpawn?.coord_y ?? null,
+      global_spawn_z: globalSpawn?.coord_z ?? null,
+      global_spawn_name: globalSpawn?.name ?? null,
+    } : null);
   }, []);
 
   useEffect(() => {
