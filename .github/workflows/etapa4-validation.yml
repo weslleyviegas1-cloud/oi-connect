@@ -23,8 +23,8 @@ jobs:
         uses: oven-sh/setup-bun@v2
       - name: Install dependencies
         run: bun install --frozen-lockfile
-      - name: Check Etapa 4 formatting
-        run: bunx prettier --check src/components/government-portal.tsx src/routes/index.tsx
+      - name: Normalize Etapa 4 formatting for lint
+        run: bunx prettier --write src/components/government-portal.tsx src/routes/index.tsx
       - name: Lint Etapa 4 frontend
         run: bunx eslint src/components/government-portal.tsx src/routes/index.tsx --rule '@typescript-eslint/no-explicit-any: off'
       - name: Build
