@@ -403,6 +403,10 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
   const getDepartmentName = (id: string | null) => departments.find(row => row.id === id)?.name ?? "Sem departamento";
 
   return <div className="we-admin">
+    {isAdmin && <div className="we-form" style={{ marginBottom: 12 }}>
+      <label>País sob administração<select value={selectedCountryId} onChange={event => setSelectedCountryId(event.target.value)}><option value="">Selecione um país</option>{adminCountries.map(item => <option key={item.id} value={item.id}>{item.name}{item.is_active ? "" : " — Inativo"}</option>)}</select></label>
+      <div className="we-admin-notice">O Super Admin pode selecionar qualquer país para supervisionar seu governo. As aprovações pendentes continuam globais.</div>
+    </div>}
     <nav className="we-admin-tabs">{tabs.map(({ id, label, Icon }) => <button key={id} type="button" className={tab === id ? "active" : ""} onClick={() => setTab(id)}><Icon/><span>{label}</span></button>)}</nav>
     <div className="we-admin-toolbar"><div><small>WORLD ECONOMY / GOVERNO NACIONAL</small><h2>{tabs.find(item => item.id === tab)?.label}</h2></div><button className="we-admin-refresh" type="button" onClick={() => void load()} disabled={loading}><RefreshCw/> Atualizar</button></div>
     {loading && <div className="we-empty">Carregando dados oficiais do governo...</div>}
