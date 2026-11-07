@@ -375,7 +375,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
         <label className="we-admin-wide">Descrição<textarea value={decisionForm.description} onChange={e => setDecisionForm(s => ({ ...s, description: e.target.value }))} required/></label>
         <button className="we-primary we-admin-wide" disabled={busy}><Plus/> Salvar rascunho</button>
       </form>}
-      <Rows rows={decisions} titleKey="title" detail={row => `${row.category} • ${row.status} • ${dateLabel(row.created_at)}`} empty="Nenhuma decisão cadastrada."/>
+      <section className="we-panel">{decisions.map(row => <article className="we-admin-row" key={row.id}><div><b>{row.title}</b><small>{row.category} • {row.status} • ${dateLabel(row.created_at)}</small><small>{row.description}</small></div>{row.status === "draft" && (canManage || hasAnyPermission("decision.create")) && <button type="button" disabled={busy} onClick={() => void submitDecision(row)}>Enviar para aprovação</button>}{row.status === "approved" && canManage && <button type="button" disabled={busy} onClick={() => void publishDecision(row)}>Publicar</button>}</article>)}{!decisions.length && <div className="we-empty">Nenhuma decisão cadastrada.</div>}</section>
     </>}
 
     {tab === "legislation" && <>
@@ -387,7 +387,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
         <label className="we-admin-wide">Texto / descrição<textarea value={legislationForm.description} onChange={e => setLegislationForm(s => ({ ...s, description: e.target.value }))} required/></label>
         <button className="we-primary we-admin-wide" disabled={busy}><Plus/> Salvar proposta</button>
       </form>}
-      <Rows rows={legislation} titleKey="title" detail={row => `${row.reference_number || "Sem número"} • ${row.status} • ${dateLabel(row.created_at)}`} empty="Nenhuma proposta legislativa cadastrada."/>
+      <section className="we-panel">{legislation.map(row => <article className="we-admin-row" key={row.id}><div><b>{row.title}</b><small>{row.reference_number || "Sem número"} • {row.status} • ${dateLabel(row.created_at)}</small><small>{row.description}</small></div>{row.status === "draft" && (canManage || hasAnyPermission("legislation.create")) && <button type="button" disabled={busy} onClick={() => void submitLegislation(row)}>Enviar para análise</button>}{row.status === "approved" && canManage && <button type="button" disabled={busy} onClick={() => void run(() => supabase.from("national_legislation").update({status:"revoked",updated_at:new Date().toISOString()}).eq("id",row.id),"Proposta revogada.")}>Revogar</button>}</article>)}{!legislation.length && <div className="we-empty">Nenhuma proposta legislativa cadastrada.</div>}</section>
     </>}
 
     {tab === "announcements" && <>
