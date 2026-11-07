@@ -104,7 +104,7 @@ declare
   v_application_id uuid;
 begin
   if v_uid is null then raise exception 'É necessário entrar na conta.'; end if;
-  if p_type not in ('citizen','president') then raise exception 'Tipo de jogador inválido.'; end if;
+  if p_type is null or p_type not in ('citizen','president') then raise exception 'Tipo de jogador inválido.'; end if;
   select * into v_profile from public.profiles where id = v_uid for update;
   if not found then raise exception 'Perfil do jogador não encontrado.'; end if;
   if v_profile.role = 'super_admin' then
@@ -147,7 +147,7 @@ declare
   v_country public.countries%rowtype;
 begin
   if not public.is_world_admin() then raise exception 'Apenas o Super Admin pode revisar solicitações.'; end if;
-  if p_decision not in ('approved','rejected') then raise exception 'Decisão inválida.'; end if;
+  if p_decision is null or p_decision not in ('approved','rejected') then raise exception 'Decisão inválida.'; end if;
   select * into v_app from public.president_applications
     where id = p_application_id and status = 'pending' for update;
   if not found then raise exception 'Solicitação não encontrada ou já revisada.'; end if;
@@ -189,6 +189,11 @@ begin
 end;
 $$;
 
+revoke all on function public.is_world_admin() from public;
+grant execute on function public.is_world_admin() to anon, authenticated;
+revoke all on function public.register_player(text,uuid) from public, anon;
+revoke all on function public.review_president_application(uuid,text,text) from public, anon;
+revoke all on function public.admin_save_country(text,text,boolean,boolean) from public, anon;
 grant execute on function public.register_player(text,uuid) to authenticated;
 grant execute on function public.review_president_application(uuid,text,text) to authenticated;
 grant execute on function public.admin_save_country(text,text,boolean,boolean) to authenticated;
