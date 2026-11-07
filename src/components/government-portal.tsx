@@ -14,7 +14,7 @@ type GovernmentProfile = {
   minecraft_username?: string | null;
 };
 type Row = Record<string, any>;
-type Tab = "overview" | "ministries" | "departments" | "appointments" | "decisions" | "legislation" | "announcements" | "infrastructure" | "budget" | "notifications";
+type Tab = "overview" | "ministries" | "departments" | "appointments" | "decisions" | "legislation" | "announcements" | "infrastructure" | "budget" | "notifications" | "audit";
 
 const tabs: { id: Tab; label: string; Icon: typeof Landmark }[] = [
   { id: "overview", label: "Visão geral", Icon: Activity },
@@ -27,6 +27,7 @@ const tabs: { id: Tab; label: string; Icon: typeof Landmark }[] = [
   { id: "infrastructure", label: "Infraestrutura", Icon: MapPin },
   { id: "budget", label: "Orçamento", Icon: Wallet },
   { id: "notifications", label: "Notificações", Icon: Bell },
+  { id: "audit", label: "Histórico", Icon: ClipboardList },
 ];
 
 const dateLabel = (value?: string | null) => value ? new Date(value).toLocaleString("pt-BR") : "—";
@@ -56,6 +57,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
   const [budgets, setBudgets] = useState<Row[]>([]);
   const [allocations, setAllocations] = useState<Row[]>([]);
   const [notifications, setNotifications] = useState<Row[]>([]);
+  const [auditLogs, setAuditLogs] = useState<Row[]>([]);
   const [candidateSearch, setCandidateSearch] = useState("");
   const [candidates, setCandidates] = useState<Row[]>([]);
   const [selectedCandidate, setSelectedCandidate] = useState("");
@@ -133,10 +135,15 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
         setInfrastructure(infraRes.data ?? []);
         setBudgets(budgetRes.data ?? []);
         setAllocations(allocationRes.data ?? []);
+        if (isAdmin || isPresident) {
+          const auditResult = await supabase.from("government_audit_logs").select("*").eq("country_id", countryId).order("created_at", { ascending: false }).limit(100);
+          if (auditResult.error) throw auditResult.error;
+          setAuditLogs(auditResult.data ?? []);
+        } else setAuditLogs([]);
         const errors = [ministryRes, departmentRes, memberRes, decisionRes, lawRes, announcementRes, infraRes, budgetRes, allocationRes].filter(result => result.error);
         if (errors.length) notify("Algumas áreas não puderam ser carregadas. Confira as permissões da Etapa 4 no Supabase.");
       } else {
-        setCountry(null); setPresident(null); setDashboard(null); setMemberPermissions([]); setAllocations([]);
+        setCountry(null); setPresident(null); setDashboard(null); setMemberPermissions([]); setAllocations([]); setAuditLogs([]);
       }
 
       let appointmentQuery = supabase.from("government_appointments").select("*").eq("status", "pending").order("requested_at", { ascending: false });
@@ -530,6 +537,13 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
       </form>}
       {infrastructure.map(row => <article className="we-admin-row" key={row.id}><div><b>{row.name} • {row.category}</b><small>{row.location_name || "Localização não informada"} • {row.coord_x ?? "—"}, {row.coord_y ?? "—"}, {row.coord_z ?? "—"} • {row.status}</small></div></article>)}
       {!infrastructure.length && <div className="we-empty">Nenhuma infraestrutura cadastrada.</div>}
+    </>}
+
+    {tab === "audit" && <>
+      {(isAdmin || isPresident) ? <section className="we-panel"><header><h2><ClipboardList/> Histórico administrativo</h2></header>
+        {auditLogs.map(row => <article className="we-admin-row" key={row.id}><div><b>{row.description}</b><small>{row.operation} • {row.object_type} • Registro: {row.object_id ?? "—"}</small><small>Responsável: {row.actor_id ?? "Sistema"} • {dateLabel(row.created_at)}</small></div></article>)}
+        {!auditLogs.length && <div className="we-empty">Nenhuma operação administrativa registrada.</div>}
+      </section> : <div className="we-note">O histórico administrativo é restrito à Presidência e ao Super Admin.</div>}
     </>}
 
     {tab === "notifications" && <>
