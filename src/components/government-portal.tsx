@@ -61,6 +61,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
   const [editingDepartmentId, setEditingDepartmentId] = useState<string | null>(null);
   const [appointmentForm, setAppointmentForm] = useState({ ministry_id: "", department_id: "", position: "Ministro" });
   const [announcementForm, setAnnouncementForm] = useState({ title: "", content: "", category: "Comunicado oficial", status: "draft", ministry_id: "" });
+  const [editingAnnouncementId, setEditingAnnouncementId] = useState<string | null>(null);
   const [decisionForm, setDecisionForm] = useState({ title: "", description: "", category: "administrative", ministry_id: "" });
   const [legislationForm, setLegislationForm] = useState({ title: "", description: "", category: "administrative", reference_number: "", ministry_id: "" });
   const [infrastructureForm, setInfrastructureForm] = useState({ name: "", category: "Cidade", description: "", location_name: "", coord_x: "", coord_y: "", coord_z: "", ministry_id: "", responsible_member_id: "" });
@@ -275,10 +276,18 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
   const saveAnnouncement = (event: FormEvent) => {
     event.preventDefault();
     if (!countryId) return;
-    void run(() => supabase.from("government_announcements").insert({
-      ...announcementForm, ministry_id: announcementForm.ministry_id || null, country_id: countryId, author_id: profile.id,
-      published_at: announcementForm.status === "published" ? new Date().toISOString() : null,
-    }), "Comunicado registrado.");
+    const publicationDate = announcementForm.status === "published" ? new Date().toISOString() : null;
+    const operation = editingAnnouncementId
+      ? () => supabase.from("government_announcements").update({
+          ...announcementForm, ministry_id: announcementForm.ministry_id || null,
+          published_at: publicationDate, updated_at: new Date().toISOString(),
+        }).eq("id", editingAnnouncementId)
+      : () => supabase.from("government_announcements").insert({
+          ...announcementForm, ministry_id: announcementForm.ministry_id || null, country_id: countryId, author_id: profile.id,
+          published_at: publicationDate,
+        });
+    void run(operation, editingAnnouncementId ? "Comunicado atualizado." : "Comunicado registrado.");
+    setEditingAnnouncementId(null);
     setAnnouncementForm({ title: "", content: "", category: "Comunicado oficial", status: "draft", ministry_id: "" });
   };
 
@@ -459,14 +468,15 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
 
     {tab === "announcements" && <>
       {(canManage || hasAnyPermission("announcement.create")) && countryId && <form className="we-form" onSubmit={saveAnnouncement}>
+        {editingAnnouncementId && <div className="we-admin-form-title"><b>Editando comunicado</b><button type="button" onClick={() => { setEditingAnnouncementId(null); setAnnouncementForm({ title: "", content: "", category: "Comunicado oficial", status: "draft", ministry_id: "" }); }}>Cancelar</button></div>}
         <label>Ministério<select value={announcementForm.ministry_id} onChange={e => setAnnouncementForm(s => ({ ...s, ministry_id: e.target.value }))}><option value="">Nacional / Presidência</option>{ministries.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
         <label>Título<input value={announcementForm.title} onChange={e => setAnnouncementForm(s => ({ ...s, title: e.target.value }))} required/></label>
         <label>Categoria<input value={announcementForm.category} onChange={e => setAnnouncementForm(s => ({ ...s, category: e.target.value }))}/></label>
         <label className="we-admin-wide">Conteúdo<textarea value={announcementForm.content} onChange={e => setAnnouncementForm(s => ({ ...s, content: e.target.value }))} required/></label>
         <label>Situação<select value={announcementForm.status} onChange={e => setAnnouncementForm(s => ({ ...s, status: e.target.value }))}><option value="draft">Rascunho</option><option value="published">Publicar agora</option></select></label>
-        <button className="we-primary" disabled={busy}><Plus/> Salvar comunicado</button>
+        <button className="we-primary" disabled={busy}><Plus/> {editingAnnouncementId ? "Salvar alterações" : "Salvar comunicado"}</button>
       </form>}
-      {announcements.map(row => <article className="we-admin-row" key={row.id}><div><b>{row.title}</b><small>{row.category} • {row.status} • {dateLabel(row.published_at ?? row.created_at)}</small><small>{row.content}</small></div>{canManage && row.status === "draft" && <button type="button" disabled={busy} onClick={() => void publishAnnouncement(row)}>Publicar</button>}{canManage && row.status === "published" && <button type="button" disabled={busy} onClick={() => void archiveAnnouncement(row)}>Arquivar</button>}</article>)}
+      {announcements.map(row => <article className="we-admin-row" key={row.id}><div><b>{row.title}</b><small>{row.category} • {row.status} • {dateLabel(row.published_at ?? row.created_at)}</small><small>{row.content}</small></div>{(canManage || hasAnyPermission("announcement.create")) && row.status !== "archived" && <button type="button" disabled={busy} onClick={() => { setEditingAnnouncementId(row.id); setAnnouncementForm({ title: row.title, content: row.content, category: row.category ?? "Comunicado oficial", status: row.status, ministry_id: row.ministry_id ?? "" }); window.scrollTo({ top: 0, behavior: "smooth" }); }}>Editar</button>}{canManage && row.status === "draft" && <button type="button" disabled={busy} onClick={() => void publishAnnouncement(row)}>Publicar</button>}{canManage && row.status === "published" && <button type="button" disabled={busy} onClick={() => void archiveAnnouncement(row)}>Arquivar</button>}</article>)}
       {!announcements.length && <div className="we-empty">Nenhum comunicado cadastrado.</div>}
     </>}
 
