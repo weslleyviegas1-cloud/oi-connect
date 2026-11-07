@@ -38,6 +38,8 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [country, setCountry] = useState<Row | null>(null);
+  const [adminCountries, setAdminCountries] = useState<Row[]>([]);
+  const [selectedCountryId, setSelectedCountryId] = useState("");
   const [president, setPresident] = useState<Row | null>(null);
   const [dashboard, setDashboard] = useState<Row | null>(null);
   const [ministries, setMinistries] = useState<Row[]>([]);
@@ -74,11 +76,21 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
   const isPresident = profile.role === "president";
   const canManage = isAdmin || isPresident;
   const hasAnyPermission = (key: string) => isAdmin || isPresident || memberPermissions.some(permission => permission.permission_key === key);
-  const countryId = profile.country_id;
+  const countryId = isAdmin ? (selectedCountryId || null) : profile.country_id;
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      if (isAdmin) {
+        const countryList = await supabase.from("countries").select("id,name,flag,is_active").order("name");
+        if (countryList.error) throw countryList.error;
+        setAdminCountries(countryList.data ?? []);
+        if (!selectedCountryId && countryList.data?.length) {
+          setSelectedCountryId(countryList.data[0].id);
+          setLoading(false);
+          return;
+        }
+      }
       if (countryId) {
         const [countryRes, presidentRes, dashboardRes, ministryRes, departmentRes, memberRes, decisionRes, lawRes, announcementRes, infraRes, budgetRes, allocationRes] = await Promise.all([
           supabase.from("countries").select("id,name,flag,capital,continent,currency_name,currency_code,is_active").eq("id", countryId).maybeSingle(),
@@ -175,7 +187,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
     } finally {
       setLoading(false);
     }
-  }, [countryId, isAdmin, notify, profile.id]);
+  }, [countryId, isAdmin, notify, profile.id, selectedCountryId]);
 
   useEffect(() => { void load(); }, [load]);
 
