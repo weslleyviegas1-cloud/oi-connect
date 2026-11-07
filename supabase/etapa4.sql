@@ -496,14 +496,14 @@ begin
 
     v_permissions := coalesce(p_permission_keys,
       case
-        when lower(v_app.position) like '%ministro%' then array['ministry.read','department.read','department.manage','announcement.create','decision.create','legislation.create','budget.read','infrastructure.read']
+        when lower(v_app.position) like '%ministro%' then array['ministry.read','department.read','department.manage','announcement.create','decision.create','legislation.create','budget.read','budget.manage','infrastructure.read']
         when lower(v_app.position) like '%vice%' then array['ministry.read','department.read','announcement.create','decision.create']
         else array['department.read']
       end
     );
     foreach v_key in array v_permissions loop
       if v_key not in ('ministry.read','department.read','department.manage','announcement.create',
-        'decision.create','legislation.create','budget.read','infrastructure.read','infrastructure.manage') then
+        'decision.create','legislation.create','budget.read','budget.manage','infrastructure.read','infrastructure.manage') then
         raise exception 'Permissão não autorizada: %',v_key;
       end if;
       insert into public.government_member_permissions(
@@ -895,20 +895,25 @@ create policy budgets_read_authorized on public.government_budgets for select to
   using (public.is_world_admin() or public.is_country_president(country_id)
     or public.has_government_permission(country_id,'budget.read',ministry_id,null));
 create policy budgets_insert_authorized on public.government_budgets for insert to authenticated
-  with check ((public.is_country_president(country_id) or public.has_government_permission(country_id,'budget.read',ministry_id,null))
+  with check ((public.is_country_president(country_id) or public.has_government_permission(country_id,'budget.manage',ministry_id,null))
     and created_by=auth.uid());
 create policy budgets_update_authorized on public.government_budgets for update to authenticated
-  using (public.is_world_admin() or public.is_country_president(country_id))
-  with check (public.is_world_admin() or public.is_country_president(country_id));
+  using (public.is_world_admin() or public.is_country_president(country_id)
+    or public.has_government_permission(country_id,'budget.manage',ministry_id,null))
+  with check (public.is_world_admin() or public.is_country_president(country_id)
+    or public.has_government_permission(country_id,'budget.manage',ministry_id,null));
 
 create policy allocations_read_authorized on public.government_budget_allocations for select to authenticated
   using (public.is_world_admin() or public.is_country_president(country_id)
     or public.has_government_permission(country_id,'budget.read',ministry_id,null));
 create policy allocations_insert_authorized on public.government_budget_allocations for insert to authenticated
-  with check (public.is_country_president(country_id) or public.is_world_admin());
+  with check (public.is_country_president(country_id) or public.is_world_admin()
+    or public.has_government_permission(country_id,'budget.manage',ministry_id,null));
 create policy allocations_update_authorized on public.government_budget_allocations for update to authenticated
-  using (public.is_country_president(country_id) or public.is_world_admin())
-  with check (public.is_country_president(country_id) or public.is_world_admin());
+  using (public.is_country_president(country_id) or public.is_world_admin()
+    or public.has_government_permission(country_id,'budget.manage',ministry_id,null))
+  with check (public.is_country_president(country_id) or public.is_world_admin()
+    or public.has_government_permission(country_id,'budget.manage',ministry_id,null));
 
 create policy government_audit_read_country on public.government_audit_logs for select to authenticated
   using (public.is_world_admin() or public.is_country_president(country_id));
@@ -957,6 +962,19 @@ create trigger government_decisions_notify after insert or update of status on p
 drop trigger if exists national_legislation_notify on public.national_legislation;
 create trigger national_legislation_notify after insert or update of status on public.national_legislation
   for each row execute function public.notify_government_publication();
+
+revoke all on function public.is_country_president(uuid) from public, anon;
+revoke all on function public.has_government_permission(uuid,text,uuid,uuid) from public, anon;
+revoke all on function public.is_government_country_citizen(uuid) from public, anon;
+revoke all on function public.validate_government_permission_scope() from public, anon;
+revoke all on function public.request_government_appointment(uuid,uuid,uuid,text) from public, anon;
+revoke all on function public.request_government_exoneration(uuid,text) from public, anon;
+revoke all on function public.review_government_appointment(uuid,text,text,text[]) from public, anon;
+revoke all on function public.get_government_dashboard(uuid) from public, anon;
+revoke all on function public.review_government_decision(uuid,text,text) from public, anon;
+revoke all on function public.review_national_legislation(uuid,text,text) from public, anon;
+revoke all on function public.log_government_change() from public, anon;
+revoke all on function public.notify_government_publication() from public, anon;
 
 grant execute on function public.is_country_president(uuid) to authenticated;
 grant execute on function public.has_government_permission(uuid,text,uuid,uuid) to authenticated;
