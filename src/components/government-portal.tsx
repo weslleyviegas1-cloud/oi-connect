@@ -55,6 +55,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
   const [candidates, setCandidates] = useState<Row[]>([]);
   const [selectedCandidate, setSelectedCandidate] = useState("");
   const [ministryForm, setMinistryForm] = useState({ name: "", description: "", purpose: "", category: "Administrativa" });
+  const [editingMinistryId, setEditingMinistryId] = useState<string | null>(null);
   const [departmentForm, setDepartmentForm] = useState({ ministry_id: "", name: "", description: "" });
   const [appointmentForm, setAppointmentForm] = useState({ ministry_id: "", department_id: "", position: "Ministro" });
   const [announcementForm, setAnnouncementForm] = useState({ title: "", content: "", category: "Comunicado oficial", status: "draft", ministry_id: "" });
@@ -172,7 +173,11 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
   const saveMinistry = (event: FormEvent) => {
     event.preventDefault();
     if (!countryId) return;
-    void run(() => supabase.from("ministries").insert({ ...ministryForm, country_id: countryId, created_by: profile.id }), "Ministério cadastrado.");
+    const operation = editingMinistryId
+      ? () => supabase.from("ministries").update({ ...ministryForm, updated_at: new Date().toISOString() }).eq("id", editingMinistryId)
+      : () => supabase.from("ministries").insert({ ...ministryForm, country_id: countryId, created_by: profile.id });
+    void run(operation, editingMinistryId ? "Ministério atualizado." : "Ministério cadastrado.");
+    setEditingMinistryId(null);
     setMinistryForm({ name: "", description: "", purpose: "", category: "Administrativa" });
   };
 
@@ -331,13 +336,14 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
 
     {tab === "ministries" && <>
       {canManage && countryId && <form className="we-form" onSubmit={saveMinistry}>
+        {editingMinistryId && <div className="we-admin-form-title"><b>Editando ministério</b><button type="button" onClick={() => { setEditingMinistryId(null); setMinistryForm({ name: "", description: "", purpose: "", category: "Administrativa" }); }}>Cancelar</button></div>}
         <label>Nome do ministério<input value={ministryForm.name} onChange={e => setMinistryForm(s => ({ ...s, name: e.target.value }))} required minLength={2}/></label>
         <label>Categoria<select value={ministryForm.category} onChange={e => setMinistryForm(s => ({ ...s, category: e.target.value }))}>{categories.map(value => <option key={value}>{value}</option>)}</select></label>
         <label className="we-admin-wide">Descrição<input value={ministryForm.description} onChange={e => setMinistryForm(s => ({ ...s, description: e.target.value }))}/></label>
         <label className="we-admin-wide">Finalidade<input value={ministryForm.purpose} onChange={e => setMinistryForm(s => ({ ...s, purpose: e.target.value }))}/></label>
-        <button className="we-primary we-admin-wide" disabled={busy}><Plus/> Criar ministério</button>
+        <button className="we-primary we-admin-wide" disabled={busy}><Plus/> {editingMinistryId ? "Salvar alterações" : "Criar ministério"}</button>
       </form>}
-      <section className="we-panel">{ministries.map(row => <article className="we-admin-row" key={row.id}><div><b>{row.name}</b><small>{row.category ?? "Sem categoria"} • {row.description || row.purpose || "Sem descrição"} • {row.status === "active" ? "Ativo" : "Inativo"}</small><small>Departamentos: {departments.filter(d => d.ministry_id === row.id).length} • Responsáveis: {members.filter(m => m.ministry_id === row.id && m.status === "active").length}</small></div>{canManage && <button type="button" disabled={busy} onClick={() => void changeMinistryStatus(row)}>{row.status === "active" ? "Desativar" : "Reativar"}</button>}</article>)}{!ministries.length && <div className="we-empty">Nenhum ministério cadastrado.</div>}</section>
+      <section className="we-panel">{ministries.map(row => <article className="we-admin-row" key={row.id}><div><b>{row.name}</b><small>{row.category ?? "Sem categoria"} • {row.description || row.purpose || "Sem descrição"} • {row.status === "active" ? "Ativo" : "Inativo"}</small><small>Departamentos: {departments.filter(d => d.ministry_id === row.id).length} • Responsáveis: {members.filter(m => m.ministry_id === row.id && m.status === "active").length}</small></div>{canManage && <><button type="button" disabled={busy} onClick={() => { setEditingMinistryId(row.id); setMinistryForm({ name: row.name, description: row.description ?? "", purpose: row.purpose ?? "", category: row.category ?? "Administrativa" }); window.scrollTo({ top: 0, behavior: "smooth" }); }}>Editar</button><button type="button" disabled={busy} onClick={() => void changeMinistryStatus(row)}>{row.status === "active" ? "Desativar" : "Reativar"}</button></>}</article>)}{!ministries.length && <div className="we-empty">Nenhum ministério cadastrado.</div>}</section>
     </>}
 
     {tab === "departments" && <>
