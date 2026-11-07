@@ -543,8 +543,11 @@ returns trigger
 language plpgsql
 security definer
 set search_path = public
-as $$
+as $
 begin
+  if exists (select 1 from public.platform_settings where id=true and not signup_open) then
+    raise exception 'O cadastro está temporariamente fechado pelo Super Admin.';
+  end if;
   insert into public.admin_notifications(recipient_id,event_type,title,description,object_type,object_id)
   values(null,'user.created','Novo cadastro de jogador',
     'Uma nova conta foi criada: '||coalesce(new.email,'e-mail não informado')||'.',
