@@ -42,6 +42,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
   const [ministries, setMinistries] = useState<Row[]>([]);
   const [departments, setDepartments] = useState<Row[]>([]);
   const [members, setMembers] = useState<Row[]>([]);
+  const [memberPermissions, setMemberPermissions] = useState<Row[]>([]);
   const [appointments, setAppointments] = useState<Row[]>([]);
   const [decisions, setDecisions] = useState<Row[]>([]);
   const [legislation, setLegislation] = useState<Row[]>([]);
@@ -54,15 +55,17 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
   const [ministryForm, setMinistryForm] = useState({ name: "", description: "", purpose: "", category: "Administrativa" });
   const [departmentForm, setDepartmentForm] = useState({ ministry_id: "", name: "", description: "" });
   const [appointmentForm, setAppointmentForm] = useState({ ministry_id: "", department_id: "", position: "Ministro" });
-  const [announcementForm, setAnnouncementForm] = useState({ title: "", content: "", category: "Comunicado oficial", status: "draft" });
-  const [decisionForm, setDecisionForm] = useState({ title: "", description: "", category: "administrative" });
-  const [legislationForm, setLegislationForm] = useState({ title: "", description: "", category: "administrative", reference_number: "" });
-  const [infrastructureForm, setInfrastructureForm] = useState({ name: "", category: "Cidade", description: "", location_name: "", coord_x: "", coord_y: "", coord_z: "" });
-  const [budgetForm, setBudgetForm] = useState({ title: "", fiscal_period: "", budget_type: "planned", planned_amount: "0", description: "" });
+  const [announcementForm, setAnnouncementForm] = useState({ title: "", content: "", category: "Comunicado oficial", status: "draft", ministry_id: "" });
+  const [decisionForm, setDecisionForm] = useState({ title: "", description: "", category: "administrative", ministry_id: "" });
+  const [legislationForm, setLegislationForm] = useState({ title: "", description: "", category: "administrative", reference_number: "", ministry_id: "" });
+  const [infrastructureForm, setInfrastructureForm] = useState({ name: "", category: "Cidade", description: "", location_name: "", coord_x: "", coord_y: "", coord_z: "", ministry_id: "" });
+  const [budgetForm, setBudgetForm] = useState({ title: "", fiscal_period: "", budget_type: "planned", planned_amount: "0", description: "", ministry_id: "" });
 
   const isAdmin = profile.role === "super_admin";
   const isPresident = profile.role === "president";
   const canManage = isAdmin || isPresident;
+  const hasPermission = (key: string, ministryId?: string) => isAdmin || isPresident || memberPermissions.some(permission => permission.permission_key === key && (permission.scope_type === "country" || (permission.scope_type === "ministry" && !!ministryId && permission.scope_id === ministryId)));
+  const hasAnyPermission = (key: string) => isAdmin || isPresident || memberPermissions.some(permission => permission.permission_key === key);
   const countryId = profile.country_id;
 
   const load = useCallback(async () => {
@@ -89,6 +92,11 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
         setMinistries(ministryRes.data ?? []);
         setDepartments(departmentRes.data ?? []);
         setMembers(memberRes.data ?? []);
+        const ownMember = (memberRes.data ?? []).find((member: Row) => member.profile_id === profile.id && member.status === "active");
+        if (ownMember) {
+          const permissionResult = await supabase.from("government_member_permissions").select("permission_key,scope_type,scope_id").eq("member_id", ownMember.id);
+          setMemberPermissions(permissionResult.data ?? []);
+        } else setMemberPermissions([]);
         setDecisions(decisionRes.data ?? []);
         setLegislation(lawRes.data ?? []);
         setAnnouncements(announcementRes.data ?? []);
@@ -97,7 +105,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
         const errors = [ministryRes, departmentRes, memberRes, decisionRes, lawRes, announcementRes, infraRes, budgetRes].filter(result => result.error);
         if (errors.length) notify("Algumas áreas não puderam ser carregadas. Confira as permissões da Etapa 4 no Supabase.");
       } else {
-        setCountry(null); setPresident(null); setDashboard(null);
+        setCountry(null); setPresident(null); setDashboard(null); setMemberPermissions([]);
       }
 
       let appointmentQuery = supabase.from("government_appointments").select("*").eq("status", "pending").order("requested_at", { ascending: false });
@@ -206,28 +214,28 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
     event.preventDefault();
     if (!countryId) return;
     void run(() => supabase.from("government_announcements").insert({
-      ...announcementForm, country_id: countryId, author_id: profile.id,
+      ...announcementForm, ministry_id: announcementForm.ministry_id || null, country_id: countryId, author_id: profile.id,
       published_at: announcementForm.status === "published" ? new Date().toISOString() : null,
     }), "Comunicado registrado.");
-    setAnnouncementForm({ title: "", content: "", category: "Comunicado oficial", status: "draft" });
+    setAnnouncementForm({ title: "", content: "", category: "Comunicado oficial", status: "draft", ministry_id: "" });
   };
 
   const saveDecision = (event: FormEvent) => {
     event.preventDefault();
     if (!countryId) return;
     void run(() => supabase.from("government_decisions").insert({
-      ...decisionForm, country_id: countryId, author_id: profile.id, status: "draft",
+      ...decisionForm, ministry_id: decisionForm.ministry_id || null, country_id: countryId, author_id: profile.id, status: "draft",
     }), "Decisão salva como rascunho.");
-    setDecisionForm({ title: "", description: "", category: "administrative" });
+    setDecisionForm({ title: "", description: "", category: "administrative", ministry_id: "" });
   };
 
   const saveLegislation = (event: FormEvent) => {
     event.preventDefault();
     if (!countryId) return;
     void run(() => supabase.from("national_legislation").insert({
-      ...legislationForm, country_id: countryId, author_id: profile.id, status: "draft",
+      ...legislationForm, ministry_id: legislationForm.ministry_id || null, country_id: countryId, author_id: profile.id, status: "draft",
     }), "Proposta legislativa salva como rascunho.");
-    setLegislationForm({ title: "", description: "", category: "administrative", reference_number: "" });
+    setLegislationForm({ title: "", description: "", category: "administrative", reference_number: "", ministry_id: "" });
   };
 
   const saveInfrastructure = (event: FormEvent) => {
@@ -235,21 +243,21 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
     if (!countryId) return;
     const numberOrNull = (value: string) => value.trim() === "" ? null : Number(value);
     void run(() => supabase.from("national_infrastructure").insert({
-      ...infrastructureForm, country_id: countryId, created_by: profile.id,
+      ...infrastructureForm, ministry_id: infrastructureForm.ministry_id || null, country_id: countryId, created_by: profile.id,
       coord_x: numberOrNull(infrastructureForm.coord_x), coord_y: numberOrNull(infrastructureForm.coord_y),
       coord_z: numberOrNull(infrastructureForm.coord_z),
     }), "Registro de infraestrutura cadastrado.");
-    setInfrastructureForm({ name: "", category: "Cidade", description: "", location_name: "", coord_x: "", coord_y: "", coord_z: "" });
+    setInfrastructureForm({ name: "", category: "Cidade", description: "", location_name: "", coord_x: "", coord_y: "", coord_z: "", ministry_id: "" });
   };
 
   const saveBudget = (event: FormEvent) => {
     event.preventDefault();
     if (!countryId) return;
     void run(() => supabase.from("government_budgets").insert({
-      ...budgetForm, country_id: countryId, created_by: profile.id,
+      ...budgetForm, ministry_id: budgetForm.ministry_id || null, country_id: countryId, created_by: profile.id,
       planned_amount: Number(budgetForm.planned_amount || 0),
     }), "Planejamento orçamentário salvo. Nenhum saldo foi movimentado.");
-    setBudgetForm({ title: "", fiscal_period: "", budget_type: "planned", planned_amount: "0", description: "" });
+    setBudgetForm({ title: "", fiscal_period: "", budget_type: "planned", planned_amount: "0", description: "", ministry_id: "" });
   };
 
   const publishAnnouncement = async (row: Row) => {
@@ -299,7 +307,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
     </>}
 
     {tab === "departments" && <>
-      {canManage && countryId && <form className="we-form" onSubmit={saveDepartment}>
+      {(canManage || hasAnyPermission("department.manage")) && countryId && <form className="we-form" onSubmit={saveDepartment}>
         <label>Ministério<select value={departmentForm.ministry_id} onChange={e => setDepartmentForm(s => ({ ...s, ministry_id: e.target.value }))} required><option value="">Selecione</option>{ministries.filter(row => row.status === "active").map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
         <label>Nome do departamento<input value={departmentForm.name} onChange={e => setDepartmentForm(s => ({ ...s, name: e.target.value }))} required/></label>
         <label className="we-admin-wide">Descrição<input value={departmentForm.description} onChange={e => setDepartmentForm(s => ({ ...s, description: e.target.value }))}/></label>
@@ -326,7 +334,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
     </>}
 
     {tab === "decisions" && <>
-      {canManage && countryId && <form className="we-form" onSubmit={saveDecision}>
+      {(canManage || hasAnyPermission("decision.create")) && countryId && <form className="we-form" onSubmit={saveDecision}>
         <label>Título<input value={decisionForm.title} onChange={e => setDecisionForm(s => ({ ...s, title: e.target.value }))} required/></label>
         <label>Categoria<select value={decisionForm.category} onChange={e => setDecisionForm(s => ({ ...s, category: e.target.value }))}>{categories.map(value => <option key={value} value={value.toLowerCase().replaceAll(" ","_")}>{value}</option>)}</select></label>
         <label className="we-admin-wide">Descrição<textarea value={decisionForm.description} onChange={e => setDecisionForm(s => ({ ...s, description: e.target.value }))} required/></label>
@@ -336,7 +344,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
     </>}
 
     {tab === "legislation" && <>
-      {canManage && countryId && <form className="we-form" onSubmit={saveLegislation}>
+      {(canManage || hasAnyPermission("legislation.create")) && countryId && <form className="we-form" onSubmit={saveLegislation}>
         <label>Identificação<input value={legislationForm.reference_number} onChange={e => setLegislationForm(s => ({ ...s, reference_number: e.target.value }))} placeholder="Opcional"/></label>
         <label>Título<input value={legislationForm.title} onChange={e => setLegislationForm(s => ({ ...s, title: e.target.value }))} required/></label>
         <label>Categoria<select value={legislationForm.category} onChange={e => setLegislationForm(s => ({ ...s, category: e.target.value }))}>{categories.map(value => <option key={value} value={value.toLowerCase().replaceAll(" ","_")}>{value}</option>)}</select></label>
@@ -347,7 +355,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
     </>}
 
     {tab === "announcements" && <>
-      {canManage && countryId && <form className="we-form" onSubmit={saveAnnouncement}>
+      {(canManage || hasAnyPermission("announcement.create")) && countryId && <form className="we-form" onSubmit={saveAnnouncement}>
         <label>Título<input value={announcementForm.title} onChange={e => setAnnouncementForm(s => ({ ...s, title: e.target.value }))} required/></label>
         <label>Categoria<input value={announcementForm.category} onChange={e => setAnnouncementForm(s => ({ ...s, category: e.target.value }))}/></label>
         <label className="we-admin-wide">Conteúdo<textarea value={announcementForm.content} onChange={e => setAnnouncementForm(s => ({ ...s, content: e.target.value }))} required/></label>
@@ -374,7 +382,7 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
     </>}
 
     {tab === "budget" && <>
-      {canManage && countryId && <form className="we-form" onSubmit={saveBudget}>
+      {(canManage || hasAnyPermission("budget.read")) && countryId && <form className="we-form" onSubmit={saveBudget}>
         <label>Título do planejamento<input value={budgetForm.title} onChange={e => setBudgetForm(s => ({ ...s, title: e.target.value }))} required/></label>
         <label>Período fiscal<input value={budgetForm.fiscal_period} onChange={e => setBudgetForm(s => ({ ...s, fiscal_period: e.target.value }))} placeholder="Ex.: 2027"/></label>
         <label>Tipo<select value={budgetForm.budget_type} onChange={e => setBudgetForm(s => ({ ...s, budget_type: e.target.value }))}><option value="planned">Orçamento previsto</option><option value="expense_plan">Despesas planejadas</option><option value="investment_plan">Investimentos planejados</option></select></label>
