@@ -409,7 +409,7 @@ returns void
 language plpgsql
 security definer
 set search_path = public
-as $
+as $\
 declare v_player public.profiles%rowtype; v_old jsonb;
 begin
   if not public.is_world_admin() then raise exception 'Apenas o Super Admin pode remover presidentes.'; end if;
@@ -428,7 +428,7 @@ begin
     'Sua função de presidente foi removida pelo Super Admin.'||coalesce(' Motivo: '||nullif(trim(p_note),''),''),
     'player',p_player_id);
 end;
-$;
+$\;
 
 -- Auditoria e notificações automáticas para novos pedidos e revisões presidenciais.
 create or replace function public.handle_president_application_events()
@@ -520,7 +520,7 @@ returns jsonb
 language plpgsql
 security definer
 set search_path = public
-as $
+as $\
 declare v_result jsonb; v_uid uuid := auth.uid();
 begin
   if v_uid is null then raise exception 'É necessário entrar na conta.'; end if;
@@ -533,7 +533,7 @@ begin
   where id=v_uid and role <> 'super_admin';
   return v_result;
 end;
-$;
+$\;
 
 -- Aviso administrativo para novas contas criadas no Supabase Auth.
 create or replace function public.notify_admin_new_auth_user()
@@ -541,7 +541,7 @@ returns trigger
 language plpgsql
 security definer
 set search_path = public
-as $
+as $\
 begin
   insert into public.admin_notifications(recipient_id,event_type,title,description,object_type,object_id)
   values(null,'user.created','Novo cadastro de jogador',
@@ -549,7 +549,7 @@ begin
     'user',new.id);
   return new;
 end;
-$;
+$\;
 
 drop trigger if exists admin_notify_new_auth_user on auth.users;
 create trigger admin_notify_new_auth_user
