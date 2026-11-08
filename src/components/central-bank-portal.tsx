@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Activity, Coins, Landmark, RefreshCw, TrendingDown, TrendingUp, Wallet } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import "./central-bank-portal.css";
@@ -64,4 +64,4 @@ export function CentralBankPortal({profile,notify}:Props){
   </>}
  </div>;
 }
-function Metric({icon,label,value,unit}:{icon:React.ReactNode;label:string;value:string;unit:string}){return <article className="cb-metric"><span>{icon}</span><small>{label}</small><strong>{value}</strong><em>{unit}</em></article>}
+function Metric({icon,label,value,unit}:{icon:ReactNode;label:string;value:string;unit:string}){return <article className="cb-metric"><span>{icon}</span><small>{label}</small><strong>{value}</strong><em>{unit}</em></article>}
