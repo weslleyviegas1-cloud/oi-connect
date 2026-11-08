@@ -54,7 +54,7 @@ export function CommercialBankPortal({profile,notify}:{profile:Profile;notify:(s
  const call=async(fn:string,args:Record<string,unknown>,message:string)=>{
   setBusy(true);
   try{const {error}=await supabase.rpc(fn as never,args as never);if(error)throw error;if(args.p_idempotency_key)delete idempotencyKeys.current[fn];notify(message);await load();return true;}
-  catch(e){notify("Operação não concluída: "+(e instanceof Error?e.message:"erro desconhecido"));return false;}
+  catch(e){const message=e instanceof Error?e.message:"erro desconhecido";if(message.toLowerCase().includes("idempotência"))delete idempotencyKeys.current[fn];notify("Operação não concluída: "+message);return false;}
   finally{setBusy(false)}
  };
  const submit=(e:FormEvent,fn:string,args:Record<string,unknown>,message:string)=>{e.preventDefault();void call(fn,args,message);};
