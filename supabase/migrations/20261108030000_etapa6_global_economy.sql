@@ -33,6 +33,9 @@ create table if not exists public.national_treasuries (
   require_global_tax_approval boolean not null default true,
   require_global_budget_approval boolean not null default true,
   public_balance_visible boolean not null default false,
+  operations_suspended boolean not null default false,
+  suspended_at timestamptz,
+  suspended_by uuid references public.profiles(id),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -318,8 +321,8 @@ create or replace function public.can_manage_economy(p_country_id uuid,p_permiss
 returns boolean language sql stable security definer set search_path=public,auth as $$
   select auth.uid() is not null and (
     public.is_world_admin()
-    or public.is_country_president(p_country_id)
-    or public.has_economy_permission(p_country_id,p_permission)
+    or (exists(select 1 from public.national_treasuries t where t.country_id=p_country_id and not t.operations_suspended)
+      and (public.is_country_president(p_country_id) or public.has_economy_permission(p_country_id,p_permission)))
   );
 $$;
 
@@ -1035,6 +1038,23 @@ begin
 end;
 $$;
 
+create or replace function public.set_economy_operations_suspended(p_country_id uuid,p_suspended boolean,p_reason text)
+returns void language plpgsql security definer set search_path=public,auth as $
+declare t public.national_treasuries%rowtype;
+begin
+  if not public.is_world_admin() then raise exception 'Somente o Super Admin pode suspender operações econômicas.'; end if;
+  if p_suspended and length(trim(coalesce(p_reason,'')))<5 then raise exception 'Informe um motivo para a suspensão.'; end if;
+  select * into t from public.national_treasuries where country_id=p_country_id for update;
+  if not found then raise exception 'Tesouro Nacional não encontrado.'; end if;
+  update public.national_treasuries set operations_suspended=p_suspended,
+    suspended_at=case when p_suspended then now() else null end,
+    suspended_by=case when p_suspended then auth.uid() else null end,updated_at=now()
+  where country_id=p_country_id;
+  perform public.economy_audit(p_country_id,case when p_suspended then 'suspend' else 'reactivate' end,
+    'economy_operations',t.id,to_jsonb(t),jsonb_build_object('suspended',p_suspended,'reason',nullif(trim(p_reason),'')));
+end;
+$;
+
 create or replace function public.set_treasury_public_visibility(p_country_id uuid,p_visible boolean)
 returns void language plpgsql security definer set search_path=public,auth as $$
 begin
@@ -1063,6 +1083,7 @@ revoke all on function public.review_investment_project(uuid,text,numeric) from 
 revoke all on function public.post_treasury_entry(uuid,text,text,text,numeric,text,uuid,uuid) from public,anon;
 revoke all on function public.reverse_treasury_entry(uuid,text,text) from public,anon;
 revoke all on function public.set_treasury_public_visibility(uuid,boolean) from public,anon;
+revoke all on function public.set_economy_operations_suspended(uuid,boolean,text) from public,anon;
 revoke all on function public.set_treasury_opening_balance(uuid,numeric) from public,anon;
 
 grant execute on function public.get_economy_dashboard(uuid) to authenticated;
@@ -1079,6 +1100,7 @@ grant execute on function public.review_investment_project(uuid,text,numeric) to
 grant execute on function public.post_treasury_entry(uuid,text,text,text,numeric,text,uuid,uuid) to authenticated;
 grant execute on function public.reverse_treasury_entry(uuid,text,text) to authenticated;
 grant execute on function public.set_treasury_public_visibility(uuid,boolean) to authenticated;
+grant execute on function public.set_economy_operations_suspended(uuid,boolean,text) to authenticated;
 grant execute on function public.set_treasury_opening_balance(uuid,numeric) to authenticated;
 
 commit;
