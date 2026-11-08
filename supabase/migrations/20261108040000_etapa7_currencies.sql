@@ -80,6 +80,24 @@ create table if not exists public.exchange_rate_events (
 );
 create index if not exists exchange_rate_events_rate_idx on public.exchange_rate_events(exchange_rate_id,created_at desc);
 
+-- Sincroniza a unidade corrente do Tesouro com a atribuição nacional sem reescrever snapshots.
+create or replace function public.sync_treasury_currency_from_country()
+returns trigger language plpgsql security definer set search_path=public as $
+begin
+  update public.national_treasuries
+    set currency_code=new.currency_code,
+        currency_label=coalesce(nullif(new.currency_name,''),'Moeda nacional configurada'),
+        updated_at=now()
+  where country_id=new.id;
+  return new;
+end;
+$;
+drop trigger if exists countries_sync_treasury_currency on public.countries;
+create trigger countries_sync_treasury_currency after update of currency_code on public.countries
+for each row when (old.currency_code is distinct from new.currency_code)
+execute function public.sync_treasury_currency_from_country();
+revoke all on function public.sync_treasury_currency_from_country() from public,anon,authenticated;
+
 create table if not exists public.currency_audit_logs (
   id uuid primary key default gen_random_uuid(),
   actor_id uuid not null references public.profiles(id) on delete restrict,
