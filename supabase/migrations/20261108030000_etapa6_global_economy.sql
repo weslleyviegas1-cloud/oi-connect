@@ -596,6 +596,31 @@ returns boolean language sql stable security definer set search_path=public,auth
   );
 $$;
 
+create or replace function public.is_global_currency_comparable()
+returns boolean language sql stable security definer set search_path=public as $$
+  select count(t.country_id)>0
+    and count(t.country_id)=(select count(*) from public.countries where is_active)
+    and count(distinct t.currency_code)=1
+    and bool_and(nullif(trim(t.currency_code),'') is not null)
+    and bool_and(t.opening_balance=0 or t.opening_balance_currency_code_snapshot=coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))
+    and not exists(select 1 from public.treasury_ledger_entries x join public.countries c on c.id=x.country_id
+      where c.is_active and x.currency_code_snapshot<>coalesce(nullif((select currency_code from public.national_treasuries where country_id=x.country_id),''),'UNCONFIGURED'))
+  from public.national_treasuries t join public.countries c on c.id=t.country_id where c.is_active;
+$$;
+
+create or replace function public.is_global_gdp_comparable()
+returns boolean language sql stable security definer set search_path=public as $$
+  select public.is_global_currency_comparable() and not exists(
+    select 1 from public.countries c join public.national_treasuries t on t.country_id=c.id
+    where c.is_active and not exists(
+      select 1 from public.economic_gdp_records r where r.country_id=c.id and r.status in ('confirmed','revised')
+        and r.period_end=(select max(r2.period_end) from public.economic_gdp_records r2
+          where r2.country_id=c.id and r2.status in ('confirmed','revised'))
+        and r.currency_code_snapshot=coalesce(nullif(t.currency_code,''),'UNCONFIGURED')
+    )
+  );
+$$;
+
 create or replace function public.get_economy_dashboard(p_country_id uuid default null)
 returns jsonb language plpgsql stable security definer set search_path=public,auth as $$
 declare v_country uuid:=p_country_id; v_result jsonb;
@@ -627,32 +652,33 @@ begin
             and (prev.period_end-prev.period_start)=(cur.period_end-cur.period_start)
           where prev.total_value>0 and cur.total_value<prev.total_value
         ) negative_growth),
-        'gdp_total',(select sum(latest.total_value) from (
+        'currency_comparable',public.is_global_currency_comparable(),
+        'global_currency_code',case when public.is_global_currency_comparable()
+          then (select min(currency_code) from public.national_treasuries) else null end,
+        'gdp_total',case when public.is_global_gdp_comparable() then (select sum(latest.total_value) from (
           select distinct on (country_id) country_id,total_value
           from public.economic_gdp_records where status in ('confirmed','revised')
           order by country_id,period_end desc
-        ) latest),
+        ) latest) else null end,
         'currency_mismatched_countries',(select count(*) from public.national_treasuries t
           where (t.opening_balance>0 and t.opening_balance_currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))
             or exists(select 1 from public.treasury_ledger_entries x where x.country_id=t.country_id
               and x.currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))),
-        'treasury_total',(select sum(t.opening_balance + coalesce(l.total,0)) from public.national_treasuries t
+        'treasury_total',case when public.is_global_currency_comparable() then (select sum(t.opening_balance + coalesce(l.total,0)) from public.national_treasuries t
           left join lateral (select sum(signed_amount) total from public.treasury_ledger_entries x where x.country_id=t.country_id) l on true
-          where (t.opening_balance=0 or t.opening_balance_currency_code_snapshot=coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))
-            and not exists(select 1 from public.treasury_ledger_entries x where x.country_id=t.country_id
-              and x.currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))),
+          join public.countries c on c.id=t.country_id where c.is_active) else null end,
         'revenue_total',(select coalesce(sum(case when x.entry_type='revenue' then x.amount
           when x.entry_type='reversal' and exists(select 1 from public.treasury_ledger_entries original where original.id=x.reverses_entry_id and original.entry_type='revenue') then -x.amount else 0 end),0)
           from public.treasury_ledger_entries x),
         'expenses_total',(select coalesce(sum(case when x.entry_type='expense' then x.amount
           when x.entry_type='reversal' and exists(select 1 from public.treasury_ledger_entries original where original.id=x.reverses_entry_id and original.entry_type='expense') then -x.amount else 0 end),0)
           from public.treasury_ledger_entries x),
-        'investment_total',(select coalesce(sum(approved_amount),0) from public.public_investment_projects where status in ('approved','in_progress','completed')),
-        'budget_approved_total',(select coalesce(sum(total_planned),0) from public.budget_plans where status in ('approved','in_execution')),
+        'investment_total',case when public.is_global_currency_comparable() then (select coalesce(sum(approved_amount),0) from public.public_investment_projects where status in ('approved','in_progress','completed')) else null end,
+        'budget_approved_total',case when public.is_global_currency_comparable() then (select coalesce(sum(total_planned),0) from public.budget_plans where status in ('approved','in_execution')) else null end,
         'budget_executed_total',(select coalesce(sum(case when x.entry_type='expense' then x.amount
           when x.entry_type='reversal' and exists(select 1 from public.treasury_ledger_entries original where original.id=x.reverses_entry_id and original.entry_type='expense') then -x.amount else 0 end),0)
           from public.treasury_ledger_entries x where x.budget_allocation_id is not null),
-        'tax_revenue_total',(select coalesce(sum(amount),0) from public.tax_collections),
+        'tax_revenue_total',case when public.is_global_currency_comparable() then (select coalesce(sum(amount),0) from public.tax_collections) else null end,
         'inflation_average',(select round(avg(country_index.inflation),2) from (
           select c.id,(select case when old_ipc>0 then ((new_ipc-old_ipc)/old_ipc)*100 end from (
             select reference_date,
@@ -1198,6 +1224,8 @@ revoke all on function public.can_manage_economy(uuid,text) from public,anon;
 revoke all on function public.has_economy_scope_permission(uuid,text,uuid) from public,anon,authenticated;
 revoke all on function public.has_economy_read_scope_permission(uuid,text,uuid) from public,anon;
 revoke all on function public.has_any_economy_scoped_access(uuid) from public,anon;
+revoke all on function public.is_global_currency_comparable() from public,anon,authenticated;
+revoke all on function public.is_global_gdp_comparable() from public,anon,authenticated;
 revoke all on function public.has_economy_allocation_read_permission(uuid,text,uuid) from public,anon;
 grant execute on function public.has_economy_read_scope_permission(uuid,text,uuid) to authenticated;
 grant execute on function public.has_any_economy_scoped_access(uuid) to authenticated;
