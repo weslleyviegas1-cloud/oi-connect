@@ -28,6 +28,7 @@ export function EconomyPortal({ profile, notify }: Props) {
   const [taxRules, setTaxRules] = useState<Row[]>([]);
   const [obligations, setObligations] = useState<Row[]>([]);
   const [collections, setCollections] = useState<Row[]>([]);
+  const [auditLogs, setAuditLogs] = useState<Row[]>([]);
   const [ledger, setLedger] = useState<Row[]>([]);
   const [budgets, setBudgets] = useState<Row[]>([]);
   const [allocations, setAllocations] = useState<Row[]>([]);
@@ -66,13 +67,14 @@ export function EconomyPortal({ profile, notify }: Props) {
       let buQuery = supabase.from("budget_plans").select("*").order("created_at", { ascending: false }).limit(50);
       let alQuery = supabase.from("budget_allocations").select("*").limit(200);
       let prQuery = supabase.from("public_investment_projects").select("*").order("created_at", { ascending: false }).limit(100);
+      let auditQuery = supabase.from("economic_audit_logs").select("*").order("created_at", { ascending: false }).limit(200);
       if (selected) {
         gQuery = gQuery.eq("country_id", selected); pQuery = pQuery.eq("country_id", selected);
         trQuery = trQuery.eq("country_id", selected); obQuery = obQuery.eq("country_id", selected); collectionQuery = collectionQuery.eq("country_id", selected);
         leQuery = leQuery.eq("country_id", selected); buQuery = buQuery.eq("country_id", selected);
-        alQuery = alQuery.eq("country_id", selected); prQuery = prQuery.eq("country_id", selected);
+        alQuery = alQuery.eq("country_id", selected); prQuery = prQuery.eq("country_id", selected); auditQuery = auditQuery.eq("country_id", selected);
       }
-      const [dash, g, p, tr, ob, le, bu, al, pr, ts, mi, col] = await Promise.all([
+      const [dash, g, p, tr, ob, le, bu, al, pr, ts, mi, col, au] = await Promise.all([
         supabase.rpc("get_economy_dashboard", { p_country_id: selected }),
         gQuery, pQuery, trQuery, obQuery, leQuery, buQuery, alQuery, prQuery,
         selected ? supabase.from("national_treasuries").select("*").eq("country_id", selected).maybeSingle() : Promise.resolve({ data: null, error: null }),
@@ -82,7 +84,7 @@ export function EconomyPortal({ profile, notify }: Props) {
       if (dash.error) throw dash.error;
       setDashboard(dash.data);
       setGdp(g.data ?? []); setPrices(p.data ?? []); setTaxRules(tr.data ?? []);
-      setObligations(ob.data ?? []); setCollections(col.data ?? []); setLedger(le.data ?? []); setBudgets(bu.data ?? []);
+      setObligations(ob.data ?? []); setCollections(col.data ?? []); setAuditLogs(au.data ?? []); setLedger(le.data ?? []); setBudgets(bu.data ?? []);
       setAllocations(al.data ?? []); setProjects(pr.data ?? []); setTreasury(ts.data); setMinistries(mi.data ?? []);
     } catch (error) {
       notify(error instanceof Error ? error.message : "Não foi possível carregar a economia.");
@@ -182,7 +184,7 @@ export function EconomyPortal({ profile, notify }: Props) {
           <DataTable rows={projects} columns={[["name","Projeto"],["category","Categoria"],["planned_amount","Previsto"],["approved_amount","Aprovado"],["executed_amount","Executado"],["currency_code_snapshot","Unidade"],["status","Situação"]]}/>
           {isAdmin && <ReviewList rows={projects.filter(x=>["proposed","under_review"].includes(x.status))} onReview={(id,decision)=>{const item=projects.find(x=>x.id===id);const approved=decision==="approved"?prompt("Valor aprovado (até "+item?.planned_amount+")",String(item?.planned_amount ?? 0)):null;if(decision==="approved" && approved===null)return;void invoke("review_investment_project",{p_project_id:id,p_decision:decision,p_approved_amount:approved===null?null:Number(approved)},"Projeto revisado.");}}/>}
         </section>}
-        {tab === "reports" && <section className="eco-panel"><SectionTitle title="Relatórios econômicos" subtitle="Exportação CSV dos registros visíveis nesta conta; os dados incompletos permanecem identificados."/><div className="eco-report-list"><button onClick={()=>exportCsv(gdp,"world-economy-pib.csv")}><BarChart3/> Exportar PIB</button><button onClick={()=>exportCsv(obligations,"world-economy-tributos.csv")}><FileSpreadsheet/> Exportar tributos</button><button onClick={()=>exportCsv(ledger,"world-economy-tesouro.csv")}><Landmark/> Exportar Tesouro</button><button onClick={()=>exportCsv(budgets,"world-economy-orcamento.csv")}>Exportar orçamento</button><button onClick={()=>exportCsv(projects,"world-economy-investimentos.csv")}>Exportar investimentos</button></div></section>}
+        {tab === "reports" && <section className="eco-panel"><SectionTitle title="Relatórios econômicos" subtitle="Exportação CSV dos registros visíveis nesta conta; os dados incompletos permanecem identificados."/><div className="eco-report-list"><button onClick={()=>exportCsv(gdp,"world-economy-pib.csv")}><BarChart3/> Exportar PIB</button><button onClick={()=>exportCsv(obligations,"world-economy-tributos.csv")}><FileSpreadsheet/> Exportar tributos</button><button onClick={()=>exportCsv(ledger,"world-economy-tesouro.csv")}><Landmark/> Exportar Tesouro</button><button onClick={()=>exportCsv(budgets,"world-economy-orcamento.csv")}>Exportar orçamento</button><button onClick={()=>exportCsv(projects,"world-economy-investimentos.csv")}>Exportar investimentos</button><button onClick={()=>exportCsv(auditLogs,"world-economy-auditoria.csv")}>Exportar auditoria</button></div><h3>Auditoria econômica</h3><DataTable rows={auditLogs} columns={[["created_at","Data"],["action","Ação"],["entity_type","Registro"],["entity_id","Identificador"],["actor_id","Responsável"]]}/></section>}
       </>}
   </div>;
 }
