@@ -223,7 +223,7 @@ $function$;
 create or replace function public.bank_withdraw(
  p_account_id uuid,p_amount numeric,p_idempotency_key text
 ) returns uuid language plpgsql security definer set search_path=public,auth as $function$
-declare a public.bank_accounts%rowtype; w public.bank_cash_wallets%rowtype; v_fee numeric:=0; v_limit numeric; v_id uuid; v_after numeric;
+declare a public.bank_accounts%rowtype; w public.bank_cash_wallets%rowtype; v_fee numeric:=0; v_limit numeric; v_id uuid; v_after numeric; v_liquidity_after numeric;
 begin
  if auth.uid() is null then raise exception 'Autenticação necessária.'; end if;
  if p_amount is null or p_amount<=0 or length(trim(coalesce(p_idempotency_key,'')))<12 then raise exception 'Valor ou chave de idempotência inválidos.'; end if;
@@ -249,7 +249,9 @@ begin
   insert into public.bank_transactions(account_id,transaction_type,amount,currency_id,balance_after,description,idempotency_key,actor_id)
   values(a.id,'fee',v_fee,a.currency_id,v_after,'Tarifa de saque',p_idempotency_key||':fee',auth.uid());
   insert into public.bank_liquidity(bank_id,currency_id,balance) values(a.bank_id,a.currency_id,v_fee)
-   on conflict(bank_id,currency_id) do update set balance=bank_liquidity.balance+excluded.balance,updated_at=now();
+   on conflict(bank_id,currency_id) do update set balance=bank_liquidity.balance+excluded.balance,updated_at=now() returning balance into v_liquidity_after;
+  insert into public.bank_liquidity_transactions(bank_id,currency_id,transaction_type,amount,balance_after,reference_id,idempotency_key,description,actor_id)
+   values(a.bank_id,a.currency_id,'fee_income',v_fee,v_liquidity_after,v_id,'withdrawal-fee:'||v_id,'Receita de tarifa de saque',auth.uid());
  end if;
  insert into public.bank_cash_wallet_transactions(wallet_id,transaction_type,amount,balance_after,reference_id,idempotency_key,description,actor_id)
  values(w.id,'withdrawal',p_amount,w.balance,v_id,p_idempotency_key||':wallet','Saque de conta bancária',auth.uid());
@@ -261,7 +263,7 @@ $function$;
 create or replace function public.bank_transfer(
  p_from_account uuid,p_to_account uuid,p_amount numeric,p_idempotency_key text,p_description text default null
 ) returns uuid language plpgsql security definer set search_path=public,auth as $function$
-declare a public.bank_accounts%rowtype; b public.bank_accounts%rowtype; v_id uuid; v_rate numeric:=1; v_rate_id uuid; v_received numeric; v_fee numeric:=0; v_limit numeric;
+declare a public.bank_accounts%rowtype; b public.bank_accounts%rowtype; v_id uuid; v_rate numeric:=1; v_rate_id uuid; v_received numeric; v_fee numeric:=0; v_limit numeric; v_liquidity_after numeric;
 begin
  if auth.uid() is null then raise exception 'Autenticação necessária.'; end if;
  if p_amount is null or p_amount<=0 or length(trim(coalesce(p_idempotency_key,'')))<12 then raise exception 'Valor ou chave de idempotência inválidos.'; end if;
@@ -302,7 +304,9 @@ begin
   insert into public.bank_transactions(account_id,transaction_type,amount,currency_id,balance_after,description,reference_id,idempotency_key,actor_id)
   values(a.id,'fee',v_fee,a.currency_id,a.balance,'Tarifa de transferência',v_id,p_idempotency_key||':fee',auth.uid());
   insert into public.bank_liquidity(bank_id,currency_id,balance) values(a.bank_id,a.currency_id,v_fee)
-   on conflict(bank_id,currency_id) do update set balance=bank_liquidity.balance+excluded.balance,updated_at=now();
+   on conflict(bank_id,currency_id) do update set balance=bank_liquidity.balance+excluded.balance,updated_at=now() returning balance into v_liquidity_after;
+  insert into public.bank_liquidity_transactions(bank_id,currency_id,transaction_type,amount,balance_after,reference_id,idempotency_key,description,actor_id)
+   values(a.bank_id,a.currency_id,'fee_income',v_fee,v_liquidity_after,v_id,'transfer-fee:'||v_id,'Receita de tarifa de transferência',auth.uid());
  end if;
  perform public.bank_audit(a.bank_id,'transfer_sent','bank_transfer',v_id,jsonb_build_object('to_account',b.id,'amount',p_amount,'fee',v_fee));
  return v_id;
@@ -381,6 +385,27 @@ create table if not exists public.bank_credit_policies (
  updated_by uuid references public.profiles(id) on delete restrict,
  updated_at timestamptz not null default now()
 );
+create table if not exists public.bank_liquidity_transactions (
+ id uuid primary key default gen_random_uuid(),
+ bank_id uuid not null references public.commercial_banks(id) on delete restrict,
+ currency_id uuid not null references public.currencies(id) on delete restrict,
+ transaction_type text not null check(transaction_type in ('capitalization','loan_disbursement','loan_repayment','fee_income')),
+ amount numeric(30,6) not null check(amount>0),
+ balance_after numeric(30,6) not null check(balance_after>=0),
+ reference_id uuid,
+ idempotency_key text not null unique,
+ description text not null,
+ actor_id uuid not null references public.profiles(id) on delete restrict,
+ created_at timestamptz not null default now()
+);
+create index if not exists bank_liquidity_transactions_bank_date_idx on public.bank_liquidity_transactions(bank_id,created_at desc);
+alter table public.bank_liquidity_transactions enable row level security;
+drop policy if exists bank_liquidity_transactions_read on public.bank_liquidity_transactions;
+create policy bank_liquidity_transactions_read on public.bank_liquidity_transactions for select to authenticated
+ using(public.is_world_admin() or public.is_bank_member(bank_id,'bank.manage') or public.is_bank_member(bank_id,'audit.read'));
+revoke all on public.bank_liquidity_transactions from public,anon,authenticated;
+grant select on public.bank_liquidity_transactions to authenticated;
+
 alter table public.bank_credit_policies enable row level security;
 drop policy if exists bank_credit_policies_read on public.bank_credit_policies;
 create policy bank_credit_policies_read on public.bank_credit_policies for select to authenticated
@@ -419,9 +444,34 @@ begin
 end;
 $function$;
 
+create or replace function public.capitalize_bank_liquidity(p_bank_id uuid,p_source_account uuid,p_amount numeric)
+returns void language plpgsql security definer set search_path=public,auth as $function$
+declare a public.bank_accounts%rowtype; b public.commercial_banks%rowtype; v_balance numeric; v_key text;
+begin
+ if auth.uid() is null then raise exception 'Autenticação necessária.'; end if;
+ if p_amount is null or p_amount<=0 then raise exception 'Valor de capitalização inválido.'; end if;
+ select * into b from public.commercial_banks where id=p_bank_id and status='active' for update;
+ if not found or not (public.is_world_admin() or public.is_bank_member(p_bank_id,'bank.manage')) then raise exception 'Banco ou permissão inválidos.'; end if;
+ select * into a from public.bank_accounts where id=p_source_account for update;
+ if not found or (a.owner_profile_id<>auth.uid() and not public.is_world_admin()) then raise exception 'Conta de origem não autorizada.'; end if;
+ if a.status<>'active' or a.country_id<>b.country_id or a.balance<p_amount then raise exception 'Conta sem saldo, país incompatível ou indisponível.'; end if;
+ update public.bank_accounts set balance=balance-p_amount where id=a.id returning * into a;
+ v_key:='bank-capital:'||gen_random_uuid()::text;
+ insert into public.bank_transactions(account_id,transaction_type,amount,currency_id,balance_after,description,idempotency_key,actor_id)
+ values(a.id,'transfer_out',p_amount,a.currency_id,a.balance,'Capitalização de liquidez de banco comercial',v_key,auth.uid());
+ insert into public.bank_liquidity(bank_id,currency_id,balance)
+ values(p_bank_id,a.currency_id,p_amount)
+ on conflict(bank_id,currency_id) do update set balance=bank_liquidity.balance+excluded.balance,updated_at=now()
+ returning balance into v_balance;
+ insert into public.bank_liquidity_transactions(bank_id,currency_id,transaction_type,amount,balance_after,idempotency_key,description,actor_id)
+ values(p_bank_id,a.currency_id,'capitalization',p_amount,v_balance,v_key,'Capitalização com recursos existentes',auth.uid());
+ perform public.bank_audit(p_bank_id,'liquidity_capitalized','bank_liquidity',null,jsonb_build_object('amount',p_amount,'currency_id',a.currency_id,'source_account',a.id));
+end;
+$function$;
+
 create or replace function public.admin_review_bank_loan(p_application_id uuid,p_decision text)
 returns uuid language plpgsql security definer set search_path=public,auth as $function$
-declare x public.loan_applications%rowtype; a public.bank_accounts%rowtype; v_loan uuid; v_total numeric; v_monthly numeric; i integer; v_liquidity numeric;
+declare x public.loan_applications%rowtype; a public.bank_accounts%rowtype; v_loan uuid; v_total numeric; v_monthly numeric; i integer; v_liquidity numeric; v_liquidity_after numeric;
 begin
  select * into x from public.loan_applications where id=p_application_id for update;
  if not found or not (public.is_world_admin() or public.is_bank_member(x.bank_id,'loan.review')) then raise exception 'Sem permissão ou solicitação inexistente.'; end if;
@@ -441,7 +491,9 @@ begin
  v_monthly:=round(v_total/x.installments_count,6);
  insert into public.bank_loans(application_id,bank_id,borrower_profile_id,account_id,principal,total_due,currency_id,annual_interest_rate,installments_count)
  values(x.id,x.bank_id,x.applicant_profile_id,x.account_id,x.amount,v_total,x.currency_id,x.annual_interest_rate,x.installments_count) returning id into v_loan;
- update public.bank_liquidity set balance=balance-x.amount,updated_at=now() where bank_id=x.bank_id and currency_id=x.currency_id;
+ update public.bank_liquidity set balance=balance-x.amount,updated_at=now() where bank_id=x.bank_id and currency_id=x.currency_id returning balance into v_liquidity_after;
+ insert into public.bank_liquidity_transactions(bank_id,currency_id,transaction_type,amount,balance_after,reference_id,idempotency_key,description,actor_id)
+ values(x.bank_id,x.currency_id,'loan_disbursement',x.amount,v_liquidity_after,v_loan,'loan-disbursement:'||v_loan,'Desembolso de empréstimo',auth.uid());
  update public.bank_accounts set balance=balance+x.amount where id=a.id returning * into a;
  update public.loan_applications set status='approved',reviewed_by=auth.uid(),reviewed_at=now() where id=x.id;
  insert into public.bank_transactions(account_id,transaction_type,amount,currency_id,balance_after,description,reference_id,idempotency_key,actor_id)
@@ -457,7 +509,7 @@ $function$;
 
 create or replace function public.pay_bank_loan_installment(p_installment_id uuid,p_from_account uuid,p_idempotency_key text)
 returns void language plpgsql security definer set search_path=public,auth as $function$
-declare ins public.loan_installments%rowtype; l public.bank_loans%rowtype; a public.bank_accounts%rowtype; v_due numeric; v_id uuid;
+declare ins public.loan_installments%rowtype; l public.bank_loans%rowtype; a public.bank_accounts%rowtype; v_due numeric; v_id uuid; v_liquidity_after numeric;
 begin
  if auth.uid() is null or length(trim(coalesce(p_idempotency_key,'')))<12 then raise exception 'Autenticação ou chave de idempotência inválida.'; end if;
  perform pg_advisory_xact_lock(hashtextextended(p_idempotency_key,0));
@@ -474,7 +526,9 @@ begin
  insert into public.bank_transactions(account_id,transaction_type,amount,currency_id,balance_after,description,reference_id,idempotency_key,actor_id)
  values(a.id,'loan_payment',v_due,a.currency_id,a.balance,'Pagamento de parcela de empréstimo',l.id,p_idempotency_key,auth.uid()) returning id into v_id;
  insert into public.bank_liquidity(bank_id,currency_id,balance) values(l.bank_id,l.currency_id,v_due)
- on conflict(bank_id,currency_id) do update set balance=bank_liquidity.balance+excluded.balance,updated_at=now();
+ on conflict(bank_id,currency_id) do update set balance=bank_liquidity.balance+excluded.balance,updated_at=now() returning balance into v_liquidity_after;
+ insert into public.bank_liquidity_transactions(bank_id,currency_id,transaction_type,amount,balance_after,reference_id,idempotency_key,description,actor_id)
+ values(l.bank_id,l.currency_id,'loan_repayment',v_due,v_liquidity_after,l.id,'loan-repayment:'||p_idempotency_key,'Recebimento de parcela de empréstimo',auth.uid());
  if not exists(select 1 from public.loan_installments where loan_id=l.id and status<>'paid') then update public.bank_loans set status='paid' where id=l.id; end if;
  perform public.bank_audit(l.bank_id,'loan_installment_paid','bank_loan',l.id,jsonb_build_object('installment_id',ins.id,'amount',v_due));
 end;
@@ -600,6 +654,8 @@ grant execute on function public.bank_manage_branch(uuid,uuid,text,text,text,tex
 grant execute on function public.bank_set_fee(uuid,text,numeric,uuid,boolean) to authenticated;
 grant execute on function public.bank_set_daily_limit(uuid,text,numeric,uuid) to authenticated;
 grant execute on function public.bank_set_credit_policy(uuid,numeric,integer,boolean) to authenticated;
+revoke all on function public.capitalize_bank_liquidity(uuid,uuid,numeric) from public,anon;
+grant execute on function public.capitalize_bank_liquidity(uuid,uuid,numeric) to authenticated;
 grant execute on function public.request_bank_loan(uuid,numeric,integer,numeric,text) to authenticated;
 grant execute on function public.admin_review_bank_loan(uuid,text) to authenticated;
 grant execute on function public.pay_bank_loan_installment(uuid,uuid,text) to authenticated;
