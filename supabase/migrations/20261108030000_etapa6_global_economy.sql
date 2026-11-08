@@ -420,8 +420,12 @@ begin
       left join public.economic_gdp_records prev on prev.country_id=c.id and prev.status in ('confirmed','revised')
         and prev.period_end=cur.period_start-1
         and (prev.period_end-prev.period_start)=(cur.period_end-cur.period_start)),
-    'revenue',(select coalesce(sum(signed_amount) filter (where signed_amount>0),0) from public.treasury_ledger_entries where country_id=c.id),
-    'expenses',(select coalesce(sum(-signed_amount) filter (where signed_amount<0),0) from public.treasury_ledger_entries where country_id=c.id),
+    'revenue',(select coalesce(sum(case when x.entry_type='revenue' then x.amount
+      when x.entry_type='reversal' and exists(select 1 from public.treasury_ledger_entries original where original.id=x.reverses_entry_id and original.entry_type='revenue') then -x.amount else 0 end),0)
+      from public.treasury_ledger_entries x where x.country_id=c.id),
+    'expenses',(select coalesce(sum(case when x.entry_type='expense' then x.amount
+      when x.entry_type='reversal' and exists(select 1 from public.treasury_ledger_entries original where original.id=x.reverses_entry_id and original.entry_type='expense') then -x.amount else 0 end),0)
+      from public.treasury_ledger_entries x where x.country_id=c.id),
     'treasury_balance',case when public.is_world_admin() or public.is_country_president(c.id)
       or public.has_government_permission(c.id,'treasury.read',null,null)
       or public.has_government_permission(c.id,'economy.read',null,null)
