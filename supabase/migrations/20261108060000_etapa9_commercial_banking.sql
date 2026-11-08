@@ -204,7 +204,9 @@ drop policy if exists bank_branches_read on public.bank_branches;
 create policy bank_branches_read on public.bank_branches for select to authenticated
 using(exists(select 1 from public.commercial_banks b where b.id=bank_id and b.status='active') or public.is_world_admin() or public.is_bank_member(bank_id));
 drop policy if exists bank_accounts_read on public.bank_accounts;
-drop policy if exists bank_members_read on public.bank_members;\ncreate policy bank_members_read on public.bank_members for select to authenticated using(profile_id=auth.uid() or public.is_world_admin() or public.is_bank_member(bank_id,'staff.manage'));\ndrop policy if exists bank_accounts_read on public.bank_accounts for select to authenticated
+drop policy if exists bank_members_read on public.bank_members;
+create policy bank_members_read on public.bank_members for select to authenticated using(profile_id=auth.uid() or public.is_world_admin() or public.is_bank_member(bank_id,'staff.manage'));
+drop policy if exists bank_accounts_read on public.bank_accounts for select to authenticated
 using(owner_profile_id=auth.uid() or public.is_world_admin() or public.is_bank_member(bank_id,'account.read'));
 drop policy if exists bank_transactions_read on public.bank_transactions;
 create policy bank_transactions_read on public.bank_transactions for select to authenticated
@@ -350,9 +352,10 @@ begin
   'accounts',coalesce((select jsonb_agg(jsonb_build_object('id',a.id,'bank_id',a.bank_id,'bank_name',b.name,'bank_identifier',b.bank_identifier,'account_number',a.account_number,'account_type',a.account_type,'status',a.status,'balance',a.balance,'currency_id',a.currency_id,'currency_code',c.internal_code,'currency_symbol',c.symbol,'country_id',a.country_id) order by a.created_at desc)
    from public.bank_accounts a join public.commercial_banks b on b.id=a.bank_id join public.currencies c on c.id=a.currency_id where a.owner_profile_id=auth.uid()),'[]'::jsonb),
   'banks',coalesce((select jsonb_agg(jsonb_build_object('id',b.id,'name',b.name,'identifier',b.bank_identifier,'country_id',b.country_id,'country_name',co.name,'type',b.bank_type) order by b.name)
-   from public.commercial_banks b join public.countries co on co.id=b.country_id where b.status='active'
+   from public.commercial_banks b join public.countries co on co.id=b.country_id where (b.status='active' or public.is_world_admin())
    and (public.is_world_admin() or exists(select 1 from public.profiles p where p.id=auth.uid() and p.country_id=b.country_id))),'[]'::jsonb),
-  'countries',coalesce((select jsonb_agg(jsonb_build_object('id',c.id,'name',c.name) order by c.name) from public.countries c where c.is_active and public.is_world_admin()),'[]'::jsonb),\n  'transactions',coalesce((select jsonb_agg(jsonb_build_object('id',t.id,'account_id',t.account_id,'type',t.transaction_type,'amount',t.amount,'currency_id',t.currency_id,'balance_after',t.balance_after,'description',t.description,'created_at',t.created_at,'status',t.status) order by t.created_at desc)
+  'countries',coalesce((select jsonb_agg(jsonb_build_object('id',c.id,'name',c.name) order by c.name) from public.countries c where c.is_active and public.is_world_admin()),'[]'::jsonb),
+  'transactions',coalesce((select jsonb_agg(jsonb_build_object('id',t.id,'account_id',t.account_id,'type',t.transaction_type,'amount',t.amount,'currency_id',t.currency_id,'balance_after',t.balance_after,'description',t.description,'created_at',t.created_at,'status',t.status) order by t.created_at desc)
    from public.bank_transactions t join public.bank_accounts a on a.id=t.account_id where a.owner_profile_id=auth.uid()),'[]'::jsonb)
  ) into v;
  return v;
