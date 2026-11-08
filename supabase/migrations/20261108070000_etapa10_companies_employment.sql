@@ -308,6 +308,8 @@ alter table public.salary_payments enable row level security;
 alter table public.company_financial_records enable row level security;
 alter table public.company_tax_records enable row level security;
 alter table public.company_audit_logs enable row level security;
+drop policy if exists company_audit_logs_read on public.company_audit_logs;
+create policy company_audit_logs_read on public.company_audit_logs for select to authenticated using(public.is_world_admin() or actor_id=auth.uid() or public.is_company_member(company_id,'audit.read'));
 
 drop policy if exists companies_read on public.companies;
 create policy companies_read on public.companies for select to authenticated
