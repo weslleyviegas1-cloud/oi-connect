@@ -381,11 +381,16 @@ begin
     'gdp_period_end',(select r.period_end from public.economic_gdp_records r where r.country_id=c.id and r.status='confirmed' order by r.period_end desc limit 1),
     'previous_gdp',(select r.total_value from public.economic_gdp_records r where r.country_id=c.id and r.status='confirmed' order by r.period_end desc offset 1 limit 1),
     'gdp_growth',(select case when prev.total_value>0 then round(((cur.total_value-prev.total_value)/prev.total_value)*100,2) end
-      from (select total_value from public.economic_gdp_records where country_id=c.id and status='confirmed' order by period_end desc limit 1) cur
-      cross join (select total_value from public.economic_gdp_records where country_id=c.id and status='confirmed' order by period_end desc offset 1 limit 1) prev),
+      from (select total_value,period_start,period_end from public.economic_gdp_records where country_id=c.id and status in ('confirmed','revised') order by period_end desc limit 1) cur
+      left join public.economic_gdp_records prev on prev.country_id=c.id and prev.status in ('confirmed','revised')
+        and prev.period_end=cur.period_start-1
+        and (prev.period_end-prev.period_start)=(cur.period_end-cur.period_start)),
     'revenue',(select coalesce(sum(amount),0) from public.treasury_ledger_entries where country_id=c.id and entry_type='revenue'),
     'expenses',(select coalesce(sum(amount),0) from public.treasury_ledger_entries where country_id=c.id and entry_type='expense'),
-    'treasury_balance',t.opening_balance+(select coalesce(sum(signed_amount),0) from public.treasury_ledger_entries where country_id=c.id),
+    'treasury_balance',case when public.is_world_admin() or public.is_country_president(c.id)
+      or public.has_government_permission(c.id,'treasury.read',null,null)
+      or public.has_government_permission(c.id,'economy.read',null,null)
+      or t.public_balance_visible then t.opening_balance+(select coalesce(sum(signed_amount),0) from public.treasury_ledger_entries where country_id=c.id) else null end,
     'tax_collected',(select coalesce(sum(amount),0) from public.tax_collections where country_id=c.id),
     'tax_open',(select coalesce(sum(amount_due),0) from public.tax_obligations where country_id=c.id and status in ('open','pending_confirmation','partially_paid','overdue')),
     'budget_approved',(select coalesce(sum(total_planned),0) from public.budget_plans where country_id=c.id and status in ('approved','in_execution')),
@@ -398,6 +403,7 @@ begin
       join public.economic_price_items i on i.id=o.item_id and i.is_active
       join lateral(select price from public.economic_price_observations b where b.item_id=i.id order by b.reference_date limit 1) base on true
       where o.country_id=c.id group by reference_date
+      having count(distinct o.item_id)=(select count(*) from public.economic_price_items active_items where active_items.country_id=c.id and active_items.is_active)
     ) ix order by reference_date desc limit 1)
   ) into v_result
   from public.countries c join public.national_treasuries t on t.country_id=c.id where c.id=v_country;
@@ -573,9 +579,9 @@ declare v_id uuid;
 begin
   if not public.can_manage_economy(p_country_id,'investment.manage') then raise exception 'Sem permissão para propor investimento.'; end if;
   if p_planned_amount<0 or length(trim(coalesce(p_name,'')))<2 then raise exception 'Projeto inválido.'; end if;
-  if p_budget_allocation_id is not null and not exists(select 1 from public.budget_allocations a join public.budget_plans b on b.id=a.budget_plan_id
+  if p_budget_allocation_id is null or not exists(select 1 from public.budget_allocations a join public.budget_plans b on b.id=a.budget_plan_id
     where a.id=p_budget_allocation_id and a.country_id=p_country_id and b.status in ('approved','in_execution')) then
-    raise exception 'A alocação orçamentária não está aprovada para este país.'; end if;
+    raise exception 'O projeto precisa de uma alocação orçamentária aprovada neste país.'; end if;
   insert into public.public_investment_projects(country_id,name,description,category,budget_allocation_id,planned_amount,starts_on,expected_end,created_by)
   values(p_country_id,trim(p_name),p_description,trim(p_category),p_budget_allocation_id,p_planned_amount,p_starts_on,p_expected_end)
   returning id into v_id;
@@ -623,6 +629,7 @@ begin
   if p_investment_project_id is not null then
     select * into p from public.public_investment_projects where id=p_investment_project_id and country_id=p_country_id for update;
     if not found or p.status not in ('approved','in_progress') then raise exception 'Projeto não aprovado ou não encontrado.'; end if;
+    if p.budget_allocation_id is distinct from p_budget_allocation_id then raise exception 'A execução deve usar a alocação aprovada do próprio projeto.'; end if;
     if p_entry_type<>'expense' or p.executed_amount+p_amount>p.approved_amount then raise exception 'Execução excede o valor aprovado.'; end if;
     update public.public_investment_projects set executed_amount=executed_amount+p_amount,
       status=case when executed_amount+p_amount>=approved_amount then 'completed' else 'in_progress' end,updated_at=now()
@@ -659,6 +666,22 @@ begin
 end;
 $$;
 
+create or replace function public.set_treasury_opening_balance(p_country_id uuid,p_amount numeric)
+returns void language plpgsql security definer set search_path=public,auth as $
+declare t public.national_treasuries%rowtype;
+begin
+  if not public.is_world_admin() then raise exception 'Somente o Super Admin pode definir o saldo inicial.'; end if;
+  if p_amount<0 then raise exception 'Saldo inicial não pode ser negativo.'; end if;
+  select * into t from public.national_treasuries where country_id=p_country_id for update;
+  if not found then raise exception 'Tesouro Nacional não encontrado.'; end if;
+  if t.opening_balance<>0 or exists(select 1 from public.treasury_ledger_entries where country_id=p_country_id) then
+    raise exception 'O saldo inicial só pode ser definido uma vez, antes do primeiro lançamento.';
+  end if;
+  update public.national_treasuries set opening_balance=p_amount,updated_at=now() where country_id=p_country_id;
+  perform public.economy_audit(p_country_id,'initialize','national_treasury',t.id,to_jsonb(t),jsonb_build_object('opening_balance',p_amount));
+end;
+$;
+
 create or replace function public.set_treasury_public_visibility(p_country_id uuid,p_visible boolean)
 returns void language plpgsql security definer set search_path=public,auth as $$
 begin
@@ -685,6 +708,7 @@ revoke all on function public.review_investment_project(uuid,text,numeric) from 
 revoke all on function public.post_treasury_entry(uuid,text,text,text,numeric,text,uuid,uuid) from public,anon;
 revoke all on function public.reverse_treasury_entry(uuid,text,text) from public,anon;
 revoke all on function public.set_treasury_public_visibility(uuid,boolean) from public,anon;
+revoke all on function public.set_treasury_opening_balance(uuid,numeric) from public,anon;
 
 grant execute on function public.get_economy_dashboard(uuid) to authenticated;
 grant execute on function public.save_gdp_record(uuid,date,date,jsonb,text) to authenticated;
@@ -700,5 +724,6 @@ grant execute on function public.review_investment_project(uuid,text,numeric) to
 grant execute on function public.post_treasury_entry(uuid,text,text,text,numeric,text,uuid,uuid) to authenticated;
 grant execute on function public.reverse_treasury_entry(uuid,text,text) to authenticated;
 grant execute on function public.set_treasury_public_visibility(uuid,boolean) to authenticated;
+grant execute on function public.set_treasury_opening_balance(uuid,numeric) to authenticated;
 
 commit;
