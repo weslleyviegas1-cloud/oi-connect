@@ -175,7 +175,7 @@ grant update(is_read) on public.citizen_notifications to authenticated;
 
 create or replace function public.get_my_citizen_profile()
 returns jsonb
-language plpgsql stable security definer
+language plpgsql security definer
 set search_path=public,auth
 as $$
 declare v_profile public.profiles%rowtype; v_extra public.citizen_profiles%rowtype; v_result jsonb;
