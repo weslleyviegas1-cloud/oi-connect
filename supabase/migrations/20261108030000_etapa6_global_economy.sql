@@ -610,15 +610,21 @@ $$;
 
 create or replace function public.is_global_gdp_comparable()
 returns boolean language sql stable security definer set search_path=public as $$
-  select public.is_global_currency_comparable() and not exists(
-    select 1 from public.countries c join public.national_treasuries t on t.country_id=c.id
-    where c.is_active and not exists(
-      select 1 from public.economic_gdp_records r where r.country_id=c.id and r.status in ('confirmed','revised')
-        and r.period_end=(select max(r2.period_end) from public.economic_gdp_records r2
-          where r2.country_id=c.id and r2.status in ('confirmed','revised'))
-        and r.currency_code_snapshot=coalesce(nullif(t.currency_code,''),'UNCONFIGURED')
+  select public.is_global_currency_comparable()
+    and not exists(
+      select 1 from public.countries c join public.national_treasuries t on t.country_id=c.id
+      where c.is_active and not exists(
+        select 1 from public.economic_gdp_records r where r.country_id=c.id and r.status in ('confirmed','revised')
+          and r.period_end=(select max(r2.period_end) from public.economic_gdp_records r2
+            where r2.country_id=c.id and r2.status in ('confirmed','revised'))
+          and r.currency_code_snapshot=coalesce(nullif(t.currency_code,''),'UNCONFIGURED')
+      )
     )
-  );
+    and (select count(distinct (latest.period_start::text||'/'||latest.period_end::text)) from (
+      select distinct on (r.country_id) r.country_id,r.period_start,r.period_end
+      from public.economic_gdp_records r join public.countries c on c.id=r.country_id and c.is_active
+      where r.status in ('confirmed','revised') order by r.country_id,r.period_end desc
+    ) latest)=1;
 $$;
 
 create or replace function public.get_economy_dashboard(p_country_id uuid default null)
