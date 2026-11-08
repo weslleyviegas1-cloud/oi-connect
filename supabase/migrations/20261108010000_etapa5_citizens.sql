@@ -277,6 +277,8 @@ begin
       'Seu cargo na plataforma foi atualizado para ' || new.role || '.',new.country_id,auth.uid());
   end if;
   if new.account_status is distinct from old.account_status then
+    update public.citizen_profiles set citizen_status=case when new.account_status='suspended' then 'suspended' else 'active' end, updated_at=now() where profile_id=new.id;
+    update public.citizen_documents set status=case when new.account_status='suspended' then 'suspended' else 'active' end, updated_at=now() where profile_id=new.id and document_type='national_identity';
     insert into public.citizen_history(profile_id,event_type,title,description,country_id,actor_id,metadata)
     values (new.id,'account_status_changed','Situação da conta alterada',
       'A situação global da conta foi atualizada.',new.country_id,auth.uid(),
@@ -331,6 +333,25 @@ begin
   values (auth.uid(),'profile_updated','Perfil atualizado','O cidadão atualizou as informações opcionais do perfil.',auth.uid());
 end;
 $$;
+
+
+create or replace function public.update_my_minecraft_nickname(p_nickname text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $
+begin
+  if auth.uid() is null then raise exception 'É necessário entrar na conta.'; end if;
+  if length(trim(coalesce(p_nickname,''))) < 3 or length(trim(p_nickname)) > 32 then
+    raise exception 'O nickname deve ter entre 3 e 32 caracteres.';
+  end if;
+  update public.profiles
+    set minecraft_username=trim(p_nickname)
+    where id=auth.uid();
+  if not found then raise exception 'Perfil não encontrado.'; end if;
+end;
+$;
 
 create or replace function public.get_my_citizen_profile()
 returns jsonb
@@ -689,6 +710,7 @@ revoke all on function public.capture_citizen_nickname_change() from public,anon
 revoke all on function public.initialize_citizen_record() from public,anon,authenticated;
 revoke all on function public.capture_citizen_country_change() from public,anon,authenticated;
 revoke all on function public.update_my_citizen_profile(date,text,text,boolean,boolean) from public,anon;
+revoke all on function public.update_my_minecraft_nickname(text) from public,anon;
 revoke all on function public.get_my_citizen_profile() from public,anon;
 revoke all on function public.get_public_citizen_profile(uuid) from public,anon;
 revoke all on function public.request_nationality_change(uuid) from public,anon;
@@ -698,6 +720,7 @@ revoke all on function public.admin_list_nationality_change_requests() from publ
 revoke all on function public.get_country_citizens(uuid,text) from public,anon;
 
 grant execute on function public.update_my_citizen_profile(date,text,text,boolean,boolean) to authenticated;
+grant execute on function public.update_my_minecraft_nickname(text) to authenticated;
 grant execute on function public.get_my_citizen_profile() to authenticated;
 grant execute on function public.get_public_citizen_profile(uuid) to authenticated;
 grant execute on function public.request_nationality_change(uuid) to authenticated;
