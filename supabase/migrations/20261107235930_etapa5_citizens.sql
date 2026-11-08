@@ -477,7 +477,7 @@ returns trigger
 language plpgsql
 security definer
 set search_path=public
-as $
+as $$
 begin
   if new.country_id is distinct from old.country_id then
     new.country_joined_at := case when new.country_id is null then null else now() end;
@@ -486,7 +486,7 @@ begin
   end if;
   return new;
 end;
-$;
+$$;
 
 drop trigger if exists profiles_track_country_joined_at on public.profiles;
 create trigger profiles_track_country_joined_at
