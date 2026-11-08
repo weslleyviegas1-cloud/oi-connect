@@ -1,0 +1,100 @@
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { supabase } from "@/lib/supabase";
+import { Plane, FileBadge, ShieldCheck, MapPin, ClipboardList, Globe2, RefreshCw, Plus, CheckCircle2, XCircle } from "lucide-react";
+
+type Row = Record<string, any>;
+type Profile = { id: string; role: string; country_id?: string | null; username?: string; player_number?: number; avatar_url?: string | null };
+const purposes = [{value:"tourism",label:"Turismo"},{value:"work",label:"Trabalho"},{value:"business",label:"Negócios"},{value:"residence",label:"Residência"},{value:"official_visit",label:"Visita oficial"},{value:"transit",label:"Trânsito"}];
+const date = (v?: string) => v ? new Date(v).toLocaleDateString("pt-BR") : "—";
+const status = (v?: string) => ({active:"Ativo",pending:"Pendente",in_review:"Em análise",approved:"Aprovado",rejected:"Rejeitado",issued:"Emitido",expired:"Expirado",cancelled:"Cancelado",requested:"Solicitada",authorized:"Autorizada",in_progress:"Em andamento",completed:"Concluída",suspended:"Suspenso",closed:"Encerrado",not_issued:"Não emitido"} as Record<string,string>)[v ?? ""] ?? v ?? "—";
+
+export function TravelDocumentPortal({ profile, notify }: { profile: Profile; notify: (message: string) => void }) {
+  const [tab,setTab]=useState("personal");
+  const [loading,setLoading]=useState(true);
+  const [busy,setBusy]=useState(false);
+  const [countries,setCountries]=useState<Row[]>([]);
+  const [documents,setDocuments]=useState<Row[]>([]);
+  const [passport,setPassport]=useState<Row|null>(null);
+  const [passportRequests,setPassportRequests]=useState<Row[]>([]);
+  const [visaTypes,setVisaTypes]=useState<Row[]>([]);
+  const [visaApplications,setVisaApplications]=useState<Row[]>([]);
+  const [airports,setAirports]=useState<Row[]>([]);
+  const [travels,setTravels]=useState<Row[]>([]);
+  const [immigration,setImmigration]=useState<Row[]>([]);
+  const [emigration,setEmigration]=useState<Row[]>([]);
+  const [rules,setRules]=useState<Row[]>([]);
+  const [selectedVisa,setSelectedVisa]=useState("");
+  const [destination,setDestination]=useState("");
+  const [entry,setEntry]=useState("");
+  const [exit,setExit]=useState("");
+  const [originAirport,setOriginAirport]=useState("");
+  const [destinationAirport,setDestinationAirport]=useState("");
+  const [travelDoc,setTravelDoc]=useState("");
+  const [purpose,setPurpose]=useState("tourism");
+  const [airportCountry,setAirportCountry]=useState(profile.country_id ?? "");
+  const [airportName,setAirportName]=useState("");
+  const [airportCode,setAirportCode]=useState("");
+  const [airportCity,setAirportCity]=useState("");
+  const [coords,setCoords]=useState({x:"",y:"",z:""});
+  const [airportDescription,setAirportDescription]=useState("");
+  const [validity,setValidity]=useState("1825");
+  const [reason,setReason]=useState("");
+
+  const load=useCallback(async()=>{
+    setLoading(true);
+    try{
+      const [c,d,p,pr,vt,va,a,t,i,e,b]=await Promise.all([
+        supabase.from("countries").select("id,name,flag,currency_code").eq("is_active",true).order("name"),
+        supabase.from("citizen_documents").select("*").eq("profile_id",profile.id).order("created_at",{ascending:false}),
+        supabase.from("citizen_passports").select("*").eq("profile_id",profile.id).maybeSingle(),
+        supabase.from("passport_requests").select("*").eq("profile_id",profile.id).order("created_at",{ascending:false}),
+        supabase.from("visa_types").select("*,countries(name,flag)").eq("is_active",true),
+        supabase.from("visa_applications").select("*,countries(name,flag)").eq("profile_id",profile.id).order("created_at",{ascending:false}),
+        supabase.from("airports").select("*,countries(name,flag)").order("name"),
+        supabase.from("travel_requests").select("*,origin: countries!travel_requests_origin_country_id_fkey(name),destination: countries!travel_requests_destination_country_id_fkey(name),origin_airport:airports!travel_requests_origin_airport_id_fkey(name,identifier),destination_airport:airports!travel_requests_destination_airport_id_fkey(name,identifier)").order("created_at",{ascending:false}),
+        supabase.from("immigration_records").select("*").eq("profile_id",profile.id).order("occurred_at",{ascending:false}),
+        supabase.from("emigration_records").select("*").eq("profile_id",profile.id).order("occurred_at",{ascending:false}),
+        supabase.from("border_rules").select("*").order("effective_from",{ascending:false})
+      ]);
+      for(const x of [c,d,p,pr,vt,va,a,t,i,e,b]) if(x.error) throw x.error;
+      setCountries(c.data??[]);setDocuments(d.data??[]);setPassport(p.data);setPassportRequests(pr.data??[]);
+      setVisaTypes(vt.data??[]);setVisaApplications(va.data??[]);setAirports(a.data??[]);
+      setTravels((t.data??[]).filter((x:Row)=>x.profile_id===profile.id || profile.role==="super_admin" || x.origin_country_id===profile.country_id || x.destination_country_id===profile.country_id));
+      setImmigration(i.data??[]);setEmigration(e.data??[]);setRules(b.data??[]);
+    }catch(err){notify("Falha ao carregar documentos e viagens: "+(err instanceof Error?err.message:"erro desconhecido"));}
+    finally{setLoading(false);}
+  },[profile.id,profile.role,profile.country_id,notify]);
+  useEffect(()=>{void load();},[load]);
+  const identity=useMemo(()=>documents.find(d=>d.document_type==="national_identity"),[documents]);
+  const activeDoc=documents.find(d=>d.status==="active" && (!d.expires_at || new Date(d.expires_at)>new Date()));
+  const ownCountry=countries.find(c=>c.id===profile.country_id);
+  const admin=profile.role==="super_admin";
+  const countryManager=admin || profile.role==="president";
+  const call=async(fn:string,args:Record<string,unknown>,success:string)=>{setBusy(true);try{const {error}=await supabase.rpc(fn,args);if(error)throw error;notify(success);await load();}catch(err){notify(err instanceof Error?err.message:"Operação não concluída.");}finally{setBusy(false);}};
+  const submitPassport=()=>void call("request_passport",{p_reason:"Solicitação de emissão/renovação pelo cidadão."},"Solicitação de passaporte enviada.");
+  const submitVisa=async(e:FormEvent)=>{e.preventDefault();if(!selectedVisa||!entry||!exit)return;await call("submit_visa_application",{p_visa_type_id:selectedVisa,p_entry:entry,p_exit:exit,p_purpose:purpose},"Solicitação de visto enviada.");};
+  const submitTravel=async(e:FormEvent)=>{e.preventDefault();if(!originAirport||!destinationAirport||!travelDoc||!entry||!exit)return;await call("submit_world_travel_request",{p_origin_airport:originAirport,p_destination_airport:destinationAirport,p_document_id:travelDoc,p_purpose:purpose,p_entry:entry,p_exit:exit},"Solicitação de viagem enviada para análise.");};
+  const submitAirport=async(e:FormEvent)=>{e.preventDefault();await call("create_world_airport",{p_identifier:airportCode,p_name:airportName,p_country_id:airportCountry,p_city:airportCity,p_x:Number(coords.x),p_y:Number(coords.y),p_z:Number(coords.z),p_description:airportDescription},"Aeroporto cadastrado. A ativação depende da aprovação aplicável.");setAirportName("");setAirportCode("");};
+  const review=(table:"passport"|"visa"|"travel",id:string,decision:string)=>{const note=window.prompt("Justificativa obrigatória para esta decisão:");if(!note?.trim())return;const fn=table==="passport"?"review_passport_request":table==="visa"?"review_visa_application":"decide_world_travel";const args=table==="passport"?{p_request_id:id,p_decision:decision,p_reason:note,p_validity_days:Number(validity)}:table==="visa"?{p_application_id:id,p_decision:decision,p_reason:note}:{p_request_id:id,p_decision:decision==="approve"?"authorized":"rejected",p_reason:note};void call(fn,args,"Decisão registrada e auditada.");};
+  const airportStatus=(id:string,next:string)=>{const note=window.prompt("Informe o motivo da alteração:");if(note?.trim())void call("admin_set_airport_status",{p_airport_id:id,p_status:next,p_reason:note},"Situação do aeroporto atualizada.");};
+  const createRule=()=>{if(!profile.country_id)return;const note=window.prompt("Justificativa para a regra de fronteira:");if(note?.trim())void call("create_border_rule",{p_country_id:profile.country_id,p_requires_passport:true,p_requires_visa:false,p_requires_authorization:false,p_allow_entry:true,p_allow_exit:true,p_reason:note},"Regra de fronteira registrada.");};
+
+  const tabs=[["personal","Meus documentos"],["passports","Passaportes"],["visas","Vistos"],["travel","Viagens"],["border","Imigração e emigração"],["airports","Aeroportos"],...(countryManager?[["admin","Administração"]]:[])];
+  return <div className="we-travel-portal">
+    <div className="we-travel-heading"><div><small>WORLD ECONOMY / ETAPA 11</small><h2>Minhas viagens e documentos</h2><p>Documentos fictícios válidos somente dentro da simulação.</p></div><button type="button" className="we-secondary" onClick={()=>void load()}><RefreshCw size={15}/> Atualizar</button></div>
+    <div className="we-travel-tabs">{tabs.map(([id,label])=><button key={id} className={tab===id?"active":""} onClick={()=>setTab(id)}>{label}</button>)}</div>
+    {loading?<div className="we-empty">Carregando dados documentais...</div>:<>
+    {tab==="personal"&&<div className="we-travel-grid">
+      <article className="we-travel-card"><div className="we-travel-card-head"><FileBadge/><span>IDENTIDADE NACIONAL DIGITAL</span></div><h3>{profile.username??"Cidadão"}</h3>{profile.avatar_url&&<img className="we-travel-avatar" src={profile.avatar_url} alt="Foto do cidadão"/>}<dl><dt>ID permanente</dt><dd>{profile.player_number??"—"}</dd><dt>Nacionalidade / país emissor</dt><dd>{ownCountry?.name??"Não definida"}</dd><dt>Documento</dt><dd>{identity?.document_number??"Identidade ainda não emitida"}</dd><dt>Código de validação</dt><dd>{identity?.identification_code??"—"}</dd><dt>Emissão / validade</dt><dd>{date(identity?.issued_at)} / {identity?.expires_at?date(identity.expires_at):"Sem prazo"}</dd><dt>Situação</dt><dd>{status(identity?.status??"not_issued")}</dd></dl><small>O número permanente do cidadão é a referência documental. Nickname não é identificador oficial.</small></article>
+      <article className="we-travel-card"><div className="we-travel-card-head"><ShieldCheck/><span>PASSAPORTE</span></div><h3>{passport?.passport_number??"Não emitido"}</h3><dl><dt>Titular</dt><dd>{profile.username}</dd><dt>ID permanente</dt><dd>{profile.player_number??"—"}</dd><dt>Nacionalidade</dt><dd>{ownCountry?.name??"—"}</dd><dt>Emissão / validade</dt><dd>{date(passport?.issued_at)} / {date(passport?.expires_at)}</dd><dt>Situação</dt><dd>{status(passport?.status??"not_issued")}</dd></dl><button className="we-primary" disabled={busy||passportRequests.some(r=>["pending","in_review","approved"].includes(r.status))} onClick={submitPassport}><Plus size={16}/> Solicitar passaporte</button></article>
+    </div>}
+    {tab==="passports"&&<><div className="we-travel-list">{passportRequests.map(r=><article key={r.id}><b>Solicitação {r.request_type==="renewal"?"de renovação":"de emissão"}</b><span>{status(r.status)}</span><small>{date(r.requested_at)} • {r.review_note??r.reason??"Aguardando análise"}</small></article>)}{!passportRequests.length&&<p className="we-empty">Nenhuma solicitação registrada.</p>}</div>{passport&&<p className="we-note">Passaporte atual: {passport.passport_number??"—"} • {status(passport.status)} • validade {date(passport.expires_at)}</p>}</>}
+    {tab==="visas"&&<><form className="we-travel-form" onSubmit={submitVisa}><label>Categoria de visto<select value={selectedVisa} onChange={e=>setSelectedVisa(e.target.value)} required><option value="">Selecione</option>{visaTypes.map(v=><option key={v.id} value={v.id}>{v.name} — {v.countries?.name??"País"} ({v.purpose})</option>)}</select></label><label>Finalidade<select value={purpose} onChange={e=>setPurpose(e.target.value)}>{purposes.map(p=><option key={p.value} value={p.value}>{p.label}</option>)}</select></label><label>Entrada pretendida<input type="date" value={entry} onChange={e=>setEntry(e.target.value)} required/></label><label>Saída pretendida<input type="date" value={exit} onChange={e=>setExit(e.target.value)} required/></label><button className="we-primary" disabled={busy}>Solicitar visto</button></form><div className="we-travel-list">{visaApplications.map(v=><article key={v.id}><b>{v.countries?.name??"Visto"} • {v.purpose}</b><span>{status(v.status)}</span><small>{date(v.intended_entry)} até {date(v.intended_exit)} • {v.review_note??"Aguardando análise"}</small></article>)}</div></>}
+    {tab==="travel"&&<><form className="we-travel-form" onSubmit={submitTravel}><label>Aeroporto de origem<select value={originAirport} onChange={e=>setOriginAirport(e.target.value)} required><option value="">Selecione</option>{airports.filter(a=>a.status==="active"&&a.country_id===profile.country_id).map(a=><option key={a.id} value={a.id}>{a.name} ({a.identifier})</option>)}</select></label><label>Aeroporto de destino<select value={destinationAirport} onChange={e=>setDestinationAirport(e.target.value)} required><option value="">Selecione</option>{airports.filter(a=>a.status==="active"&&a.country_id!==profile.country_id).map(a=><option key={a.id} value={a.id}>{a.name} — {a.countries?.name} ({a.identifier})</option>)}</select></label><label>Documento apresentado<select value={travelDoc} onChange={e=>setTravelDoc(e.target.value)} required><option value="">Selecione</option>{documents.filter(d=>d.status==="active"&&(!d.expires_at||new Date(d.expires_at)>new Date())).map(d=><option key={d.id} value={d.id}>{d.document_number} • {d.document_type}</option>)}</select></label><label>Finalidade<select value={purpose} onChange={e=>setPurpose(e.target.value)}>{purposes.map(p=><option key={p.value} value={p.value}>{p.label}</option>)}</select></label><label>Data de entrada<input type="date" value={entry} onChange={e=>setEntry(e.target.value)} required/></label><label>Data de saída<input type="date" value={exit} onChange={e=>setExit(e.target.value)} required/></label><button className="we-primary" disabled={busy}>Solicitar viagem internacional</button></form><div className="we-travel-list">{travels.map(t=><article key={t.id}><b>{t.origin?.name??"Origem"} → {t.destination?.name??"Destino"}</b><span>{status(t.status)}</span><small>{t.origin_airport?.name??"—"} → {t.destination_airport?.name??"—"} • {t.decision_note??date(t.requested_at)}</small>{(admin||t.destination_country_id===profile.country_id||profile.role==="president")&&["requested","in_review"].includes(t.status)&&<div className="we-inline-actions"><button onClick={()=>review("travel",t.id,"approve")}>Autorizar</button><button onClick={()=>review("travel",t.id,"reject")}>Rejeitar</button></div>}</article>)}</div></>}
+    {tab==="border"&&<><h3>Registros de imigração</h3><div className="we-travel-list">{immigration.map(r=><article key={r.id}><b>Entrada internacional • {r.result==="approved"?"Aprovada":"Rejeitada"}</b><small>{date(r.occurred_at)} • {r.reason}</small></article>)}{!immigration.length&&<p className="we-empty">Nenhuma entrada registrada.</p>}</div><h3>Registros de emigração</h3><div className="we-travel-list">{emigration.map(r=><article key={r.id}><b>Saída internacional • {r.result==="approved"?"Aprovada":"Rejeitada"}</b><small>{date(r.occurred_at)} • {r.reason}</small></article>)}{!emigration.length&&<p className="we-empty">Nenhuma saída registrada.</p>}</div></>}
+    {tab==="airports"&&<><div className="we-travel-list">{airports.map(a=><article key={a.id}><b>{a.name} <small>({a.identifier})</small></b><span>{status(a.status)}</span><small>{a.countries?.name} • {a.city_region??"Região não informada"}</small><code>/tp {a.coordinate_x} {a.coordinate_y} {a.coordinate_z}</code><small>{a.description}</small></article>)}{!airports.length&&<p className="we-empty">Nenhum aeroporto cadastrado.</p>}</div>{countryManager&&<form className="we-travel-form" onSubmit={submitAirport}><h3><Plus size={17}/> Cadastrar aeroporto</h3><label>País<select value={airportCountry} onChange={e=>setAirportCountry(e.target.value)} required><option value="">Selecione</option>{countries.filter(c=>admin||c.id===profile.country_id).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Nome<input value={airportName} onChange={e=>setAirportName(e.target.value)} required/></label><label>Identificador único<input value={airportCode} onChange={e=>setAirportCode(e.target.value.toUpperCase())} maxLength={12} required/></label><label>Cidade/região<input value={airportCity} onChange={e=>setAirportCity(e.target.value)}/></label><div className="we-travel-coords">{(["x","y","z"] as const).map(k=><label key={k}>Coordenada {k.toUpperCase()}<input type="number" value={coords[k]} onChange={e=>setCoords(s=>({...s,[k]:e.target.value}))} required/></label>)}</div><label>Descrição<textarea value={airportDescription} onChange={e=>setAirportDescription(e.target.value)}/></label><button className="we-primary" disabled={busy}>Cadastrar aeroporto</button></form>}</>}
+    {tab==="admin"&&countryManager&&<><h3>Solicitações de passaporte</h3><div className="we-travel-list">{passportRequests.filter(r=>admin||r.country_id===profile.country_id).map(r=><article key={r.id}><b>{r.profile_id} • {r.request_type}</b><span>{status(r.status)}</span><small>{date(r.requested_at)} • {r.reason}</small>{["pending","in_review"].includes(r.status)&&<div className="we-inline-actions"><label>Validade (dias)<input type="number" min="30" max="3650" value={validity} onChange={e=>setValidity(e.target.value)}/></label><button onClick={()=>review("passport",r.id,"approve")}>Aprovar e emitir</button><button onClick={()=>review("passport",r.id,"reject")}>Rejeitar</button></div>}</article>)}</div><h3>Solicitações de visto</h3><div className="we-travel-list">{visaApplications.map(v=><article key={v.id}><b>{v.profile_id} • {v.purpose}</b><span>{status(v.status)}</span><small>{date(v.intended_entry)} a {date(v.intended_exit)}</small>{["pending","in_review"].includes(v.status)&&<div className="we-inline-actions"><button onClick={()=>review("visa",v.id,"approve")}>Aprovar</button><button onClick={()=>review("visa",v.id,"reject")}>Rejeitar</button></div>}</article>)}</div><h3>Ativar/suspender aeroportos</h3><div className="we-travel-list">{airports.filter(a=>admin||a.country_id===profile.country_id).map(a=><article key={a.id}><b>{a.name}</b><span>{status(a.status)}</span><div className="we-inline-actions"><button onClick={()=>airportStatus(a.id,"active")}>Ativar</button><button onClick={()=>airportStatus(a.id,"suspended")}>Suspender</button><button onClick={()=>airportStatus(a.id,"closed")}>Encerrar</button></div></article>)}</div><h3>Regras de fronteira nacionais</h3><div className="we-travel-list">{rules.filter(r=>admin||r.country_id===profile.country_id).slice(0,5).map(r=><article key={r.id}><b>{r.requires_passport?"Exige passaporte":"Sem exigência de passaporte"} • {r.requires_visa?"Exige visto":"Visto não obrigatório"}</b><small>{r.reason} • desde {date(r.effective_from)}</small></article>)}</div><button className="we-secondary" onClick={createRule}>Criar regra padrão de fronteira</button></>}
+    </>}
+    <p className="we-note">A simulação não executa comandos no Minecraft nem representa documentos oficiais. O comando de teleporte é apenas exibido para cópia manual. Taxas ficam sem cobrança automática; integração financeira só será ativada com conciliação bancária segura.</p>
+  </div>;
+}
