@@ -830,4 +830,50 @@ begin
  loop execute format('revoke all on function %s from public,anon',f.signature); execute format('grant execute on function %s to authenticated',f.signature); end loop;
 end $;
 
+
+alter table public.company_tax_records add column if not exists payroll_id uuid references public.payroll_records(id) on delete restrict;
+create unique index if not exists company_tax_records_payroll_rule_uidx on public.company_tax_records(payroll_id,tax_rule_id) where payroll_id is not null;
+
+create or replace function public.company_review_payroll_tax(p_payroll_id uuid,p_exempt boolean default false)
+returns numeric language plpgsql security definer set search_path=public,auth as $function$
+declare p public.payroll_records%rowtype; r record; v_rate numeric; v_total_rate numeric:=0; v_deduction numeric:=0; v_count integer:=0;
+begin
+ select * into p from public.payroll_records where id=p_payroll_id for update;
+ if not found or p.status<>'draft' or not public.is_company_member(p.company_id,'payroll.manage') then raise exception 'Folha indisponível ou sem permissão.'; end if;
+ for r in select * from public.tax_rules where country_id=(select country_id from public.companies where id=p.company_id)
+  and status='active' and category='payroll' and current_date between effective_from and coalesce(effective_until,'infinity'::date)
+ loop
+  if r.calculation_base<>'declared_value' then raise exception 'Regra tributária % usa base de cálculo ainda não automatizada.',r.identifier; end if;
+  v_count:=v_count+1; v_total_rate:=v_total_rate+r.rate;
+ end loop;
+ if v_count=0 then
+  if not p_exempt then raise exception 'Não existe regra de folha ativa. Confirme explicitamente a isenção para este período.'; end if;
+  update public.payroll_records set deductions_amount=0,tax_calculation_status='exempt' where id=p.id;
+ else
+  if p_exempt then raise exception 'Há regra tributária de folha ativa; não é permitido marcar isenção.'; end if;
+  v_deduction:=round(p.gross_amount*v_total_rate/100,2);
+  if v_deduction>p.gross_amount then raise exception 'As alíquotas de folha excedem o salário bruto.'; end if;
+  update public.payroll_records set deductions_amount=v_deduction,tax_calculation_status='reviewed' where id=p.id;
+  for r in select * from public.tax_rules where country_id=(select country_id from public.companies where id=p.company_id)
+   and status='active' and category='payroll' and current_date between effective_from and coalesce(effective_until,'infinity'::date)
+  loop
+   insert into public.company_tax_records(company_id,tax_rule_id,payroll_id,description,reference_period,tax_base,applied_rate,amount_due,currency_id,status,created_by)
+   values(p.company_id,r.id,p.id,'Retenção de folha — '||r.name,p.reference_period,p.gross_amount,r.rate,round(p.gross_amount*r.rate/100,2),p.currency_id,'pending_review',auth.uid())
+   on conflict(payroll_id,tax_rule_id) where payroll_id is not null do nothing;
+  end loop;
+ end if;
+ perform public.company_audit(p.company_id,'payroll_tax_reviewed','payroll',p.id,jsonb_build_object('tax_rate',v_total_rate,'deductions',v_deduction,'exempt',v_count=0));
+ return v_deduction;
+end;
+$function$;
+revoke all on function public.company_review_payroll_tax(uuid,boolean) from public,anon;
+grant execute on function public.company_review_payroll_tax(uuid,boolean) to authenticated;
+
+
+do $
+declare f record;
+begin
+ for f in select p.oid::regprocedure as signature from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='company_review_payroll_tax'
+ loop execute format('revoke all on function %s from public,anon',f.signature); execute format('grant execute on function %s to authenticated',f.signature); end loop;
+end $;
 commit;
