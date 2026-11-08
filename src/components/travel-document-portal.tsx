@@ -47,9 +47,9 @@ export function TravelDocumentPortal({ profile, notify }: { profile: Profile; no
         supabase.from("countries").select("id,name,flag,currency_code").eq("is_active",true).order("name"),
         supabase.from("citizen_documents").select("*").eq("profile_id",profile.id).order("created_at",{ascending:false}),
         supabase.from("citizen_passports").select("*").eq("profile_id",profile.id).maybeSingle(),
-        supabase.from("passport_requests").select("*").eq("profile_id",profile.id).order("created_at",{ascending:false}),
+        supabase.from("passport_requests").select("*").order("created_at",{ascending:false}),
         supabase.from("visa_types").select("*,countries(name,flag)").eq("is_active",true),
-        supabase.from("visa_applications").select("*,countries(name,flag)").eq("profile_id",profile.id).order("created_at",{ascending:false}),
+        supabase.from("visa_applications").select("*,countries(name,flag)").order("created_at",{ascending:false}),
         supabase.from("airports").select("*,countries(name,flag)").order("name"),
         supabase.from("travel_requests").select("*,origin: countries!travel_requests_origin_country_id_fkey(name),destination: countries!travel_requests_destination_country_id_fkey(name),origin_airport:airports!travel_requests_origin_airport_id_fkey(name,identifier),destination_airport:airports!travel_requests_destination_airport_id_fkey(name,identifier)").order("created_at",{ascending:false}),
         supabase.from("immigration_records").select("*").eq("profile_id",profile.id).order("occurred_at",{ascending:false}),
@@ -58,7 +58,7 @@ export function TravelDocumentPortal({ profile, notify }: { profile: Profile; no
       ]);
       for(const x of [c,d,p,pr,vt,va,a,t,i,e,b]) if(x.error) throw x.error;
       setCountries(c.data??[]);setDocuments(d.data??[]);setPassport(p.data);setPassportRequests(pr.data??[]);
-      setVisaTypes(vt.data??[]);setVisaApplications(va.data??[]);setAirports(a.data??[]);
+      setVisaTypes(vt.data??[]);setVisaApplications((va.data??[]).filter((x:Row)=>x.profile_id===profile.id || profile.role==="super_admin" || x.destination_country_id===profile.country_id));setAirports(a.data??[]);
       setTravels((t.data??[]).filter((x:Row)=>x.profile_id===profile.id || profile.role==="super_admin" || x.origin_country_id===profile.country_id || x.destination_country_id===profile.country_id));
       setImmigration(i.data??[]);setEmigration(e.data??[]);setRules(b.data??[]);
     }catch(err){notify("Falha ao carregar documentos e viagens: "+(err instanceof Error?err.message:"erro desconhecido"));}
