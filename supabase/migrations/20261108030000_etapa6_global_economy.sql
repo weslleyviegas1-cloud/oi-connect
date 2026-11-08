@@ -638,7 +638,8 @@ begin
           select cur.country_id from (
             select distinct on (country_id) country_id,total_value,period_start,period_end
             from public.economic_gdp_records where status in ('confirmed','revised') order by country_id,period_end desc
-          ) cur join public.countries active_country on active_country.id=cur.country_id and active_country.is_active\n          join public.economic_gdp_records prev on prev.country_id=cur.country_id
+          ) cur join public.countries active_country on active_country.id=cur.country_id and active_country.is_active
+          join public.economic_gdp_records prev on prev.country_id=cur.country_id
             and prev.status in ('confirmed','revised') and prev.period_end=cur.period_start-1
             and (prev.period_end-prev.period_start)=(cur.period_end-cur.period_start)
           where prev.total_value>0 and cur.total_value>prev.total_value
