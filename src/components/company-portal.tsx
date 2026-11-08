@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { BriefcaseBusiness, Building2, FileText, Wallet, ShieldCheck, Plus } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import "./company-portal.css";
@@ -10,7 +10,7 @@ const money=(n:number,code="")=>Number(n??0).toLocaleString("pt-BR",{minimumFrac
 export function CompanyPortal({profile,notify}:Props){
  const admin=profile.role==="super_admin";
  const [companies,setCompanies]=useState<Row[]>([]),[jobs,setJobs]=useState<Row[]>([]),[apps,setApps]=useState<Row[]>([]),[contracts,setContracts]=useState<Row[]>([]),[payroll,setPayroll]=useState<Row[]>([]);
- const [positions,setPositions]=useState<Row[]>([]),[accounts,setAccounts]=useState<Row[]>([]),[currencies,setCurrencies]=useState<Row[]>([]),[countries,setCountries]=useState<Row[]>([]),[taxRules,setTaxRules]=useState<Row[]>([]),[taxRecords,setTaxRecords]=useState<Row[]>([]),[financial,setFinancial]=useState<Row[]>([]),[payouts,setPayouts]=useState<Row[]>([]);
+ const [positions,setPositions]=useState<Row[]>([]),[accounts,setAccounts]=useState<Row[]>([]),[currencies,setCurrencies]=useState<Row[]>([]),[countries,setCountries]=useState<Row[]>([]),[taxRules,setTaxRules]=useState<Row[]>([]),[taxRecords,setTaxRecords]=useState<Row[]>([]),[financial,setFinancial]=useState<Row[]>([]),[payouts,setPayouts]=useState<Row[]>([]),[banks,setBanks]=useState<Row[]>([]),[ministries,setMinistries]=useState<Row[]>([]);
  const [selected,setSelected]=useState(""),[tab,setTab]=useState("companies"),[busy,setBusy]=useState(false),[loading,setLoading]=useState(true);
  const [legal,setLegal]=useState(""),[trade,setTrade]=useState(""),[city,setCity]=useState(""),[region,setRegion]=useState(""),[sector,setSector]=useState("commerce"),[kind,setKind]=useState("private"),[size,setSize]=useState("small_business"),[desc,setDesc]=useState(""),[capital,setCapital]=useState("0"),[currencyId,setCurrencyId]=useState(""),[registerCountry,setRegisterCountry]=useState(profile.country_id??""),[governmentEntity,setGovernmentEntity]=useState("");
  const [positionTitle,setPositionTitle]=useState(""),[jobPosition,setJobPosition]=useState(""),[jobTitle,setJobTitle]=useState(""),[jobDesc,setJobDesc]=useState(""),[requirements,setRequirements]=useState(""),[jobSalary,setJobSalary]=useState(""),[openings,setOpenings]=useState("1");
