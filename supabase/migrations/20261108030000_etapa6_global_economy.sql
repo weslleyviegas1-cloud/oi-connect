@@ -683,7 +683,7 @@ begin
       'operations_suspended',t.operations_suspended,
       'currency_consistent',((t.opening_balance=0 or t.opening_balance_currency_code_snapshot=coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))
         and not exists(select 1 from public.treasury_ledger_entries x where x.country_id=c.id
-          and x.currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED')),
+          and x.currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))),
       'treasury_balance',null,'gdp',null,'gdp_growth',null,'inflation',null,'ipc',null,'inflation_history','[]'::jsonb,
       'revenue',null,'expenses',null,'tax_collected',null,'tax_open',null,'budget_approved',null,
       'budget_executed',null,'budget_available',null,'budget_execution_pct',null,'investment_approved',null)
