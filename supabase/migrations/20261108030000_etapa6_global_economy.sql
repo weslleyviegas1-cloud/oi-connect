@@ -282,6 +282,12 @@ alter table public.treasury_ledger_entries
   add constraint treasury_ledger_investment_project_fk
   foreign key (investment_project_id) references public.public_investment_projects(id) on delete restrict;
 
+alter table public.public_investment_projects
+  drop constraint if exists public_investment_projects_ministry_fk;
+alter table public.public_investment_projects
+  add constraint public_investment_projects_ministry_fk
+  foreign key (ministry_id,country_id) references public.ministries(id,country_id) on delete restrict;
+
 create table if not exists public.economic_audit_logs (
   id uuid primary key default gen_random_uuid(),
   country_id uuid references public.countries(id) on delete restrict,
@@ -860,10 +866,11 @@ begin
 end;
 $$;
 
+drop function if exists public.create_investment_project(uuid,text,text,text,uuid,numeric,date,date);
 create or replace function public.create_investment_project(
   p_country_id uuid,p_name text,p_description text,p_category text,p_budget_allocation_id uuid,
-  p_planned_amount numeric,p_starts_on date,p_expected_end date
-) returns uuid language plpgsql security definer set search_path=public,auth as $$
+  p_planned_amount numeric,p_starts_on date,p_expected_end date,p_ministry_id uuid default null
+) returns uuid language plpgsql security definer set search_path=public,auth as $
 declare v_id uuid; v_allocation_limit numeric(24,2); v_allocation_currency text; v_treasury_currency text;
 begin
   if not public.can_manage_economy(p_country_id,'investment.manage') then raise exception 'Sem permissão para propor investimento.'; end if;
@@ -1027,7 +1034,7 @@ revoke all on function public.create_tax_obligation(uuid,uuid,uuid,text,text,num
 revoke all on function public.confirm_tax_collection(uuid,numeric,text) from public,anon;
 revoke all on function public.create_budget_plan(uuid,text,date,date,jsonb) from public,anon;
 revoke all on function public.review_budget_plan(uuid,text,text) from public,anon;
-revoke all on function public.create_investment_project(uuid,text,text,text,uuid,numeric,date,date) from public,anon;
+revoke all on function public.create_investment_project(uuid,text,text,text,uuid,numeric,date,date,uuid) from public,anon;
 revoke all on function public.review_investment_project(uuid,text,numeric) from public,anon;
 revoke all on function public.post_treasury_entry(uuid,text,text,text,numeric,text,uuid,uuid) from public,anon;
 revoke all on function public.reverse_treasury_entry(uuid,text,text) from public,anon;
@@ -1043,7 +1050,7 @@ grant execute on function public.create_tax_obligation(uuid,uuid,uuid,text,text,
 grant execute on function public.confirm_tax_collection(uuid,numeric,text) to authenticated;
 grant execute on function public.create_budget_plan(uuid,text,date,date,jsonb) to authenticated;
 grant execute on function public.review_budget_plan(uuid,text,text) to authenticated;
-grant execute on function public.create_investment_project(uuid,text,text,text,uuid,numeric,date,date) to authenticated;
+grant execute on function public.create_investment_project(uuid,text,text,text,uuid,numeric,date,date,uuid) to authenticated;
 grant execute on function public.review_investment_project(uuid,text,numeric) to authenticated;
 grant execute on function public.post_treasury_entry(uuid,text,text,text,numeric,text,uuid,uuid) to authenticated;
 grant execute on function public.reverse_treasury_entry(uuid,text,text) to authenticated;
