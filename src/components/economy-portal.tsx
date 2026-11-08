@@ -56,13 +56,14 @@ export function EconomyPortal({ profile, notify }: Props) {
       let memberMinistryId: string | null = null;
       if (selected && profile?.id && !isAdmin && !isPresident) {
         const member = await supabase.from("government_members").select("id,ministry_id,department_id").eq("profile_id", profile.id).eq("country_id", selected).eq("status", "active").maybeSingle();
-        if (member.data) {
-          memberMinistryId = member.data.ministry_id ?? null;
-          const perms = await supabase.from("government_member_permissions").select("permission_key,scope_type,scope_id").eq("member_id", member.data.id);
+        const memberData = member.data;
+        if (memberData) {
+          memberMinistryId = memberData.ministry_id ?? null;
+          const perms = await supabase.from("government_member_permissions").select("permission_key,scope_type,scope_id").eq("member_id", memberData.id);
           const allowed = (perms.data ?? []).filter(row =>
             row.scope_type === "country" ||
-            (row.scope_type === "ministry" && row.scope_id === member.data.ministry_id) ||
-            (row.scope_type === "department" && row.scope_id === member.data.department_id)
+            (row.scope_type === "ministry" && row.scope_id === memberData.ministry_id) ||
+            (row.scope_type === "department" && row.scope_id === memberData.department_id)
           );
           granted = allowed.map(row => row.permission_key);
           countryGranted = allowed.filter(row => row.scope_type === "country").map(row => row.permission_key);
