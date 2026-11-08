@@ -46,6 +46,9 @@ export function CitizenPortal({ profileId, notify, initialTab = "overview" }: { 
   const [bio, setBio] = useState("");
   const [publicEnabled, setPublicEnabled] = useState(true);
   const [showId, setShowId] = useState(false);
+  const [showCity, setShowCity] = useState(false);
+  const [showBio, setShowBio] = useState(false);
+  const [publicPreview, setPublicPreview] = useState<Row | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -75,6 +78,8 @@ export function CitizenPortal({ profileId, notify, initialTab = "overview" }: { 
       setBio(profileRes.data?.bio ?? "");
       setPublicEnabled(profileRes.data?.public_profile_enabled ?? true);
       setShowId(profileRes.data?.show_player_number ?? false);
+      setShowCity(profileRes.data?.show_residence_city ?? false);
+      setShowBio(profileRes.data?.show_bio ?? false);
       if (documentsRes.error) throw documentsRes.error;
       if (passportRes.error) throw passportRes.error;
       if (requestsRes.error) throw requestsRes.error;
@@ -119,6 +124,8 @@ export function CitizenPortal({ profileId, notify, initialTab = "overview" }: { 
         p_bio: bio.trim() || null,
         p_public_profile_enabled: publicEnabled,
         p_show_player_number: showId,
+        p_show_residence_city: showCity,
+        p_show_bio: showBio,
       });
       if (error) throw error;
       notify("Informações do perfil atualizadas.");
@@ -156,6 +163,12 @@ export function CitizenPortal({ profileId, notify, initialTab = "overview" }: { 
     } catch (error) {
       notify("Não foi possível enviar a solicitação: " + (error instanceof Error ? error.message : "erro desconhecido"));
     } finally { setBusy(false); }
+  };
+
+  const loadPublicPreview = async () => {
+    const { data, error } = await supabase.rpc("get_public_citizen_profile", { p_profile_id: profileId });
+    if (error) notify("Não foi possível gerar a prévia pública: " + error.message);
+    else setPublicPreview(data as Row | null);
   };
 
   const markRead = async (id: string) => {
@@ -265,8 +278,12 @@ export function CitizenPortal({ profileId, notify, initialTab = "overview" }: { 
           <header><h2><LockKeyhole/> Privacidade do perfil público</h2></header>
           <label className="we-citizen-check"><input type="checkbox" checked={publicEnabled} onChange={e => setPublicEnabled(e.target.checked)}/> Permitir consulta do meu perfil público</label>
           <label className="we-citizen-check"><input type="checkbox" checked={showId} onChange={e => setShowId(e.target.checked)}/> Exibir meu ID permanente no perfil público</label>
+          <label className="we-citizen-check"><input type="checkbox" checked={showCity} onChange={e => setShowCity(e.target.checked)}/> Exibir minha cidade fictícia</label>
+          <label className="we-citizen-check"><input type="checkbox" checked={showBio} onChange={e => setShowBio(e.target.checked)}/> Exibir minha descrição pessoal</label>
           <small className="we-citizen-muted">Documentos, notificações, histórico privado e informações bancárias nunca são exibidos no perfil público.</small>
           <button className="we-primary" type="submit" disabled={busy}><Save/> Salvar privacidade</button>
+          <button className="we-secondary" type="button" onClick={() => void loadPublicPreview()}>Visualizar meu perfil público</button>
+          {publicPreview && <article className="we-citizen-event"><div><b>{publicPreview.username}</b><small>{publicPreview.minecraft_username ?? "Nickname não informado"} • {publicPreview.country_flag ?? ""} {publicPreview.country_name ?? "Sem país"}</small>{publicPreview.player_number && <small>ID #{publicPreview.player_number}</small>}{publicPreview.residence_city && <small>Cidade: {publicPreview.residence_city}</small>}{publicPreview.bio && <small>{publicPreview.bio}</small>}</div></article>}
         </form>}
       </div>
     </div>
