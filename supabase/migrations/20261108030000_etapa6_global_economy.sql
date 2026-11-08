@@ -513,24 +513,29 @@ using (public.is_world_admin() or public.is_country_president(country_id)
 drop policy if exists ledger_read_scoped on public.treasury_ledger_entries;
 create policy ledger_read_scoped on public.treasury_ledger_entries for select to authenticated
 using (public.is_world_admin() or public.is_country_president(country_id)
-  or public.has_economy_permission(country_id,'treasury.read')
+  or (budget_allocation_id is not null and exists(select 1 from public.budget_allocations a
+    where a.id=budget_allocation_id and public.has_economy_read_scope_permission(country_id,'treasury.read',a.ministry_id)))
+  or (budget_allocation_id is null and public.has_economy_permission(country_id,'treasury.read'))
   or (public.is_government_country_citizen(country_id) and exists(
     select 1 from public.national_treasuries t where t.country_id=treasury_ledger_entries.country_id and t.public_balance_visible)));
 drop policy if exists budget_read_scoped on public.budget_plans;
 create policy budget_read_scoped on public.budget_plans for select to authenticated
 using (public.is_world_admin() or public.is_country_president(country_id)
-  or public.has_economy_permission(country_id,'budget.read')
+  or public.has_economy_permission(country_id,'budget.read') or created_by=auth.uid()
+  or exists(select 1 from public.budget_allocations a where a.budget_plan_id=budget_plans.id
+    and public.has_economy_read_scope_permission(country_id,'budget.read',a.ministry_id))
   or (status in ('approved','in_execution','closed') and public.is_government_country_citizen(country_id)));
 drop policy if exists allocation_read_scoped on public.budget_allocations;
 create policy allocation_read_scoped on public.budget_allocations for select to authenticated
 using (exists(select 1 from public.budget_plans b where b.id=budget_plan_id
   and (public.is_world_admin() or public.is_country_president(b.country_id)
     or public.has_economy_permission(b.country_id,'budget.read')
+    or public.has_economy_read_scope_permission(b.country_id,'budget.read',budget_allocations.ministry_id)
     or (b.status in ('approved','in_execution','closed') and public.is_government_country_citizen(b.country_id)))));
 drop policy if exists investment_read_scoped on public.public_investment_projects;
 create policy investment_read_scoped on public.public_investment_projects for select to authenticated
 using (public.is_world_admin() or public.is_country_president(country_id)
-  or public.has_economy_permission(country_id,'investment.read')
+  or public.has_economy_read_scope_permission(country_id,'investment.read',ministry_id)
   or (status in ('approved','in_progress','completed') and public.is_government_country_citizen(country_id)));
 drop policy if exists economic_audit_read_scoped on public.economic_audit_logs;
 create policy economic_audit_read_scoped on public.economic_audit_logs for select to authenticated
@@ -1120,6 +1125,8 @@ $$;
 -- Nenhuma tabela de dinheiro pessoal, banco comercial, câmbio ou Banco Central é criada nesta etapa.
 revoke all on function public.can_manage_economy(uuid,text) from public,anon;
 revoke all on function public.has_economy_scope_permission(uuid,text,uuid) from public,anon,authenticated;
+revoke all on function public.has_economy_read_scope_permission(uuid,text,uuid) from public,anon;
+grant execute on function public.has_economy_read_scope_permission(uuid,text,uuid) to authenticated;
 revoke all on function public.has_economy_permission(uuid,text) from public,anon;
 grant execute on function public.has_economy_permission(uuid,text) to authenticated;
 revoke all on function public.economy_audit(uuid,text,text,uuid,jsonb,jsonb) from public,anon,authenticated;
