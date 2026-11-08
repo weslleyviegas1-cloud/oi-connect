@@ -746,9 +746,38 @@ begin
       'currency_consistent',((t.opening_balance=0 or t.opening_balance_currency_code_snapshot=coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))
         and not exists(select 1 from public.treasury_ledger_entries x where x.country_id=c.id
           and x.currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))),
-      'treasury_balance',null,'gdp',null,'gdp_growth',null,'inflation',null,'ipc',null,'inflation_history','[]'::jsonb,
-      'revenue',null,'expenses',null,'tax_collected',null,'tax_open',null,'budget_approved',null,
-      'budget_executed',null,'budget_available',null,'budget_execution_pct',null,'investment_approved',null)
+      'treasury_balance',case when public.has_economy_permission(c.id,'treasury.read')
+        and (t.opening_balance=0 or t.opening_balance_currency_code_snapshot=coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))
+        and not exists(select 1 from public.treasury_ledger_entries x where x.country_id=c.id
+          and x.currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))
+        then t.opening_balance+(select coalesce(sum(signed_amount),0) from public.treasury_ledger_entries where country_id=c.id) else null end,
+      'gdp',null,'gdp_growth',null,'inflation',null,'ipc',null,'inflation_history','[]'::jsonb,
+      'revenue',case when public.has_economy_permission(c.id,'treasury.read') then (select coalesce(sum(case when x.entry_type='revenue' then x.amount
+        when x.entry_type='reversal' and exists(select 1 from public.treasury_ledger_entries original where original.id=x.reverses_entry_id and original.entry_type='revenue') then -x.amount else 0 end),0)
+        from public.treasury_ledger_entries x where x.country_id=c.id) else null end,
+      'expenses',case when public.has_economy_permission(c.id,'treasury.read') then (select coalesce(sum(case when x.entry_type='expense' then x.amount
+        when x.entry_type='reversal' and exists(select 1 from public.treasury_ledger_entries original where original.id=x.reverses_entry_id and original.entry_type='expense') then -x.amount else 0 end),0)
+        from public.treasury_ledger_entries x where x.country_id=c.id) else null end,
+      'tax_collected',case when public.has_economy_permission(c.id,'tax.read') then (select coalesce(sum(amount),0) from public.tax_collections where country_id=c.id) else null end,
+      'tax_open',case when public.has_economy_permission(c.id,'tax.read') then (select coalesce(sum(greatest(o.amount_due-coalesce((select sum(col.amount) from public.tax_collections col where col.obligation_id=o.id),0),0)),0)
+        from public.tax_obligations o where o.country_id=c.id and o.status in ('open','pending_confirmation','partially_paid','overdue')) else null end,
+      'budget_approved',case when public.has_economy_permission(c.id,'budget.read') then (select coalesce(sum(total_planned),0) from public.budget_plans where country_id=c.id and status in ('approved','in_execution')) else null end,
+      'budget_executed',case when public.has_economy_permission(c.id,'budget.read') then (select coalesce(sum(case when x.entry_type='expense' then x.amount
+        when x.entry_type='reversal' and exists(select 1 from public.treasury_ledger_entries original where original.id=x.reverses_entry_id and original.entry_type='expense') then -x.amount else 0 end),0)
+        from public.treasury_ledger_entries x where x.country_id=c.id and x.budget_allocation_id is not null) else null end,
+      'budget_available',case when public.has_economy_permission(c.id,'budget.read') then
+        (select coalesce(sum(total_planned),0) from public.budget_plans where country_id=c.id and status in ('approved','in_execution'))
+        -(select coalesce(sum(case when x.entry_type='expense' then x.amount
+          when x.entry_type='reversal' and exists(select 1 from public.treasury_ledger_entries original where original.id=x.reverses_entry_id and original.entry_type='expense') then -x.amount else 0 end),0)
+          from public.treasury_ledger_entries x where x.country_id=c.id and x.budget_allocation_id is not null) else null end,
+      'budget_execution_pct',case when public.has_economy_permission(c.id,'budget.read') then
+        (select case when sum(total_planned)>0 then round((
+          (select coalesce(sum(case when x.entry_type='expense' then x.amount
+            when x.entry_type='reversal' and exists(select 1 from public.treasury_ledger_entries original where original.id=x.reverses_entry_id and original.entry_type='expense') then -x.amount else 0 end),0)
+            from public.treasury_ledger_entries x where x.country_id=c.id and x.budget_allocation_id is not null)/sum(total_planned))*100,2) end
+          from public.budget_plans where country_id=c.id and status in ('approved','in_execution')) else null end,
+      'investment_approved',case when public.has_economy_permission(c.id,'investment.read') then
+        (select coalesce(sum(approved_amount),0) from public.public_investment_projects where country_id=c.id and status in ('approved','in_progress','completed')) else null end)
     into v_result from public.countries c join public.national_treasuries t on t.country_id=c.id where c.id=v_country;
     return v_result;
   end if;
