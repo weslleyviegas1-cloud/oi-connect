@@ -224,6 +224,30 @@ create or replace function public.central_bank_audit(
   values(p_bank_id,p_country_id,auth.uid(),p_action,p_entity_type,p_entity_id,p_old,p_new,p_justification);
 $function$;
 
+create or replace function public.sync_central_bank_currency_from_country()
+returns trigger language plpgsql security definer set search_path=public as $function$
+declare v_currency_id uuid;
+begin
+  if old.currency_code is distinct from new.currency_code then
+    select id into v_currency_id from public.currencies where internal_code=new.currency_code and status='active' limit 1;
+    if v_currency_id is not null then
+      update public.central_banks set currency_id=v_currency_id,updated_at=now() where country_id=new.id;
+      insert into public.central_bank_audit_logs(central_bank_id,country_id,actor_id,action,entity_type,new_values,justification)
+      select id,new.id,auth.uid(),'national_currency_synchronized','central_bank',
+        jsonb_build_object('currency_id',v_currency_id,'currency_code',new.currency_code),
+        'Sincronização automática com a moeda nacional da Etapa 7'
+      from public.central_banks where country_id=new.id;
+    end if;
+  end if;
+  return new;
+end;
+$function$;
+drop trigger if exists countries_sync_central_bank_currency on public.countries;
+create trigger countries_sync_central_bank_currency after update of currency_code on public.countries
+for each row when (old.currency_code is distinct from new.currency_code)
+execute function public.sync_central_bank_currency_from_country();
+revoke all on function public.sync_central_bank_currency_from_country() from public,anon,authenticated;
+
 create or replace function public.admin_create_central_bank(
   p_country_id uuid,p_name text,p_identifier text,p_description text default null,p_is_primary boolean default true
 ) returns uuid language plpgsql security definer set search_path=public,auth as $function$
@@ -318,7 +342,7 @@ begin
   if not public.has_central_bank_permission(b.country_id,'issuance.request') then raise exception 'Sem permissão para solicitar emissão.'; end if;
   select * into s from public.central_bank_settings where central_bank_id=b.id;
   if s.max_issuance_per_operation is not null and p_amount>s.max_issuance_per_operation then raise exception 'A operação excede o limite por emissão.'; end if;
-  select coalesce(sum(case when operation_type='issuance' then amount else -amount end),0) into v_total from public.money_supply_records where country_id=b.country_id;
+  select coalesce(sum(amount),0) into v_total from public.money_supply_records where country_id=b.country_id and operation_type='issuance';
   if s.max_issuance_total is not null and v_total+p_amount>s.max_issuance_total then raise exception 'A emissão excede o limite total configurado.'; end if;
   insert into public.monetary_issuances(central_bank_id,country_id,currency_id,amount,reason,requested_by)
   values(b.id,b.country_id,b.currency_id,p_amount,trim(p_reason),auth.uid()) returning id into v_id;
@@ -336,7 +360,7 @@ begin
   if not found or r.status<>'pending' then raise exception 'Solicitação inexistente ou já revisada.'; end if;
   select * into s from public.central_bank_settings where central_bank_id=r.central_bank_id;
   if p_approve then
-    select coalesce(sum(case when operation_type='issuance' then amount else -amount end),0) into v_total from public.money_supply_records where country_id=r.country_id;
+    select coalesce(sum(amount),0) into v_total from public.money_supply_records where country_id=r.country_id and operation_type='issuance';
     if s.max_issuance_total is not null and v_total+r.amount>s.max_issuance_total then raise exception 'O limite total de emissão foi atingido.'; end if;
     insert into public.money_supply_records(central_bank_id,country_id,currency_id,operation_type,amount,source_request_id,reason,actor_id)
     values(r.central_bank_id,r.country_id,r.currency_id,'issuance',r.amount,r.id,r.reason,auth.uid());
