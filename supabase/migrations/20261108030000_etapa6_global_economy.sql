@@ -8,6 +8,7 @@ create table if not exists public.national_treasuries (
   id uuid primary key default gen_random_uuid(),
   country_id uuid not null unique references public.countries(id) on delete restrict,
   opening_balance numeric(24,2) not null default 0 check (opening_balance >= 0),
+  opening_balance_set_at timestamptz,
   currency_code text,
   currency_label text not null default 'Unidade monetária provisória (não configurada)',
   require_global_tax_approval boolean not null default true,
@@ -198,7 +199,7 @@ create table if not exists public.public_investment_projects (
   approved_amount numeric(24,2) not null default 0 check (approved_amount >= 0),
   executed_amount numeric(24,2) not null default 0 check (executed_amount >= 0),
   status text not null default 'proposed'
-    check (status in ('proposed','under_review','approved','in_progress','completed','suspended','cancelled')),
+    check (status in ('proposed','under_review','approved','rejected','in_progress','completed','suspended','cancelled')),
   starts_on date,
   expected_end date,
   created_by uuid not null references public.profiles(id),
@@ -419,14 +420,14 @@ begin
       left join public.economic_gdp_records prev on prev.country_id=c.id and prev.status in ('confirmed','revised')
         and prev.period_end=cur.period_start-1
         and (prev.period_end-prev.period_start)=(cur.period_end-cur.period_start)),
-    'revenue',(select coalesce(sum(amount),0) from public.treasury_ledger_entries where country_id=c.id and entry_type='revenue'),
-    'expenses',(select coalesce(sum(amount),0) from public.treasury_ledger_entries where country_id=c.id and entry_type='expense'),
+    'revenue',(select coalesce(sum(signed_amount) filter (where signed_amount>0),0) from public.treasury_ledger_entries where country_id=c.id),
+    'expenses',(select coalesce(sum(-signed_amount) filter (where signed_amount<0),0) from public.treasury_ledger_entries where country_id=c.id),
     'treasury_balance',case when public.is_world_admin() or public.is_country_president(c.id)
       or public.has_government_permission(c.id,'treasury.read',null,null)
       or public.has_government_permission(c.id,'economy.read',null,null)
       or t.public_balance_visible then t.opening_balance+(select coalesce(sum(signed_amount),0) from public.treasury_ledger_entries where country_id=c.id) else null end,
     'tax_collected',(select coalesce(sum(amount),0) from public.tax_collections where country_id=c.id),
-    'tax_open',(select coalesce(sum(amount_due),0) from public.tax_obligations where country_id=c.id and status in ('open','pending_confirmation','partially_paid','overdue')),
+    'tax_open',(select coalesce(sum(greatest(o.amount_due-coalesce((select sum(col.amount) from public.tax_collections col where col.obligation_id=o.id),0),0)),0) from public.tax_obligations o where o.country_id=c.id and o.status in ('open','pending_confirmation','partially_paid','overdue')),
     'budget_approved',(select coalesce(sum(total_planned),0) from public.budget_plans where country_id=c.id and status in ('approved','in_execution')),
     'investment_approved',(select coalesce(sum(approved_amount),0) from public.public_investment_projects where country_id=c.id and status in ('approved','in_progress','completed')),
     'inflation',(select case when old_ipc>0 then round(((new_ipc-old_ipc)/old_ipc)*100,2) end from (
@@ -482,6 +483,9 @@ declare v_item uuid;
 begin
   if not public.can_manage_economy(p_country_id,'economy.manage') then raise exception 'Sem permissão para atualizar preços.'; end if;
   if length(trim(coalesce(p_name,'')))<2 or p_weight<=0 or p_price<=0 or p_reference_date is null then raise exception 'Dados de preço inválidos.'; end if;
+  if exists(select 1 from public.economic_price_items where country_id=p_country_id and name=trim(p_name) and base_weight<>p_weight) then
+    raise exception 'O peso de um item existente não pode ser alterado retroativamente; mantenha o peso original.';
+  end if;
   insert into public.economic_price_items(country_id,name,category,base_weight,created_by)
   values(p_country_id,trim(p_name),trim(p_category),p_weight,auth.uid())
   on conflict(country_id,name) do update set category=excluded.category,updated_at=now()
@@ -719,10 +723,10 @@ begin
   if p_amount<0 then raise exception 'Saldo inicial não pode ser negativo.'; end if;
   select * into t from public.national_treasuries where country_id=p_country_id for update;
   if not found then raise exception 'Tesouro Nacional não encontrado.'; end if;
-  if t.opening_balance<>0 or exists(select 1 from public.treasury_ledger_entries where country_id=p_country_id) then
+  if t.opening_balance_set_at is not null or exists(select 1 from public.treasury_ledger_entries where country_id=p_country_id) then
     raise exception 'O saldo inicial só pode ser definido uma vez, antes do primeiro lançamento.';
   end if;
-  update public.national_treasuries set opening_balance=p_amount,updated_at=now() where country_id=p_country_id;
+  update public.national_treasuries set opening_balance=p_amount,opening_balance_set_at=now(),updated_at=now() where country_id=p_country_id;
   perform public.economy_audit(p_country_id,'initialize','national_treasury',t.id,to_jsonb(t),jsonb_build_object('opening_balance',p_amount));
 end;
 $;
