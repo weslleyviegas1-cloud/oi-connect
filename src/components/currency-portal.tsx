@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { ArrowDownUp, BadgeCheck, CircleAlert, Coins, Globe2, History, Plus, RefreshCw, Search, Settings2, TrendingUp } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import "./currency-portal.css";
 
 type Row = Record<string, any>;
@@ -18,6 +19,7 @@ export function CurrencyPortal({ profile, notify }: Props) {
   const [snapshot, setSnapshot] = useState<Snapshot>({ currencies: [], assignments: [], rates: [], reference_currency_id: null });
   const [countries, setCountries] = useState<Row[]>([]);
   const [history, setHistory] = useState<Row[]>([]);
+  const [rateHistory, setRateHistory] = useState<Row[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -34,8 +36,13 @@ export function CurrencyPortal({ profile, notify }: Props) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const snap = await supabase.rpc("get_currency_market_snapshot", { p_at: new Date().toISOString() });
+      const [snap, ratesResult] = await Promise.all([
+        supabase.rpc("get_currency_market_snapshot", { p_at: new Date().toISOString() }),
+        supabase.from("exchange_rates").select("id,from_currency_id,to_currency_id,rate,effective_from,effective_until,version,status").eq("status","active").order("effective_from", { ascending: false }).limit(200),
+      ]);
       if (snap.error) throw snap.error;
+      if (ratesResult.error) throw ratesResult.error;
+      setRateHistory(ratesResult.data ?? []);
       const data = (snap.data ?? {}) as Snapshot;
       setSnapshot({ currencies: data.currencies ?? [], assignments: data.assignments ?? [], rates: data.rates ?? [], reference_currency_id: data.reference_currency_id ?? null });
       setReferenceId(data.reference_currency_id ?? "");
@@ -70,6 +77,10 @@ export function CurrencyPortal({ profile, notify }: Props) {
   const assignmentFor = (id: string) => snapshot.assignments.filter(a => a.currency_id === id);
   const currentRate = (a: string, b: string) => snapshot.rates.find(r => r.from_currency_id === a && r.to_currency_id === b)
     ?? snapshot.rates.find(r => r.from_currency_id === b && r.to_currency_id === a);
+  const chartPair = rateHistory.find(r => r.from_currency_id === fromId && r.to_currency_id === toId)
+    ? [fromId, toId] : rateHistory.find(r => r.from_currency_id === toId && r.to_currency_id === fromId) ? [toId, fromId] : null;
+  const chartRows = chartPair ? rateHistory.filter(r => r.from_currency_id === chartPair[0] && r.to_currency_id === chartPair[1])
+    .slice().sort((a,b) => +new Date(a.effective_from) - +new Date(b.effective_from)) : [];
 
   const run = async (fn: () => PromiseLike<{ data?: any; error: any }>, success: string) => {
     setBusy(true);
@@ -157,6 +168,8 @@ export function CurrencyPortal({ profile, notify }: Props) {
         return <article className="currency-card" key={c.id}><div className="currency-symbol">{c.symbol}</div><div className="currency-card-main"><strong>{c.name}</strong><span>{c.short_name} · {c.internal_code}</span><small>{countriesForCurrency.length ? countriesForCurrency.map(x=>x.country_name).join(", ") : "Nenhum país associado"}</small></div><span className="currency-status">{c.status === "active" ? "Ativa" : c.status}</span></article>;
       }) : <div className="currency-empty">Nenhuma moeda encontrada.</div>}</div>
       {!currencies.length && <div className="currency-empty"><CircleAlert/> Ainda não existem moedas cadastradas. O Super Admin deverá criar as primeiras moedas antes de habilitar cotações.</div>}
+      <div className="currency-panel"><h3><TrendingUp size={18}/> Evolução cambial registrada</h3>{chartRows.length > 1 ? <><p className="currency-hint">Histórico real de {byId.get(chartPair![0])?.internal_code} para {byId.get(chartPair![1])?.internal_code}. Não há preenchimento artificial de períodos sem cotação.</p><div className="currency-chart"><ResponsiveContainer width="100%" height="100%"><LineChart data={chartRows}><CartesianGrid stroke="#263b55" strokeDasharray="3 3"/><XAxis dataKey="effective_from" tickFormatter={(v)=>new Date(v).toLocaleDateString("pt-BR")} stroke="#91a7c2"/><YAxis stroke="#91a7c2" domain={["auto","auto"]}/><Tooltip labelFormatter={(v)=>dateTime(String(v))} formatter={(v)=>[fmt(v,8),"Taxa"]}/><Line type="monotone" dataKey="rate" stroke="#53b5ff" strokeWidth={2} dot={false}/></LineChart></ResponsiveContainer></div><p className="currency-hint">Variação entre o primeiro e o último registro do gráfico: {fmt(((Number(chartRows[chartRows.length-1].rate)/Number(chartRows[0].rate))-1)*100,2)}%.</p></> : <div className="currency-empty">Ainda não há histórico suficiente para desenhar um gráfico. Cadastre mais de uma versão de cotação para o par selecionado.</div>}</div>
+
       {isAdmin && <div className="currency-panel"><h3><Settings2 size={17}/> Moeda de referência internacional</h3><div className="currency-inline"><select value={referenceId} onChange={e=>setReferenceId(e.target.value)}><option value="">Selecione a moeda</option>{currencies.map(c=><option key={c.id} value={c.id}>{c.name} ({c.internal_code})</option>)}</select><button className="currency-button" disabled={busy || !referenceId} onClick={setReference}>Definir referência</button></div><p className="currency-hint">A moeda de referência é usada somente para comparações dentro da simulação. Não representa moeda real.</p></div>}
     </>}
 
