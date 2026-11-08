@@ -3,6 +3,11 @@
 -- e formaliza solicitação presidencial / aprovação global do Banco Central.
 begin;
 
+-- Reassert the corrected account policy even if the base migration was previously recorded.
+drop policy if exists bank_accounts_read on public.bank_accounts;
+create policy bank_accounts_read on public.bank_accounts for select to authenticated
+using(owner_profile_id=auth.uid() or public.is_world_admin() or public.is_bank_member(bank_id,'account.read'));
+
 -- ---------------------------------------------------------------------------
 -- GOVERNANÇA DO BANCO CENTRAL: o país solicita; o Super Admin aprova e cria.
 -- O Presidente não recebe poderes monetários automaticamente.
@@ -134,6 +139,10 @@ create table if not exists public.bank_cash_wallet_transactions (
 );
 create index if not exists bank_cash_wallet_transactions_date_idx
  on public.bank_cash_wallet_transactions(wallet_id,created_at desc);
+alter table public.bank_transactions drop constraint if exists bank_transactions_transaction_type_check;
+alter table public.bank_transactions add constraint bank_transactions_transaction_type_check
+ check(transaction_type in ('opening','deposit','withdrawal','transfer_in','transfer_out','fee','loan_disbursement','loan_payment','reversal','tax_payment'));
+
 alter table public.bank_cash_wallets enable row level security;
 alter table public.bank_cash_wallet_transactions enable row level security;
 drop policy if exists bank_cash_wallets_read on public.bank_cash_wallets;
@@ -148,7 +157,7 @@ grant select on public.bank_cash_wallets,public.bank_cash_wallet_transactions to
 create or replace function public.admin_allocate_issued_money_to_wallet(
  p_profile_id uuid,p_amount numeric,p_reason text
 ) returns uuid language plpgsql security definer set search_path=public,auth as $function$
-declare p public.profiles%rowtype; v_currency uuid; v_wallet uuid; v_balance numeric; v_issued numeric; v_committed numeric; v_key text;
+declare p public.profiles%rowtype; v_currency uuid; v_code text; v_wallet uuid; v_balance numeric; v_issued numeric; v_committed numeric; v_key text;
 begin
  if not public.is_world_admin() then raise exception 'Somente o Super Admin pode distribuir moeda emitida.'; end if;
  if p_amount is null or p_amount<=0 or length(trim(coalesce(p_reason,'')))<5 then raise exception 'Valor ou justificativa inválidos.'; end if;
@@ -157,6 +166,11 @@ begin
  select c.id into v_currency from public.currencies c join public.country_currency_assignments a on a.currency_id=c.id
  where a.country_id=p.country_id and a.effective_until is null and c.status='active' order by a.effective_from desc limit 1;
  if v_currency is null then raise exception 'O país não possui moeda nacional ativa.'; end if;
+ select internal_code into v_code from public.currencies where id=v_currency;
+ if exists(select 1 from public.national_treasuries t where t.country_id=p.country_id and t.opening_balance>0 and t.opening_balance_currency_code_snapshot<>v_code)
+  or exists(select 1 from public.treasury_ledger_entries e where e.country_id=p.country_id and e.currency_code_snapshot<>v_code) then
+  raise exception 'O Tesouro possui registros em unidade monetária divergente; concilie antes de distribuir dinheiro.';
+ end if;
  perform pg_advisory_xact_lock(hashtextextended(p.country_id::text||':'||v_currency::text,0));
  select coalesce(sum(case when operation_type='issuance' then amount else -amount end),0)
  into v_issued from public.money_supply_records where country_id=p.country_id and currency_id=v_currency;
@@ -164,6 +178,7 @@ begin
   coalesce((select sum(balance) from public.bank_accounts where country_id=p.country_id and currency_id=v_currency),0)
  +coalesce((select sum(l.balance) from public.bank_liquidity l join public.commercial_banks b on b.id=l.bank_id where b.country_id=p.country_id and l.currency_id=v_currency),0)
  +coalesce((select sum(balance) from public.bank_cash_wallets where country_id=p.country_id and currency_id=v_currency),0)
+ +coalesce((select sum(t.opening_balance+coalesce((select sum(e.signed_amount) from public.treasury_ledger_entries e where e.country_id=t.country_id and e.currency_code_snapshot=v_code),0)) from public.national_treasuries t where t.country_id=p.country_id and t.currency_code=v_code),0)
  into v_committed;
  if v_issued-v_committed<p_amount then
   raise exception 'Oferta monetária disponível insuficiente. Emissão líquida: %, já distribuído ou depositado: %, solicitado: %.',v_issued,v_committed,p_amount;
@@ -465,6 +480,52 @@ begin
 end;
 $function$;
 
+create or replace function public.pay_tax_obligation_from_bank_account(
+ p_obligation_id uuid,p_account_id uuid,p_amount numeric,p_idempotency_key text
+) returns uuid language plpgsql security definer set search_path=public,auth as $function$
+declare o public.tax_obligations%rowtype; a public.bank_accounts%rowtype; t public.national_treasuries%rowtype;
+ v_paid numeric; v_remaining numeric; v_id uuid; v_currency_code text;
+begin
+ if auth.uid() is null or length(trim(coalesce(p_idempotency_key,'')))<12 then raise exception 'Autenticação ou chave de idempotência inválida.'; end if;
+ if p_amount is null or p_amount<=0 or p_amount<>round(p_amount,2) then raise exception 'O valor do tributo deve ser positivo e compatível com duas casas decimais.'; end if;
+ perform pg_advisory_xact_lock(hashtextextended(p_idempotency_key,0));
+ select id into v_id from public.bank_transactions where idempotency_key=p_idempotency_key;
+ if v_id is not null then return v_id; end if;
+ select * into o from public.tax_obligations where id=p_obligation_id and taxpayer_profile_id=auth.uid() for update;
+ if not found or o.status not in ('open','partially_paid','overdue','pending_confirmation') then raise exception 'Obrigação tributária não encontrada ou indisponível.'; end if;
+ select * into a from public.bank_accounts where id=p_account_id and owner_profile_id=auth.uid() for update;
+ if not found or a.status<>'active' or a.country_id<>o.country_id then raise exception 'Conta bancária inválida para esta obrigação.'; end if;
+ select internal_code into v_currency_code from public.currencies where id=a.currency_id and status='active';
+ if v_currency_code is null or v_currency_code<>o.currency_code_snapshot then raise exception 'A moeda da conta não corresponde à moeda da obrigação tributária.'; end if;
+ if not exists(select 1 from public.commercial_banks b where b.id=a.bank_id and b.status='active') then raise exception 'Banco indisponível.'; end if;
+ select * into t from public.national_treasuries where country_id=o.country_id for update;
+ if not found or t.operations_suspended then raise exception 'Tesouro Nacional indisponível para arrecadação.'; end if;
+ if t.currency_code<>v_currency_code then raise exception 'A moeda do Tesouro diverge da obrigação; conciliação necessária.'; end if;
+ if (t.opening_balance>0 and t.opening_balance_currency_code_snapshot<>v_currency_code)
+  or exists(select 1 from public.treasury_ledger_entries e where e.country_id=o.country_id and e.currency_code_snapshot<>v_currency_code) then
+  raise exception 'O Tesouro possui registros em outra unidade monetária; conciliação necessária.';
+ end if;
+ select coalesce(sum(amount),0) into v_paid from public.tax_collections where obligation_id=o.id;
+ v_remaining:=o.amount_due-v_paid;
+ if p_amount>v_remaining then raise exception 'O pagamento excede o valor ainda devido.';
+ end if;
+ if a.balance<p_amount then raise exception 'Saldo bancário insuficiente.';
+ end if;
+ update public.bank_accounts set balance=balance-p_amount where id=a.id returning * into a;
+ insert into public.tax_collections(country_id,obligation_id,amount,currency_code_snapshot,confirmation_reference,confirmed_by)
+ values(o.country_id,o.id,p_amount,v_currency_code,'bank:'||p_idempotency_key,auth.uid()) returning id into v_id;
+ insert into public.treasury_ledger_entries(country_id,entry_type,category,description,amount,currency_code_snapshot,signed_amount,source_type,source_id,idempotency_key,created_by)
+ values(o.country_id,'revenue','tax_collection','Pagamento bancário da obrigação tributária '||o.id,p_amount,v_currency_code,p_amount,
+  'tax_collection',v_id,'bank-tax:'||p_idempotency_key,auth.uid());
+ insert into public.bank_transactions(account_id,transaction_type,amount,currency_id,balance_after,description,reference_id,idempotency_key,actor_id)
+ values(a.id,'tax_payment',p_amount,a.currency_id,a.balance,'Pagamento de tributo ao Tesouro Nacional',v_id,p_idempotency_key,auth.uid()) returning id into v_id;
+ select coalesce(sum(amount),0) into v_paid from public.tax_collections where obligation_id=o.id;
+ update public.tax_obligations set status=case when v_paid>=amount_due then 'paid' else 'partially_paid' end,updated_at=now() where id=o.id;
+ perform public.bank_audit(a.bank_id,'tax_paid','tax_obligation',o.id,jsonb_build_object('amount',p_amount,'remaining',greatest(o.amount_due-v_paid,0)));
+ return v_id;
+end;
+$function$;
+
 -- Dashboard único para o portal: carteira, contas, extratos, solicitações e pagamentos.
 create or replace function public.get_my_bank_dashboard()
 returns jsonb language plpgsql security definer set search_path=public,auth as $function$
@@ -482,6 +543,7 @@ begin
    from public.commercial_banks b join public.countries co on co.id=b.country_id where (b.status='active' or public.is_world_admin())
    and (public.is_world_admin() or public.is_bank_member(b.id) or exists(select 1 from public.profiles p where p.id=auth.uid() and p.country_id=b.country_id))),'[]'::jsonb),
   'bank_memberships',coalesce((select jsonb_agg(jsonb_build_object('bank_id',m.bank_id,'permissions',m.permissions,'status',m.status) order by m.created_at desc) from public.bank_members m where m.profile_id=auth.uid() and m.status='active'),'[]'::jsonb),
+  'tax_obligations',coalesce((select jsonb_agg(jsonb_build_object('id',o.id,'country_id',o.country_id,'tax_name',r.name,'reference_period',o.reference_period,'amount_due',o.amount_due,'paid_amount',(select coalesce(sum(tc.amount),0) from public.tax_collections tc where tc.obligation_id=o.id),'remaining_amount',o.amount_due-(select coalesce(sum(tc.amount),0) from public.tax_collections tc where tc.obligation_id=o.id),'currency_code',o.currency_code_snapshot,'due_date',o.due_date,'status',o.status) order by o.due_date nulls last,o.created_at desc) from public.tax_obligations o join public.tax_rules r on r.id=o.tax_rule_id where o.taxpayer_profile_id=auth.uid() and o.status in ('open','partially_paid','overdue','pending_confirmation')),'[]'::jsonb),
   'countries',coalesce((select jsonb_agg(jsonb_build_object('id',c.id,'name',c.name) order by c.name) from public.countries c where c.is_active and public.is_world_admin()),'[]'::jsonb),
   'transactions',coalesce((select jsonb_agg(jsonb_build_object('id',t.id,'account_id',t.account_id,'type',t.transaction_type,'amount',t.amount,'currency_id',t.currency_id,'balance_after',t.balance_after,'description',t.description,'created_at',t.created_at,'status',t.status) order by t.created_at desc)
    from public.bank_transactions t join public.bank_accounts a on a.id=t.account_id where a.owner_profile_id=auth.uid()),'[]'::jsonb),
@@ -516,6 +578,7 @@ $function$;
 -- Privilégios: todas as mutações passam por RPCs SECURITY DEFINER validadas.
 revoke all on function public.admin_allocate_issued_money_to_wallet(uuid,numeric,text) from public,anon;
 revoke all on function public.bank_deposit(uuid,numeric,text) from public,anon;
+revoke all on function public.pay_tax_obligation_from_bank_account(uuid,uuid,numeric,text) from public,anon;
 revoke all on function public.bank_withdraw(uuid,numeric,text) from public,anon;
 revoke all on function public.bank_transfer(uuid,uuid,numeric,text,text) from public,anon;
 revoke all on function public.bank_transfer_to_account(uuid,text,text,numeric,text,text) from public,anon;
@@ -529,6 +592,7 @@ revoke all on function public.pay_bank_loan_installment(uuid,uuid,text) from pub
 revoke all on function public.get_my_bank_dashboard() from public,anon;
 grant execute on function public.admin_allocate_issued_money_to_wallet(uuid,numeric,text) to authenticated;
 grant execute on function public.bank_deposit(uuid,numeric,text) to authenticated;
+grant execute on function public.pay_tax_obligation_from_bank_account(uuid,uuid,numeric,text) to authenticated;
 grant execute on function public.bank_withdraw(uuid,numeric,text) to authenticated;
 grant execute on function public.bank_transfer(uuid,uuid,numeric,text,text) to authenticated;
 grant execute on function public.bank_transfer_to_account(uuid,text,text,numeric,text,text) to authenticated;
