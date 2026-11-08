@@ -13,3 +13,6 @@
 .cbank-row .cbank-actions{flex-direction:row}
 .cbank-panel p{line-height:1.5}
 @media(max-width:650px){.cbank-row{align-items:flex-start;flex-direction:column}.cbank-actions{justify-content:flex-start}.cbank-panel .cbank-grid{grid-template-columns:1fr}}
+
+.cbank-maintenance{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px}
+.cbank-maintenance small{color:#9aadc2;font-size:11px;line-height:1.4}
