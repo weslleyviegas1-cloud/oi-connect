@@ -615,6 +615,76 @@ begin
 end;
 $function$;
 
+create or replace function public.bank_manage_account_status(p_account_id uuid,p_status text,p_note text default null)
+returns void language plpgsql security definer set search_path=public,auth as $function$
+declare a public.bank_accounts%rowtype;
+begin
+ if p_status not in ('active','blocked','closed') then raise exception 'Situação de conta inválida.'; end if;
+ select * into a from public.bank_accounts where id=p_account_id for update;
+ if not found or not (public.is_world_admin() or public.is_bank_member(a.bank_id,'bank.manage')) then raise exception 'Conta não encontrada ou sem permissão.'; end if;
+ if a.status='closed' and p_status<>'closed' then raise exception 'Conta encerrada não pode ser reativada.'; end if;
+ if p_status='closed' and (a.balance<>0 or exists(select 1 from public.bank_loans l where l.account_id=a.id and l.status='active')) then
+  raise exception 'Para encerrar a conta, o saldo deve ser zero e não pode haver empréstimo ativo vinculado.';
+ end if;
+ update public.bank_accounts set status=p_status,closed_at=case when p_status='closed' then now() else null end where id=a.id;
+ perform public.bank_audit(a.bank_id,'account_status_changed','bank_account',a.id,jsonb_build_object('from',a.status,'to',p_status,'note',p_note));
+end;
+$function$;
+
+create table if not exists public.bank_maintenance_charges (
+ id uuid primary key default gen_random_uuid(),
+ bank_id uuid not null references public.commercial_banks(id) on delete restrict,
+ account_id uuid not null references public.bank_accounts(id) on delete restrict,
+ period_start date not null,
+ amount numeric(30,6) not null check(amount>0),
+ currency_id uuid not null references public.currencies(id) on delete restrict,
+ status text not null default 'pending' check(status in ('pending','charged')),
+ transaction_id uuid references public.bank_transactions(id) on delete restrict,
+ created_at timestamptz not null default now(),
+ processed_at timestamptz,
+ unique(bank_id,account_id,period_start)
+);
+alter table public.bank_maintenance_charges enable row level security;
+drop policy if exists bank_maintenance_charges_read on public.bank_maintenance_charges;
+create policy bank_maintenance_charges_read on public.bank_maintenance_charges for select to authenticated
+ using(public.is_world_admin() or exists(select 1 from public.bank_accounts a where a.id=account_id and a.owner_profile_id=auth.uid()) or public.is_bank_member(bank_id,'bank.manage'));
+revoke all on public.bank_maintenance_charges from public,anon,authenticated;
+grant select on public.bank_maintenance_charges to authenticated;
+
+create or replace function public.bank_process_monthly_maintenance(p_bank_id uuid,p_period_start date)
+returns jsonb language plpgsql security definer set search_path=public,auth as $function$
+declare a public.bank_accounts%rowtype; v_fee numeric; v_charge public.bank_maintenance_charges%rowtype; v_balance numeric; v_tx uuid; v_count integer:=0; v_pending integer:=0; v_key text;
+begin
+ if auth.uid() is null or not (public.is_world_admin() or public.is_bank_member(p_bank_id,'bank.manage')) then raise exception 'Sem permissão para processar manutenção.'; end if;
+ if p_period_start is null or date_trunc('month',p_period_start)::date<>p_period_start then raise exception 'Informe o primeiro dia do mês de referência.'; end if;
+ if not exists(select 1 from public.commercial_banks where id=p_bank_id and status='active') then raise exception 'Banco indisponível.'; end if;
+ for a in select * from public.bank_accounts where bank_id=p_bank_id and status='active' order by id for update loop
+  select amount into v_fee from public.bank_fees where bank_id=p_bank_id and fee_type='maintenance' and active and (currency_id is null or currency_id=a.currency_id) order by currency_id nulls last limit 1;
+  v_fee:=coalesce(v_fee,0);
+  if v_fee<=0 then continue; end if;
+  insert into public.bank_maintenance_charges(bank_id,account_id,period_start,amount,currency_id)
+  values(p_bank_id,a.id,p_period_start,v_fee,a.currency_id)
+  on conflict(bank_id,account_id,period_start) do nothing;
+  select * into v_charge from public.bank_maintenance_charges where bank_id=p_bank_id and account_id=a.id and period_start=p_period_start for update;
+  if v_charge.status='charged' then continue; end if;
+  select balance into v_balance from public.bank_accounts where id=a.id for update;
+  if v_balance<v_charge.amount then v_pending:=v_pending+1; continue; end if;
+  update public.bank_accounts set balance=balance-v_charge.amount where id=a.id returning balance into v_balance;
+  v_key:='maintenance:'||p_bank_id||':'||a.id||':'||p_period_start::text;
+  insert into public.bank_transactions(account_id,transaction_type,amount,currency_id,balance_after,description,idempotency_key,actor_id)
+  values(a.id,'fee',v_charge.amount,a.currency_id,v_balance,'Tarifa mensal de manutenção',v_key,auth.uid()) returning id into v_tx;
+  insert into public.bank_liquidity(bank_id,currency_id,balance) values(p_bank_id,a.currency_id,v_charge.amount)
+  on conflict(bank_id,currency_id) do update set balance=bank_liquidity.balance+excluded.balance,updated_at=now() returning balance into v_balance;
+  insert into public.bank_liquidity_transactions(bank_id,currency_id,transaction_type,amount,balance_after,reference_id,idempotency_key,description,actor_id)
+  values(p_bank_id,a.currency_id,'fee_income',v_charge.amount,v_balance,v_tx,'maintenance-fee:'||v_tx,'Receita de manutenção mensal',auth.uid());
+  update public.bank_maintenance_charges set status='charged',transaction_id=v_tx,processed_at=now() where id=v_charge.id;
+  v_count:=v_count+1;
+ end loop;
+ perform public.bank_audit(p_bank_id,'monthly_maintenance_processed','bank_maintenance',null,jsonb_build_object('period_start',p_period_start,'charged',v_count,'pending_insufficient_balance',v_pending));
+ return jsonb_build_object('charged',v_count,'pending_insufficient_balance',v_pending,'period_start',p_period_start);
+end;
+$function$;
+
 -- Revisão do status do banco também é registrada e bloqueia operações ao suspender.
 create or replace function public.admin_review_commercial_bank(p_bank_id uuid,p_status text,p_note text default null)
 returns void language plpgsql security definer set search_path=public,auth as $function$
@@ -639,6 +709,8 @@ revoke all on function public.bank_withdraw(uuid,numeric,text) from public,anon;
 revoke all on function public.bank_transfer(uuid,uuid,numeric,text,text) from public,anon;
 revoke all on function public.bank_transfer_to_account(uuid,text,text,numeric,text,text) from public,anon;
 revoke all on function public.bank_manage_branch(uuid,uuid,text,text,text,text,text) from public,anon;
+revoke all on function public.bank_manage_account_status(uuid,text,text) from public,anon;
+revoke all on function public.bank_process_monthly_maintenance(uuid,date) from public,anon;
 revoke all on function public.bank_set_fee(uuid,text,numeric,uuid,boolean) from public,anon;
 revoke all on function public.bank_set_daily_limit(uuid,text,numeric,uuid) from public,anon;
 revoke all on function public.bank_set_credit_policy(uuid,numeric,integer,boolean) from public,anon;
@@ -653,6 +725,8 @@ grant execute on function public.bank_withdraw(uuid,numeric,text) to authenticat
 grant execute on function public.bank_transfer(uuid,uuid,numeric,text,text) to authenticated;
 grant execute on function public.bank_transfer_to_account(uuid,text,text,numeric,text,text) to authenticated;
 grant execute on function public.bank_manage_branch(uuid,uuid,text,text,text,text,text) to authenticated;
+grant execute on function public.bank_manage_account_status(uuid,text,text) to authenticated;
+grant execute on function public.bank_process_monthly_maintenance(uuid,date) to authenticated;
 grant execute on function public.bank_set_fee(uuid,text,numeric,uuid,boolean) to authenticated;
 grant execute on function public.bank_set_daily_limit(uuid,text,numeric,uuid) to authenticated;
 grant execute on function public.bank_set_credit_policy(uuid,numeric,integer,boolean) to authenticated;
