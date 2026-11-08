@@ -27,8 +27,8 @@ const statusLabel: Record<string, string> = {
   expired: "Expirado", cancelled: "Cancelado",
 };
 
-export function CitizenPortal({ profileId, notify }: { profileId: string; notify: (message: string) => void }) {
-  const [tab, setTab] = useState<CitizenTab>("overview");
+export function CitizenPortal({ profileId, notify, initialTab = "overview" }: { profileId: string; notify: (message: string) => void; initialTab?: CitizenTab }) {
+  const [tab, setTab] = useState<CitizenTab>(initialTab);
   const [profile, setProfile] = useState<Row | null>(null);
   const [documents, setDocuments] = useState<Row[]>([]);
   const [passport, setPassport] = useState<Row | null>(null);
@@ -99,6 +99,7 @@ export function CitizenPortal({ profileId, notify }: { profileId: string; notify
     }
   }, [notify, profileId]);
 
+  useEffect(() => { setTab(initialTab); }, [initialTab]);
   useEffect(() => { void load(); }, [load]);
 
   const identity = useMemo(
@@ -191,6 +192,7 @@ export function CitizenPortal({ profileId, notify }: { profileId: string; notify
             <article className="we-panel"><header><h2><BookOpen/> Passaporte</h2></header><strong>{statusLabel[passport?.status ?? "not_issued"]}</strong><small className="we-citizen-muted">Estrutura inicial preparada para a Etapa 11.</small></article>
             <article className="we-panel"><header><h2><Bell/> Notificações</h2></header><strong>{unreadCount} não lida(s)</strong><small className="we-citizen-muted">Atualizações administrativas pessoais.</small><button type="button" className="we-secondary" onClick={() => setTab("notifications")}>Abrir notificações</button></article>
           </div>
+          {memberships.length > 0 && <section className="we-panel"><header><h2><ShieldCheck/> Vínculos governamentais</h2></header>{memberships.map(item => <article className="we-citizen-event" key={item.id}><div><b>{item.position}</b><small>Nomeação em {dateLabel(item.appointed_at)}</small></div><span className="we-tag">Ativo</span></article>)}</section>}
           <div className="we-citizen-grid">
             <article className="we-panel"><header><h2><ShieldCheck/> Situação</h2></header><strong>{statusLabel[profile.citizen_status] ?? profile.citizen_status ?? "Ativo"}</strong><small className="we-citizen-muted">Situação da conta: {statusLabel[profile.account_status] ?? profile.account_status}</small></article>
             <article className="we-panel"><header><h2><Wallet/> Vínculos futuros</h2></header><strong>Emprego e banco</strong><small className="we-citizen-muted">As informações serão conectadas quando as respectivas etapas forem implementadas.</small></article>
