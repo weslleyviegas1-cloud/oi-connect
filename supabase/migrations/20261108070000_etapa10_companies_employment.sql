@@ -32,6 +32,14 @@ create table if not exists public.companies (
 create index if not exists companies_country_status_idx on public.companies(country_id,status);
 create index if not exists companies_sector_idx on public.companies(country_id,sector,status);
 
+create table if not exists public.company_government_ownership (
+ company_id uuid primary key references public.companies(id) on delete restrict,
+ ministry_id uuid not null references public.ministries(id) on delete restrict,
+ ownership_percent numeric(7,4) not null default 100 check(ownership_percent=100),
+ created_by uuid not null references public.profiles(id),
+ created_at timestamptz not null default now()
+);
+
 create table if not exists public.company_owners (
  id uuid primary key default gen_random_uuid(),
  company_id uuid not null references public.companies(id) on delete restrict,
@@ -285,6 +293,7 @@ $function$;
 
 alter table public.companies enable row level security;
 alter table public.company_owners enable row level security;
+alter table public.company_government_ownership enable row level security;
 alter table public.company_departments enable row level security;
 alter table public.company_members enable row level security;
 alter table public.job_positions enable row level security;
@@ -303,6 +312,8 @@ drop policy if exists companies_read on public.companies;
 create policy companies_read on public.companies for select to authenticated
 using(status='active' or public.is_world_admin() or created_by=auth.uid() or public.is_company_member(id)
  or public.is_country_president(country_id));
+drop policy if exists company_government_ownership_read on public.company_government_ownership;
+create policy company_government_ownership_read on public.company_government_ownership for select to authenticated using(public.is_world_admin() or exists(select 1 from public.companies c where c.id=company_id and (public.is_country_president(c.country_id) or public.is_company_member(c.id))));
 drop policy if exists company_owners_read on public.company_owners;
 create policy company_owners_read on public.company_owners for select to authenticated
 using(profile_id=auth.uid() or public.is_world_admin() or public.is_company_member(company_id) or exists(select 1 from public.companies c where c.id=company_id and public.is_country_president(c.country_id)));
@@ -331,10 +342,10 @@ create policy company_financial_records_read on public.company_financial_records
 drop policy if exists company_tax_records_read on public.company_tax_records;
 create policy company_tax_records_read on public.company_tax_records for select to authenticated using(public.is_world_admin() or public.is_company_member(company_id,'tax.read') or exists(select 1 from public.companies c where c.id=company_id and public.is_country_president(c.country_id)));
 
-revoke all on public.companies,public.company_owners,public.company_departments,public.company_members,public.job_positions,public.job_openings,
+revoke all on public.companies,public.company_owners,public.company_government_ownership,public.company_departments,public.company_members,public.job_positions,public.job_openings,
  public.job_applications,public.employment_contracts,public.employment_history,public.employment_contract_revisions,
  public.payroll_records,public.salary_payments,public.company_financial_records,public.company_tax_records,public.company_audit_logs from public,anon,authenticated;
-grant select on public.companies,public.company_owners,public.company_departments,public.company_members,public.job_positions,public.job_openings,
+grant select on public.companies,public.company_owners,public.company_government_ownership,public.company_departments,public.company_members,public.job_positions,public.job_openings,
  public.job_applications,public.employment_contracts,public.employment_history,public.employment_contract_revisions,
  public.payroll_records,public.salary_payments,public.company_financial_records,public.company_tax_records to authenticated;
 grant select on public.company_audit_logs to authenticated;
@@ -362,7 +373,11 @@ begin
  v_code:='WE-'||upper(substr(replace(gen_random_uuid()::text,'-',''),1,12));
  insert into public.companies(company_identifier,legal_name,trade_name,country_id,city,region,sector,company_type,size_class,description,declared_capital,currency_id,government_entity_id,logo_url,created_by)
  values(v_code,trim(p_legal_name),nullif(trim(p_trade_name),''),p_country_id,nullif(trim(p_city),''),nullif(trim(p_region),''),p_sector,p_company_type,p_size_class,nullif(trim(p_description),''),p_declared_capital,p_currency_id,p_government_entity_id,nullif(trim(p_logo_url),''),auth.uid()) returning id into v_id;
- insert into public.company_owners(company_id,profile_id,ownership_percent,owner_role,appointed_by) values(v_id,auth.uid(),100,'founder',auth.uid());
+ if p_company_type in ('private','partnership') then
+  insert into public.company_owners(company_id,profile_id,ownership_percent,owner_role,appointed_by) values(v_id,auth.uid(),100,'founder',auth.uid());
+ else
+  insert into public.company_government_ownership(company_id,ministry_id,ownership_percent,created_by) values(v_id,p_government_entity_id,100,auth.uid());
+ end if;
  insert into public.company_members(company_id,profile_id,member_role,permissions,appointed_by)
  values(v_id,auth.uid(),'owner',array['company.manage','staff.read','hr.read','contracts.read','payroll.read','finance.read','tax.read','department.manage','jobs.manage'],auth.uid());
  perform public.company_audit(v_id,'company_requested','company',v_id,jsonb_build_object('identifier',v_code,'status','pending'));
