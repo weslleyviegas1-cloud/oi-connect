@@ -281,7 +281,7 @@ begin
     insert into public.document_audit_logs(actor_id,profile_id,country_id,object_type,object_id,action,reason,previous_values,new_values) values(auth.uid(),r.profile_id,r.country_id,'passport_request',r.id,'rejected',trim(p_reason),jsonb_build_object('status',r.status),jsonb_build_object('status','rejected'));
     return jsonb_build_object('status','rejected','request_id',r.id);
   end if;
-  if p_validity_days not between 30 and 3650 then raise exception 'Validade deve ficar entre 30 e 3650 dias.'; end if;
+  if p_validity_days is null or p_validity_days not between 30 and 3650 then raise exception 'Validade deve ficar entre 30 e 3650 dias.'; end if;
   if p.country_id is distinct from r.country_id then raise exception 'A nacionalidade do cidadão mudou; solicitação precisa ser refeita.'; end if;
   pass_no := 'WE-'||upper(substr(replace(gen_random_uuid()::text,'-',''),1,12));
   insert into public.citizen_passports(profile_id,country_id,passport_number,status,issued_at,expires_at,issued_by)
@@ -403,7 +403,7 @@ declare r public.travel_requests%rowtype; iid uuid;
 begin
   select * into r from public.travel_requests where id=p_travel_request_id and status='authorized' for update;
   if not found then raise exception 'Viagem autorizada não encontrada.'; end if;
-  if not (public.is_world_admin() or public.is_country_president(r.destination_country_id) or public.has_government_permission(r.destination_country_id,'immigration.review',null,null) or public.has_government_permission(r.origin_country_id,'immigration.review',null,null)) then raise exception 'Sem permissão para controle de fronteira.'; end if;
+  if not (public.is_world_admin() or public.is_country_president(r.destination_country_id) or public.has_government_permission(r.destination_country_id,'immigration.review',null,null)  ) then raise exception 'Sem permissão para controle de fronteira do país de destino.'; end if;
   if p_result not in ('approved','rejected') or nullif(trim(p_reason),'') is null then raise exception 'Resultado e justificativa obrigatórios.'; end if;
   insert into public.immigration_records(travel_request_id,profile_id,origin_country_id,destination_country_id,document_id,airport_id,result,reason,officer_id)
   values(r.id,r.profile_id,r.origin_country_id,r.destination_country_id,r.document_id,r.destination_airport_id,p_result,trim(p_reason),auth.uid()) returning id into iid;
