@@ -317,13 +317,40 @@ create index if not exists treasury_ledger_country_date_idx on public.treasury_l
 create index if not exists budget_plans_country_period_idx on public.budget_plans(country_id,period_start,period_end);
 create index if not exists investments_country_status_idx on public.public_investment_projects(country_id,status,created_at desc);
 
-create or replace function public.can_manage_economy(p_country_id uuid,p_permission text)
-returns boolean language sql stable security definer set search_path=public,auth as $$
+create or replace function public.has_economy_scope_permission(p_country_id uuid,p_permission text,p_ministry_id uuid default null)
+returns boolean language sql stable security definer set search_path=public,auth as $
   select auth.uid() is not null and (
     public.is_world_admin()
-    or (exists(select 1 from public.national_treasuries t where t.country_id=p_country_id and not t.operations_suspended)
-      and (public.is_country_president(p_country_id) or public.has_economy_permission(p_country_id,p_permission)))
+    or (
+      exists(select 1 from public.national_treasuries t where t.country_id=p_country_id and not t.operations_suspended)
+      and (
+        public.is_country_president(p_country_id)
+        or exists(
+          select 1 from public.government_members gm
+          join public.government_member_permissions gp on gp.member_id=gm.id and gp.country_id=gm.country_id
+          join public.profiles member_profile on member_profile.id=gm.profile_id
+            and coalesce(member_profile.account_status,'active')='active'
+            and member_profile.registration_status='active'
+          where gm.profile_id=auth.uid() and gm.country_id=p_country_id and gm.status='active'
+            and gp.permission_key in (p_permission,'economy.manage')
+            and (
+              gp.scope_type='country'
+              or (p_ministry_id is not null and gp.scope_type='ministry'
+                and gm.ministry_id=p_ministry_id and gp.scope_id=gm.ministry_id)
+              or (p_ministry_id is not null and gp.scope_type='department'
+                and gp.scope_id=gm.department_id
+                and exists(select 1 from public.government_departments d
+                  where d.id=gm.department_id and d.ministry_id=p_ministry_id and d.country_id=p_country_id))
+            )
+        )
+      )
+    )
   );
+$;
+
+create or replace function public.can_manage_economy(p_country_id uuid,p_permission text)
+returns boolean language sql stable security definer set search_path=public,auth as $$
+  select public.has_economy_scope_permission(p_country_id,p_permission,null);
 $$;
 
 create or replace function public.economy_audit(
@@ -888,16 +915,17 @@ create or replace function public.create_investment_project(
   p_country_id uuid,p_name text,p_description text,p_category text,p_budget_allocation_id uuid,
   p_planned_amount numeric,p_starts_on date,p_expected_end date,p_ministry_id uuid default null
 ) returns uuid language plpgsql security definer set search_path=public,auth as $$
-declare v_id uuid; v_allocation_limit numeric(24,2); v_allocation_currency text; v_treasury_currency text;
+declare v_id uuid; v_allocation_limit numeric(24,2); v_allocation_currency text; v_treasury_currency text; v_allocation_ministry uuid;
 begin
-  if not public.can_manage_economy(p_country_id,'investment.manage') then raise exception 'Sem permissão para propor investimento.'; end if;
+  if not public.has_economy_scope_permission(p_country_id,'investment.manage',p_ministry_id) then raise exception 'Sem permissão para propor investimento neste ministério.'; end if;
   if p_planned_amount<0 or length(trim(coalesce(p_name,'')))<2 or length(trim(coalesce(p_category,'')))<2 then
     raise exception 'Projeto inválido.'; end if;
-  select a.planned_amount,a.currency_code_snapshot into v_allocation_limit,v_allocation_currency
+  select a.planned_amount,a.currency_code_snapshot,a.ministry_id into v_allocation_limit,v_allocation_currency,v_allocation_ministry
     from public.budget_allocations a join public.budget_plans b on b.id=a.budget_plan_id
     where a.id=p_budget_allocation_id and a.country_id=p_country_id and b.status in ('approved','in_execution');
   select currency_code into v_treasury_currency from public.national_treasuries where country_id=p_country_id;
   if v_allocation_limit is null then raise exception 'O projeto precisa de uma alocação orçamentária aprovada neste país.'; end if;
+  if v_allocation_ministry is not null and p_ministry_id is distinct from v_allocation_ministry then raise exception 'O projeto deve pertencer ao ministério da alocação aprovada.'; end if;
   if v_allocation_currency<>coalesce(nullif(v_treasury_currency,''),'UNCONFIGURED') then
     raise exception 'A unidade monetária do orçamento diverge da unidade atual do Tesouro.'; end if;
   if p_planned_amount>v_allocation_limit then raise exception 'O valor previsto excede a alocação orçamentária.'; end if;
@@ -950,11 +978,11 @@ begin
     if p_budget_allocation_id is not null then raise exception 'Receitas não podem ser vinculadas a alocações de despesas.'; end if;
     if not public.can_manage_economy(p_country_id,'treasury.revenue') then raise exception 'Sem permissão para registrar receita.'; end if;
   else
-    if not public.can_manage_economy(p_country_id,'treasury.expense') then raise exception 'Sem permissão para registrar despesa.'; end if;
     if v_balance<p_amount then raise exception 'Saldo insuficiente no Tesouro Nacional para esta despesa.'; end if;
     if p_budget_allocation_id is null then raise exception 'Toda despesa precisa estar vinculada a uma alocação aprovada.'; end if;
     select * into a from public.budget_allocations where id=p_budget_allocation_id and country_id=p_country_id for update;
     if not found then raise exception 'Alocação não encontrada neste país.'; end if;
+    if not public.has_economy_scope_permission(p_country_id,'treasury.expense',a.ministry_id) then raise exception 'Sem permissão para registrar despesa nesta alocação ministerial.'; end if;
     if a.currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED') then raise exception 'A moeda da alocação diverge da moeda atual do Tesouro.'; end if;
     if not exists(select 1 from public.budget_plans b where b.id=a.budget_plan_id and b.status in ('approved','in_execution')) then
       raise exception 'O orçamento ainda não está aprovado.'; end if;
@@ -1067,6 +1095,7 @@ $$;
 
 -- Nenhuma tabela de dinheiro pessoal, banco comercial, câmbio ou Banco Central é criada nesta etapa.
 revoke all on function public.can_manage_economy(uuid,text) from public,anon;
+revoke all on function public.has_economy_scope_permission(uuid,text,uuid) from public,anon,authenticated;
 revoke all on function public.has_economy_permission(uuid,text) from public,anon;
 grant execute on function public.has_economy_permission(uuid,text) to authenticated;
 revoke all on function public.economy_audit(uuid,text,text,uuid,jsonb,jsonb) from public,anon,authenticated;
