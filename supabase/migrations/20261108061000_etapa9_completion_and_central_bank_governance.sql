@@ -537,4 +537,36 @@ grant execute on function public.admin_review_bank_loan(uuid,text) to authentica
 grant execute on function public.pay_bank_loan_installment(uuid,uuid,text) to authenticated;
 grant execute on function public.get_my_bank_dashboard() to authenticated;
 
+create or replace function public.admin_review_monetary_withdrawal(p_request_id uuid,p_approve boolean,p_note text)
+returns void language plpgsql security definer set search_path=public,auth as $function$
+declare r public.monetary_withdrawals%rowtype; v_supply numeric; v_pending numeric; v_committed numeric;
+begin
+ if not public.is_world_admin() then raise exception 'Somente o Super Admin pode aprovar retiradas.'; end if;
+ select * into r from public.monetary_withdrawals where id=p_request_id for update;
+ if not found or r.status<>'pending' then raise exception 'Solicitação inexistente ou já revisada.'; end if;
+ if p_approve then
+  perform 1 from public.central_banks where id=r.central_bank_id for update;
+  select coalesce(sum(case when operation_type='issuance' then amount else -amount end),0)
+   into v_supply from public.money_supply_records where country_id=r.country_id and currency_id=r.currency_id;
+  select coalesce(sum(amount),0) into v_pending from public.monetary_withdrawals
+   where country_id=r.country_id and currency_id=r.currency_id and status='pending' and id<>r.id;
+  select
+   coalesce((select sum(balance) from public.bank_accounts where country_id=r.country_id and currency_id=r.currency_id),0)
+  +coalesce((select sum(w.balance) from public.bank_cash_wallets w where w.country_id=r.country_id and w.currency_id=r.currency_id),0)
+  +coalesce((select sum(l.balance) from public.bank_liquidity l join public.commercial_banks b on b.id=l.bank_id where b.country_id=r.country_id and l.currency_id=r.currency_id),0)
+  into v_committed;
+  if r.amount>v_supply-v_pending or v_supply-v_pending-r.amount<v_committed then
+   raise exception 'A retirada excederia a oferta monetária ainda disponível, considerando saldos em carteiras e bancos.';
+  end if;
+  insert into public.money_supply_records(central_bank_id,country_id,currency_id,operation_type,amount,source_request_id,reason,actor_id)
+  values(r.central_bank_id,r.country_id,r.currency_id,'withdrawal',r.amount,r.id,r.reason,auth.uid());
+  update public.monetary_withdrawals set status='approved',approved_by=auth.uid(),reviewed_at=now(),review_note=nullif(trim(p_note),'') where id=r.id;
+ else
+  update public.monetary_withdrawals set status='rejected',approved_by=auth.uid(),reviewed_at=now(),review_note=nullif(trim(p_note),'') where id=r.id;
+ end if;
+ perform public.central_bank_audit(r.central_bank_id,r.country_id,case when p_approve then 'withdrawal_approved' else 'withdrawal_rejected' end,
+  'monetary_withdrawal',r.id,to_jsonb(r),jsonb_build_object('status',case when p_approve then 'approved' else 'rejected' end,'note',p_note),p_note);
+end;
+$function$;
+
 commit;
