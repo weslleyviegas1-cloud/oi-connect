@@ -326,20 +326,22 @@ create or replace function public.economy_audit(
 $$;
 
 -- Cria o Tesouro somente quando o país já existe; unidade monetária fica provisória se não configurada.
-insert into public.national_treasuries(country_id,currency_code,currency_label)
+insert into public.national_treasuries(country_id,currency_code,currency_label,opening_balance_currency_code_snapshot)
 select c.id,c.currency_code,
   case when nullif(trim(c.currency_code),'') is null
     then 'Unidade monetária provisória (não configurada)'
-    else 'Moeda configurada no cadastro nacional' end
+    else 'Moeda configurada no cadastro nacional' end,
+  coalesce(nullif(trim(c.currency_code),''),'UNCONFIGURED')
 from public.countries c
 on conflict(country_id) do nothing;
 
 create or replace function public.ensure_national_treasury_for_country()
 returns trigger language plpgsql security definer set search_path=public as $$
 begin
-  insert into public.national_treasuries(country_id,currency_code,currency_label)
+  insert into public.national_treasuries(country_id,currency_code,currency_label,opening_balance_currency_code_snapshot)
   values(new.id,new.currency_code,case when nullif(trim(new.currency_code),'') is null
-    then 'Unidade monetária provisória (não configurada)' else 'Moeda configurada no cadastro nacional' end)
+    then 'Unidade monetária provisória (não configurada)' else 'Moeda configurada no cadastro nacional' end,
+    coalesce(nullif(trim(new.currency_code),''),'UNCONFIGURED'))
   on conflict(country_id) do nothing;
   return new;
 end;
@@ -361,8 +363,14 @@ begin
     select currency_code_snapshot into v_code from public.tax_obligations where id=new.obligation_id;
   elsif tg_table_name='budget_allocations' then
     select currency_code_snapshot into v_code from public.budget_plans where id=new.budget_plan_id;
+  elsif tg_table_name='public_investment_projects' then
+    select currency_code_snapshot into v_code from public.budget_allocations where id=new.budget_allocation_id;
   elsif tg_table_name='treasury_ledger_entries' and new.entry_type='reversal' then
     select currency_code_snapshot into v_code from public.treasury_ledger_entries where id=new.reverses_entry_id;
+  elsif tg_table_name='treasury_ledger_entries' and new.source_type='tax_collection' then
+    select currency_code_snapshot into v_code from public.tax_collections where id=new.source_id;
+  elsif tg_table_name='treasury_ledger_entries' and new.investment_project_id is not null then
+    select currency_code_snapshot into v_code from public.public_investment_projects where id=new.investment_project_id;
   else
     select coalesce(nullif(currency_code,''),'UNCONFIGURED') into v_code
       from public.national_treasuries where country_id=new.country_id;
