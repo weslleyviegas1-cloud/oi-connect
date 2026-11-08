@@ -24,7 +24,7 @@ const dateTime = (value?: string | null) => value ? new Date(value).toLocaleStri
 const statusLabel: Record<string, string> = {
   active: "Ativo", pending: "Pendente de aprovação", inactive: "Inativo",
   suspended: "Suspenso", under_review: "Em análise", not_issued: "Não emitido",
-  expired: "Expirado", cancelled: "Cancelado",
+  expired: "Expirado", cancelled: "Cancelado", issued: "Emitido",
 };
 
 export function CitizenPortal({ profileId, notify, initialTab = "overview" }: { profileId: string; notify: (message: string) => void; initialTab?: CitizenTab }) {
@@ -32,6 +32,7 @@ export function CitizenPortal({ profileId, notify, initialTab = "overview" }: { 
   const [profile, setProfile] = useState<Row | null>(null);
   const [documents, setDocuments] = useState<Row[]>([]);
   const [passport, setPassport] = useState<Row | null>(null);
+  const [passportRequest, setPassportRequest] = useState<Row | null>(null);
   const [requests, setRequests] = useState<Row[]>([]);
   const [history, setHistory] = useState<Row[]>([]);
   const [nicknameHistory, setNicknameHistory] = useState<Row[]>([]);
@@ -56,12 +57,13 @@ export function CitizenPortal({ profileId, notify, initialTab = "overview" }: { 
     setLoading(true);
     try {
       const [
-        profileRes, documentsRes, passportRes, requestsRes, historyRes, nicknameRes,
+        profileRes, documentsRes, passportRes, passportRequestRes, requestsRes, historyRes, nicknameRes,
         nationalityRes, notificationsRes, countriesRes, membershipsRes,
       ] = await Promise.all([
         supabase.rpc("get_my_citizen_profile"),
         supabase.from("citizen_documents").select("*").eq("profile_id", profileId).order("created_at", { ascending: false }),
         supabase.from("citizen_passports").select("*").eq("profile_id", profileId).maybeSingle(),
+        supabase.from("passport_requests").select("id,request_type,status,requested_at,review_note,reason").eq("profile_id", profileId).order("requested_at", { ascending: false }).limit(1).maybeSingle(),
         supabase.from("nationality_change_requests").select("id,from_country_id,to_country_id,status,requested_at,reviewed_at,review_note").eq("profile_id", profileId).order("requested_at", { ascending: false }).limit(20),
         supabase.from("citizen_history").select("id,event_type,title,description,country_id,actor_id,created_at").eq("profile_id", profileId).order("created_at", { ascending: false }).limit(100),
         supabase.from("citizen_nickname_history").select("id,field_name,old_value,new_value,changed_at").eq("profile_id", profileId).order("changed_at", { ascending: false }).limit(50),
@@ -82,6 +84,7 @@ export function CitizenPortal({ profileId, notify, initialTab = "overview" }: { 
       setShowBio(profileRes.data?.show_bio ?? false);
       if (documentsRes.error) throw documentsRes.error;
       if (passportRes.error) throw passportRes.error;
+      if (passportRequestRes.error) throw passportRequestRes.error;
       if (requestsRes.error) throw requestsRes.error;
       if (historyRes.error) throw historyRes.error;
       if (nicknameRes.error) throw nicknameRes.error;
@@ -90,6 +93,7 @@ export function CitizenPortal({ profileId, notify, initialTab = "overview" }: { 
       if (countriesRes.error) throw countriesRes.error;
       setDocuments(documentsRes.data ?? []);
       setPassport(passportRes.data);
+      setPassportRequest(passportRequestRes.data);
       setRequests(requestsRes.data ?? []);
       setHistory(historyRes.data ?? []);
       setNicknameHistory(nicknameRes.data ?? []);
@@ -113,6 +117,19 @@ export function CitizenPortal({ profileId, notify, initialTab = "overview" }: { 
   );
   const pendingRequest = requests.find(item => item.status === "pending") ?? null;
   const unreadCount = notifications.filter(item => !item.is_read).length;
+
+  const requestPassport = async () => {
+    if (profile?.role !== "citizen") return;
+    setBusy(true);
+    try {
+      const { error } = await supabase.rpc("request_passport", { p_reason: "Solicitação realizada pela área do cidadão." });
+      if (error) throw error;
+      notify("Solicitação de passaporte enviada para análise do governo nacional.");
+      await load();
+    } catch (error) {
+      notify("Não foi possível solicitar o passaporte: " + (error instanceof Error ? error.message : "erro desconhecido"));
+    } finally { setBusy(false); }
+  };
 
   const savePersonalData = async (event: FormEvent) => {
     event.preventDefault();
@@ -202,7 +219,7 @@ export function CitizenPortal({ profileId, notify, initialTab = "overview" }: { 
           <div className="we-citizen-grid">
             <article className="we-panel"><header><h2><Flag/> Nacionalidade</h2></header><div className="we-citizen-country"><b>{profile.country_flag ?? "🌐"}</b><span><strong>{profile.country_name ?? "Sem país"}</strong><small>{profile.country_capital ?? "Capital não cadastrada"} • {profile.country_continent ?? "Continente não cadastrado"}</small></span></div><small className="we-citizen-muted">Desde {dateLabel(profile.country_joined_at)}</small></article>
             <article className="we-panel"><header><h2><FileBadge/> Identidade digital</h2></header><strong>{identity?.document_number ?? "Aguardando emissão"}</strong><small className="we-citizen-muted">{identity ? statusLabel[identity.status] ?? identity.status : "Documento não disponível"}</small><button type="button" className="we-secondary" onClick={() => setTab("identity")}>Visualizar identidade</button></article>
-            <article className="we-panel"><header><h2><BookOpen/> Passaporte</h2></header><strong>{statusLabel[passport?.status ?? "not_issued"]}</strong><small className="we-citizen-muted">Estrutura inicial preparada para a Etapa 11.</small></article>
+            <article className="we-panel"><header><h2><BookOpen/> Passaporte</h2></header><strong>{passport?.passport_number ?? statusLabel[passport?.status ?? "not_issued"]}</strong><small className="we-citizen-muted">{passport ? `Emitido em ${dateLabel(passport.issued_at)} • válido até ${dateLabel(passport.expires_at)} • ${statusLabel[passport.status] ?? passport.status}` : passportRequest ? `Solicitação ${passportRequest.status === "issued" ? "emitida" : passportRequest.status === "rejected" ? "rejeitada" : "em análise"} • ${dateLabel(passportRequest.requested_at)}` : "Você ainda não possui passaporte emitido."}</small>{profile.role === "citizen" && <button type="button" className="we-secondary" onClick={() => void requestPassport()} disabled={busy || !!passportRequest && ["pending","in_review"].includes(passportRequest.status)}>{passport ? "Solicitar renovação" : "Solicitar emissão"}</button>}</article>
             <article className="we-panel"><header><h2><Bell/> Notificações</h2></header><strong>{unreadCount} não lida(s)</strong><small className="we-citizen-muted">Atualizações administrativas pessoais.</small><button type="button" className="we-secondary" onClick={() => setTab("notifications")}>Abrir notificações</button></article>
           </div>
           {memberships.length > 0 && <section className="we-panel"><header><h2><ShieldCheck/> Vínculos governamentais</h2></header>{memberships.map(item => <article className="we-citizen-event" key={item.id}><div><b>{item.position}</b><small>Nomeação em {dateLabel(item.appointed_at)}</small></div><span className="we-tag">Ativo</span></article>)}</section>}
