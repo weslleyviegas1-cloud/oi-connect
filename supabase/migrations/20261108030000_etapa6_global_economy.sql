@@ -532,7 +532,7 @@ begin
               and x.currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))),
         'treasury_total',(select sum(t.opening_balance + coalesce(l.total,0)) from public.national_treasuries t
           left join lateral (select sum(signed_amount) total from public.treasury_ledger_entries x where x.country_id=t.country_id) l on true
-          where t.opening_balance_currency_code_snapshot=coalesce(nullif(t.currency_code,''),'UNCONFIGURED')
+          where (t.opening_balance=0 or t.opening_balance_currency_code_snapshot=coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))
             and not exists(select 1 from public.treasury_ledger_entries x where x.country_id=t.country_id
               and x.currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))),
         'revenue_total',(select coalesce(sum(case when x.entry_type='revenue' then x.amount
@@ -562,7 +562,7 @@ begin
         ) country_index where country_index.inflation is not null),
         'countries',(select coalesce(jsonb_agg(jsonb_build_object('id',c.id,'name',c.name,'flag',c.flag,'continent',c.continent,'is_active',c.is_active,
           'currency_code',t.currency_code,'currency_label',t.currency_label,
-          'treasury_balance',case when t.opening_balance_currency_code_snapshot=coalesce(nullif(t.currency_code,''),'UNCONFIGURED')
+          'treasury_balance',case when (t.opening_balance=0 or t.opening_balance_currency_code_snapshot=coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))
             and not exists(select 1 from public.treasury_ledger_entries x where x.country_id=c.id
               and x.currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))
             then t.opening_balance+coalesce(l.total,0) else null end,
@@ -594,7 +594,7 @@ begin
   select jsonb_build_object(
     'scope','national','country_id',c.id,'country_name',c.name,'country_flag',c.flag,
     'currency_code',t.currency_code,'currency_label',t.currency_label,
-    'currency_consistent',(t.opening_balance_currency_code_snapshot=coalesce(nullif(t.currency_code,''),'UNCONFIGURED')
+    'currency_consistent',((t.opening_balance=0 or t.opening_balance_currency_code_snapshot=coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))
       and not exists(select 1 from public.treasury_ledger_entries x where x.country_id=c.id
         and x.currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))),
     'gdp',(select r.total_value from public.economic_gdp_records r where r.country_id=c.id and r.status='confirmed' order by r.period_end desc limit 1),
@@ -614,7 +614,7 @@ begin
     'treasury_balance',case when public.is_world_admin() or public.is_country_president(c.id)
       or public.has_economy_permission(c.id,'treasury.read')
       or public.has_economy_permission(c.id,'economy.read')
-      or t.public_balance_visible then case when t.opening_balance_currency_code_snapshot=coalesce(nullif(t.currency_code,''),'UNCONFIGURED')
+      or t.public_balance_visible then case when (t.opening_balance=0 or t.opening_balance_currency_code_snapshot=coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))
         and not exists(select 1 from public.treasury_ledger_entries x where x.country_id=c.id
           and x.currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))
         then t.opening_balance+(select coalesce(sum(signed_amount),0) from public.treasury_ledger_entries where country_id=c.id) else null end else null end,
