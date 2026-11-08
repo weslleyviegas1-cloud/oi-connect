@@ -354,7 +354,7 @@ declare p public.profiles%rowtype; v_id uuid; v_identifier text; v_code text;
 begin
  if auth.uid() is null then raise exception 'Autenticação necessária.'; end if;
  select * into p from public.profiles where id=auth.uid() for update;
- if not found or p.registration_status<>'active' or coalesce(p.account_status,'active')<>'active' or p.country_id is distinct from p_country_id then raise exception 'Somente cidadão ativo do país de registro pode solicitar empresa.'; end if;
+ if not found or p.registration_status<>'active' or coalesce(p.account_status,'active')<>'active' or (p.country_id is distinct from p_country_id and not public.is_world_admin()) then raise exception 'Somente cidadão ativo do país de registro ou Super Admin pode solicitar empresa.'; end if;
  if length(trim(coalesce(p_legal_name,'')))<2 or p_sector not in ('commerce','construction','agriculture','livestock','mining','industry','transport','technology','services','food','health','education','energy','tourism','other') or p_company_type not in ('private','public','state_owned','partnership') or p_size_class not in ('small_business','large_enterprise') or p_declared_capital is null or p_declared_capital<0 or p_declared_capital<>round(p_declared_capital,6) then raise exception 'Dados cadastrais inválidos.'; end if;
  if p_company_type in ('public','state_owned') and (p_government_entity_id is null or not (public.is_world_admin() or public.is_country_president(p_country_id) or public.has_economy_permission(p_country_id,'economy.manage'))) then raise exception 'Empresas públicas ou estatais exigem vínculo a ministério e autorização governamental.'; end if;
  if p_company_type in ('public','state_owned') and not exists(select 1 from public.ministries m where m.id=p_government_entity_id and m.country_id=p_country_id and m.status='active') then raise exception 'O ministério informado não pertence ao país de registro ou está inativo.'; end if;
@@ -425,7 +425,7 @@ begin
  if not public.is_company_member(p_company_id,'jobs.manage') then raise exception 'Sem permissão para publicar vagas.'; end if;
  select * into c from public.companies where id=p_company_id and status='active'; if not found then raise exception 'Empresa não está ativa.'; end if;
  if not exists(select 1 from public.job_positions where id=p_position_id and company_id=p_company_id and status='active') or p_salary is null or p_salary<0 or p_salary<>round(p_salary,6) or p_openings not between 1 and 10000 or p_employment_type not in ('monthly','hourly','daily','project') or (p_deadline is not null and p_deadline<=now()) then raise exception 'Dados da vaga inválidos.'; end if;
- if not exists(select 1 from public.currencies where id=p_currency_id and status='active') then raise exception 'Moeda inválida.'; end if;
+ if p_currency_id is distinct from c.currency_id then raise exception 'Vaga deve utilizar a moeda nacional da empresa.'; end if;
  insert into public.job_openings(company_id,position_id,title,description,requirements,salary_amount,currency_id,employment_type,openings_count,country_id,city,region,application_deadline,created_by)
  values(p_company_id,p_position_id,trim(p_title),trim(p_description),nullif(trim(p_requirements),''),p_salary,p_currency_id,p_employment_type,p_openings,c.country_id,nullif(trim(p_city),''),nullif(trim(p_region),''),p_deadline,auth.uid()) returning id into v_id;
  perform public.company_audit(p_company_id,'job_published','job_opening',v_id,jsonb_build_object('title',p_title,'openings',p_openings)); return v_id;
