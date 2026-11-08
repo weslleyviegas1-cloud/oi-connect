@@ -674,7 +674,7 @@ begin
    'request_company_registration','admin_review_company','company_upsert_department','company_upsert_position','company_manage_member',
    'company_open_job','citizen_apply_job','company_review_application','respond_employment_offer','company_terminate_employment',
    'company_create_payroll','company_approve_payroll','company_pay_salary','company_record_financial_event',
-   'company_create_tax_record','admin_validate_company_tax','open_company_bank_account','set_my_employment_payout_account'
+   'company_create_tax_record','admin_validate_company_tax','open_company_bank_account','set_my_employment_payout_account','company_manage_owner','company_amend_employment_contract','company_pay_payroll_batch'
   )
  loop execute format('revoke all on function %s from public,anon',f.signature); execute format('grant execute on function %s to authenticated',f.signature); end loop;
 end $$;
@@ -745,6 +745,72 @@ end;
 $function$;
 revoke all on function public.company_pay_tax_obligation(uuid,uuid,uuid,text) from public,anon;
 grant execute on function public.company_pay_tax_obligation(uuid,uuid,uuid,text) to authenticated;
+
+
+
+create or replace function public.company_manage_owner(p_company_id uuid,p_profile_id uuid,p_ownership_percent numeric,p_owner_role text default 'shareholder',p_status text default 'active')
+returns uuid language plpgsql security definer set search_path=public,auth as $function$
+declare v_id uuid; v_total numeric;
+begin
+ if not public.is_company_member(p_company_id,'company.manage') then raise exception 'Somente proprietários ou diretores autorizados podem administrar sócios.'; end if;
+ if p_ownership_percent is null or p_ownership_percent<=0 or p_ownership_percent>100 or p_ownership_percent<>round(p_ownership_percent,4) or p_owner_role not in ('owner','shareholder','founder') or p_status not in ('active','removed') then raise exception 'Participação societária inválida.'; end if;
+ if not exists(select 1 from public.profiles where id=p_profile_id and registration_status='active' and coalesce(account_status,'active')='active') then raise exception 'Sócio deve ser cidadão ativo.'; end if;
+ select coalesce(sum(ownership_percent),0) into v_total from public.company_owners where company_id=p_company_id and status='active' and profile_id<>p_profile_id;
+ if p_status='active' and v_total+p_ownership_percent>100 then raise exception 'A soma das participações societárias não pode exceder 100%.'; end if;
+ insert into public.company_owners(company_id,profile_id,ownership_percent,owner_role,status,appointed_by)
+ values(p_company_id,p_profile_id,p_ownership_percent,p_owner_role,p_status,auth.uid())
+ on conflict(company_id,profile_id) do update set ownership_percent=excluded.ownership_percent,owner_role=excluded.owner_role,status=excluded.status,appointed_by=auth.uid()
+ returning id into v_id;
+ if p_status='active' then
+  insert into public.company_members(company_id,profile_id,member_role,permissions,appointed_by)
+  values(p_company_id,p_profile_id,'director',array['company.manage','staff.read','hr.read','contracts.read','payroll.read','finance.read','tax.read','department.manage','jobs.manage'],auth.uid())
+  on conflict(company_id,profile_id) do update set member_role='director',status='active',permissions=excluded.permissions;
+ else
+  update public.company_members set status='removed' where company_id=p_company_id and profile_id=p_profile_id and member_role in ('owner','director');
+ end if;
+ perform public.company_audit(p_company_id,'ownership_changed','company_owner',v_id,jsonb_build_object('profile_id',p_profile_id,'percent',p_ownership_percent,'status',p_status));
+ return v_id;
+end;
+$function$;
+
+create or replace function public.company_amend_employment_contract(p_contract_id uuid,p_job_title text,p_salary numeric,p_department_id uuid,p_ends_at date,p_conditions text,p_event text default 'salary_changed')
+returns void language plpgsql security definer set search_path=public,auth as $function$
+declare c public.employment_contracts%rowtype; v_old jsonb; v_new jsonb;
+begin
+ select * into c from public.employment_contracts where id=p_contract_id for update;
+ if not found or c.status<>'active' or not public.is_company_member(c.company_id,'hr.manage') then raise exception 'Contrato ativo não encontrado ou sem permissão.'; end if;
+ if length(trim(coalesce(p_job_title,'')))<2 or p_salary is null or p_salary<0 or p_salary<>round(p_salary,6) or p_event not in ('salary_changed','role_changed','department_changed','renewed') then raise exception 'Alteração contratual inválida.'; end if;
+ if p_department_id is not null and not exists(select 1 from public.company_departments where id=p_department_id and company_id=c.company_id and status='active') then raise exception 'Departamento não pertence à empresa.'; end if;
+ if p_ends_at is not null and p_ends_at<c.starts_at then raise exception 'Data final anterior ao início do contrato.'; end if;
+ v_old:=to_jsonb(c);
+ update public.employment_contracts set job_title=trim(p_job_title),salary_amount=p_salary,department_id=p_department_id,ends_at=p_ends_at,conditions=p_conditions,updated_at=now() where id=c.id returning to_jsonb(employment_contracts.*) into v_new;
+ insert into public.employment_contract_revisions(contract_id,previous_data,new_data,revised_by) values(c.id,v_old,v_new,auth.uid());
+ insert into public.employment_history(contract_id,company_id,employee_profile_id,event_type,previous_data,new_data,actor_id)
+ values(c.id,c.company_id,c.employee_profile_id,p_event,v_old,v_new,auth.uid());
+ perform public.company_audit(c.company_id,'contract_amended','employment_contract',c.id,jsonb_build_object('event',p_event));
+end;
+$function$;
+
+create or replace function public.company_pay_payroll_batch(p_company_id uuid,p_period text,p_from_account uuid)
+returns integer language plpgsql security definer set search_path=public,auth as $function$
+declare p record; v_count integer:=0; v_account uuid;
+begin
+ if not public.is_company_member(p_company_id,'payroll.manage') then raise exception 'Sem permissão para processar folha.'; end if;
+ select id into v_account from public.bank_accounts where id=p_from_account and owner_company_id=p_company_id and status='active' for update;
+ if v_account is null then raise exception 'Conta empresarial de pagamento inválida.'; end if;
+ for p in select pr.id,pr.employee_profile_id,pa.account_id from public.payroll_records pr
+  left join public.employment_payout_accounts pa on pa.contract_id=pr.contract_id
+  where pr.company_id=p_company_id and pr.reference_period=trim(p_period) and pr.status='approved'
+  order by pr.created_at,pr.id
+ loop
+  if p.account_id is null then raise exception 'Funcionário % ainda não autorizou uma conta de recebimento. Folha integral cancelada.',p.employee_profile_id; end if;
+  perform public.company_pay_salary(p.id,v_account,p.account_id,'payroll-batch:'||p.id::text);
+  v_count:=v_count+1;
+ end loop;
+ if v_count=0 then raise exception 'Não há folhas aprovadas neste período.'; end if;
+ return v_count;
+end;
+$function$;
 
 
 commit;
