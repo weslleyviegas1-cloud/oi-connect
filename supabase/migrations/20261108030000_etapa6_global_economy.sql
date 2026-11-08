@@ -5,7 +5,7 @@ begin;
 create extension if not exists pgcrypto;
 
 create or replace function public.has_economy_permission(p_country_id uuid,p_permission text)
-returns boolean language sql stable security definer set search_path=public,auth as $
+returns boolean language sql stable security definer set search_path=public,auth as $$
   select auth.uid() is not null and exists(
     select 1 from public.government_members gm
     join public.government_member_permissions gp on gp.member_id=gm.id and gp.country_id=gm.country_id
@@ -19,7 +19,7 @@ returns boolean language sql stable security definer set search_path=public,auth
         or (gp.scope_type='department' and gp.scope_id=gm.department_id))
       and exists(select 1 from public.countries c where c.id=p_country_id and c.is_active)
   );
-$;
+$$;
 
 
 create table if not exists public.national_treasuries (
