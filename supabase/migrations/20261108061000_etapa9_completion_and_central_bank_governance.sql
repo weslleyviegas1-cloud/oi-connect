@@ -481,7 +481,7 @@ begin
  select * into b from public.commercial_banks where id=p_bank_id and status='active' for update;
  if not found or not (public.is_world_admin() or public.is_bank_member(p_bank_id,'bank.manage')) then raise exception 'Banco ou permissão inválidos.'; end if;
  select * into a from public.bank_accounts where id=p_source_account for update;
- if not found or (a.owner_profile_id<>auth.uid() and not public.is_world_admin()) then raise exception 'Conta de origem não autorizada.'; end if;
+ if not found or a.owner_profile_id<>auth.uid() then raise exception 'A capitalização só pode usar uma conta pertencente ao próprio usuário autenticado.'; end if;
  if a.status<>'active' or a.country_id<>b.country_id or a.balance<p_amount then raise exception 'Conta sem saldo, país incompatível ou indisponível.'; end if;
  update public.bank_accounts set balance=balance-p_amount where id=a.id returning * into a;
  v_key:=p_idempotency_key;
@@ -752,8 +752,8 @@ begin
  if not exists(select 1 from public.profiles p where p.id=p_profile_id and p.country_id=b.country_id and p.registration_status='active' and coalesce(p.account_status,'active')='active') then
   raise exception 'O dirigente precisa possuir perfil ativo no mesmo país do Banco Central.';
  end if;
- if lower(trim(p_position))='governador do banco central' and exists(select 1 from public.profiles p where p.id=p_profile_id and p.role='president') then
-  raise exception 'Para preservar a independência monetária, o Presidente do país não pode ocupar simultaneamente o cargo de Governador do Banco Central.';
+ if exists(select 1 from public.profiles p where p.id=p_profile_id and p.role='president') then
+  raise exception 'Para preservar a independência monetária, o Presidente do país não pode ocupar cargo operacional no Banco Central.';
  end if;
  select * into m from public.central_bank_members where central_bank_id=p_bank_id and profile_id=p_profile_id for update;
  if found then
