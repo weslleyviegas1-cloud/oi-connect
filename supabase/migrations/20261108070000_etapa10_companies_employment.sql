@@ -356,7 +356,8 @@ begin
  select * into p from public.profiles where id=auth.uid() for update;
  if not found or p.registration_status<>'active' or coalesce(p.account_status,'active')<>'active' or p.country_id is distinct from p_country_id then raise exception 'Somente cidadão ativo do país de registro pode solicitar empresa.'; end if;
  if length(trim(coalesce(p_legal_name,'')))<2 or p_sector not in ('commerce','construction','agriculture','livestock','mining','industry','transport','technology','services','food','health','education','energy','tourism','other') or p_company_type not in ('private','public','state_owned','partnership') or p_size_class not in ('small_business','large_enterprise') or p_declared_capital is null or p_declared_capital<0 or p_declared_capital<>round(p_declared_capital,6) then raise exception 'Dados cadastrais inválidos.'; end if;
- if p_company_type in ('public','state_owned') and (p_government_entity_id is null or not public.is_world_admin()) then raise exception 'Empresas públicas ou estatais exigem vínculo governamental e cadastro pelo Super Admin.'; end if;
+ if p_company_type in ('public','state_owned') and (p_government_entity_id is null or not (public.is_world_admin() or public.is_country_president(p_country_id) or public.has_economy_permission(p_country_id,'economy.manage'))) then raise exception 'Empresas públicas ou estatais exigem vínculo a ministério e autorização governamental.'; end if;
+ if p_company_type in ('public','state_owned') and not exists(select 1 from public.ministries m where m.id=p_government_entity_id and m.country_id=p_country_id and m.status='active') then raise exception 'O ministério informado não pertence ao país de registro ou está inativo.'; end if;
  if not exists(select 1 from public.countries c join public.currencies cu on cu.internal_code=c.currency_code where c.id=p_country_id and c.is_active and cu.id=p_currency_id and cu.status='active') then raise exception 'A moeda deve corresponder à moeda nacional ativa do país.'; end if;
  v_code:='WE-'||upper(substr(replace(gen_random_uuid()::text,'-',''),1,12));
  insert into public.companies(company_identifier,legal_name,trade_name,country_id,city,region,sector,company_type,size_class,description,declared_capital,currency_id,government_entity_id,logo_url,created_by)
@@ -528,6 +529,41 @@ begin
 end;
 $function$;
 
+
+alter table public.companies drop constraint if exists companies_government_entity_fk;
+alter table public.companies add constraint companies_government_entity_fk foreign key(government_entity_id) references public.ministries(id) on delete restrict;
+
+create table if not exists public.employment_payout_accounts (
+ contract_id uuid primary key references public.employment_contracts(id) on delete restrict,
+ employee_profile_id uuid not null references public.profiles(id) on delete restrict,
+ account_id uuid not null references public.bank_accounts(id) on delete restrict,
+ authorized_at timestamptz not null default now(),
+ unique(contract_id,account_id)
+);
+alter table public.employment_payout_accounts enable row level security;
+drop policy if exists employment_payout_accounts_read on public.employment_payout_accounts;
+create policy employment_payout_accounts_read on public.employment_payout_accounts for select to authenticated
+using(employee_profile_id=auth.uid() or public.is_world_admin() or exists(select 1 from public.employment_contracts c where c.id=contract_id and public.is_company_member(c.company_id,'payroll.manage')));
+revoke all on public.employment_payout_accounts from public,anon,authenticated;
+grant select on public.employment_payout_accounts to authenticated;
+
+create or replace function public.set_my_employment_payout_account(p_contract_id uuid,p_account_id uuid)
+returns void language plpgsql security definer set search_path=public,auth as $function$
+declare c public.employment_contracts%rowtype; a public.bank_accounts%rowtype;
+begin
+ select * into c from public.employment_contracts where id=p_contract_id and employee_profile_id=auth.uid() and status='active';
+ if not found then raise exception 'Vínculo ativo não encontrado.'; end if;
+ select * into a from public.bank_accounts where id=p_account_id and owner_profile_id=auth.uid() and status='active';
+ if not found or a.currency_id<>c.currency_id or a.country_id<>(select country_id from public.companies where id=c.company_id) then raise exception 'A conta precisa pertencer ao funcionário, estar ativa e usar a moeda nacional do contrato.'; end if;
+ insert into public.employment_payout_accounts(contract_id,employee_profile_id,account_id)
+ values(c.id,auth.uid(),a.id)
+ on conflict(contract_id) do update set account_id=excluded.account_id,authorized_at=now();
+ perform public.company_audit(c.company_id,'salary_account_authorized','employment_payout_account',c.id,jsonb_build_object('account_id',a.id));
+end;
+$function$;
+revoke all on function public.set_my_employment_payout_account(uuid,uuid) from public,anon;
+grant execute on function public.set_my_employment_payout_account(uuid,uuid) to authenticated;
+
 create or replace function public.company_pay_salary(p_payroll_id uuid,p_from_account uuid,p_employee_account uuid,p_idempotency_key text)
 returns uuid language plpgsql security definer set search_path=public,auth as $function$
 declare p public.payroll_records%rowtype; src public.bank_accounts%rowtype; dst public.bank_accounts%rowtype; b public.commercial_banks%rowtype; v_id uuid; v_source_after numeric; v_dest_after numeric; v_existing public.salary_payments%rowtype;
@@ -543,6 +579,8 @@ begin
  select * into dst from public.bank_accounts where id=p_employee_account for update;
  if src.id is null or src.owner_company_id<>p.company_id or src.status<>'active' then raise exception 'Conta empresarial de origem inválida ou inativa.'; end if;
  if dst.id is null or dst.owner_profile_id<>p.employee_profile_id or dst.status<>'active' then raise exception 'Conta de destino não pertence ao funcionário ou está inativa.'; end if;
+ if not exists(select 1 from public.employment_payout_accounts pa where pa.contract_id=p.contract_id and pa.employee_profile_id=p.employee_profile_id and pa.account_id=dst.id) then raise exception 'O funcionário ainda não autorizou esta conta para receber salário.'; end if;
+ if not exists(select 1 from public.commercial_banks bx where bx.id=dst.bank_id and bx.status='active') then raise exception 'Banco da conta do funcionário indisponível.'; end if;
  if src.currency_id<>p.currency_id or dst.currency_id<>p.currency_id then raise exception 'Moeda das contas deve ser igual à moeda da folha.'; end if;
  select * into b from public.commercial_banks where id=src.bank_id and status='active'; if not found then raise exception 'Banco de origem indisponível.'; end if;
  if src.balance<p.net_amount then raise exception 'Saldo empresarial insuficiente. Folha não paga.'; end if;
@@ -636,7 +674,7 @@ begin
    'request_company_registration','admin_review_company','company_upsert_department','company_upsert_position','company_manage_member',
    'company_open_job','citizen_apply_job','company_review_application','respond_employment_offer','company_terminate_employment',
    'company_create_payroll','company_approve_payroll','company_pay_salary','company_record_financial_event',
-   'company_create_tax_record','admin_validate_company_tax','open_company_bank_account'
+   'company_create_tax_record','admin_validate_company_tax','open_company_bank_account','set_my_employment_payout_account'
   )
  loop execute format('revoke all on function %s from public,anon',f.signature); execute format('grant execute on function %s to authenticated',f.signature); end loop;
 end $$;
