@@ -527,7 +527,7 @@ begin
           order by country_id,period_end desc
         ) latest),
         'currency_mismatched_countries',(select count(*) from public.national_treasuries t
-          where t.opening_balance_currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED')
+          where (t.opening_balance>0 and t.opening_balance_currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))
             or exists(select 1 from public.treasury_ledger_entries x where x.country_id=t.country_id
               and x.currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))),
         'treasury_total',(select sum(t.opening_balance + coalesce(l.total,0)) from public.national_treasuries t
