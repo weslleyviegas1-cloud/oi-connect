@@ -165,7 +165,7 @@ grant select on public.bank_cash_wallets,public.bank_cash_wallet_transactions to
 create or replace function public.admin_allocate_issued_money_to_wallet(
  p_profile_id uuid,p_amount numeric,p_reason text,p_idempotency_key text
 ) returns uuid language plpgsql security definer set search_path=public,auth as $function$
-declare p public.profiles%rowtype; v_currency uuid; v_code text; v_wallet uuid; v_balance numeric; v_issued numeric; v_committed numeric; v_key text; v_existing public.bank_cash_wallet_transactions%rowtype;
+declare p public.profiles%rowtype; v_currency uuid; v_code text; v_wallet uuid; v_balance numeric; v_issued numeric; v_pending numeric; v_committed numeric; v_key text; v_existing public.bank_cash_wallet_transactions%rowtype;
 begin
  if not public.is_world_admin() then raise exception 'Somente o Super Admin pode distribuir moeda emitida.'; end if;
  if p_amount is null or p_amount<=0 or p_amount<>round(p_amount,6) or length(trim(coalesce(p_reason,'')))<5 or length(trim(coalesce(p_idempotency_key,'')))<12 then raise exception 'Valor, justificativa ou chave de idempotência inválidos.'; end if;
@@ -188,14 +188,15 @@ begin
  perform pg_advisory_xact_lock(hashtextextended(p.country_id::text||':'||v_currency::text,0));
  select coalesce(sum(case when operation_type='issuance' then amount else -amount end),0)
  into v_issued from public.money_supply_records where country_id=p.country_id and currency_id=v_currency;
+ select coalesce(sum(amount),0) into v_pending from public.monetary_withdrawals where country_id=p.country_id and currency_id=v_currency and status='pending';
  select
   coalesce((select sum(balance) from public.bank_accounts where country_id=p.country_id and currency_id=v_currency),0)
  +coalesce((select sum(l.balance) from public.bank_liquidity l join public.commercial_banks b on b.id=l.bank_id where b.country_id=p.country_id and l.currency_id=v_currency),0)
  +coalesce((select sum(balance) from public.bank_cash_wallets where country_id=p.country_id and currency_id=v_currency),0)
  +coalesce((select sum(t.opening_balance+coalesce((select sum(e.signed_amount) from public.treasury_ledger_entries e where e.country_id=t.country_id and e.currency_code_snapshot=v_code),0)) from public.national_treasuries t where t.country_id=p.country_id and t.currency_code=v_code),0)
  into v_committed;
- if v_issued-v_committed<p_amount then
-  raise exception 'Oferta monetária disponível insuficiente. Emissão líquida: %, já distribuído ou depositado: %, solicitado: %.',v_issued,v_committed,p_amount;
+ if v_issued-v_pending-v_committed<p_amount then
+  raise exception 'Oferta monetária disponível insuficiente após reservas de retiradas pendentes. Emissão líquida: %, retiradas pendentes: %, já distribuído ou depositado: %, solicitado: %.',v_issued,v_pending,v_committed,p_amount;
  end if;
  insert into public.bank_cash_wallets(profile_id,country_id,currency_id,balance)
  values(p.id,p.country_id,v_currency,p_amount)
