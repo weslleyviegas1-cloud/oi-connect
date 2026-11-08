@@ -51,6 +51,9 @@ begin
  if length(trim(coalesce(p_name,'')))<3 or upper(trim(coalesce(p_identifier,''))) !~ '^[A-Z0-9][A-Z0-9._-]{2,39}$' then
   raise exception 'Nome ou identificador institucional inválido.';
  end if;
+ if not exists(select 1 from public.countries co join public.currencies cu on cu.internal_code=co.currency_code and cu.status='active' where co.id=p_country_id) then
+  raise exception 'O país precisa ter moeda nacional ativa configurada na Etapa 7 antes da solicitação.';
+ end if;
  if exists(select 1 from public.central_banks where country_id=p_country_id and is_primary) then
   raise exception 'Este país já possui um Banco Central principal.';
  end if;
@@ -475,9 +478,10 @@ begin
    from public.bank_cash_wallet_transactions t join public.bank_cash_wallets w on w.id=t.wallet_id where w.profile_id=auth.uid()),'[]'::jsonb),
   'accounts',coalesce((select jsonb_agg(jsonb_build_object('id',a.id,'bank_id',a.bank_id,'bank_name',b.name,'bank_identifier',b.bank_identifier,'account_number',a.account_number,'account_type',a.account_type,'status',a.status,'balance',a.balance,'currency_id',a.currency_id,'currency_code',c.internal_code,'currency_symbol',c.symbol,'country_id',a.country_id) order by a.created_at desc)
    from public.bank_accounts a join public.commercial_banks b on b.id=a.bank_id join public.currencies c on c.id=a.currency_id where a.owner_profile_id=auth.uid()),'[]'::jsonb),
-  'banks',coalesce((select jsonb_agg(jsonb_build_object('id',b.id,'name',b.name,'identifier',b.bank_identifier,'country_id',b.country_id,'country_name',co.name,'type',b.bank_type,'status',b.status) order by b.name)
+  'banks',coalesce((select jsonb_agg(jsonb_build_object('id',b.id,'name',b.name,'identifier',b.bank_identifier,'country_id',b.country_id,'country_name',co.name,'type',b.bank_type,'status',b.status,'currency_id',(select a.currency_id from public.country_currency_assignments a where a.country_id=b.country_id and a.effective_until is null order by a.effective_from desc limit 1),'currency_code',(select cu.internal_code from public.country_currency_assignments a join public.currencies cu on cu.id=a.currency_id where a.country_id=b.country_id and a.effective_until is null order by a.effective_from desc limit 1)) order by b.name)
    from public.commercial_banks b join public.countries co on co.id=b.country_id where (b.status='active' or public.is_world_admin())
-   and (public.is_world_admin() or exists(select 1 from public.profiles p where p.id=auth.uid() and p.country_id=b.country_id))),'[]'::jsonb),
+   and (public.is_world_admin() or public.is_bank_member(b.id) or exists(select 1 from public.profiles p where p.id=auth.uid() and p.country_id=b.country_id))),'[]'::jsonb),
+  'bank_memberships',coalesce((select jsonb_agg(jsonb_build_object('bank_id',m.bank_id,'permissions',m.permissions,'status',m.status) order by m.created_at desc) from public.bank_members m where m.profile_id=auth.uid() and m.status='active'),'[]'::jsonb),
   'countries',coalesce((select jsonb_agg(jsonb_build_object('id',c.id,'name',c.name) order by c.name) from public.countries c where c.is_active and public.is_world_admin()),'[]'::jsonb),
   'transactions',coalesce((select jsonb_agg(jsonb_build_object('id',t.id,'account_id',t.account_id,'type',t.transaction_type,'amount',t.amount,'currency_id',t.currency_id,'balance_after',t.balance_after,'description',t.description,'created_at',t.created_at,'status',t.status) order by t.created_at desc)
    from public.bank_transactions t join public.bank_accounts a on a.id=t.account_id where a.owner_profile_id=auth.uid()),'[]'::jsonb),
