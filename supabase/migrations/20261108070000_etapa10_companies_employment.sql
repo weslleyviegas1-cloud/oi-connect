@@ -674,7 +674,7 @@ begin
  select * into c from public.companies where id=p_company_id and status='active'; if not found then raise exception 'Empresa não está ativa.'; end if;
  select * into b from public.commercial_banks where id=p_bank_id and country_id=c.country_id and status='active'; if not found then raise exception 'Banco ativo do país da empresa não encontrado.'; end if;
  if not exists(select 1 from public.currencies where id=p_currency_id and status='active' and internal_code=(select currency_code from public.countries where id=c.country_id)) then raise exception 'Conta empresarial deve usar a moeda nacional vigente.'; end if;
- if exists(select 1 from public.bank_accounts where owner_company_id=c.id and bank_id=b.id and currency_id=p_currency_id and status<>'closed') then raise exception 'A empresa já possui conta aberta neste banco e moeda.'; end if;
+ if exists(select 1 from public.bank_accounts where owner_company_id=c.id and bank_id=b.id and currency_id=p_currency_id) then raise exception 'A empresa já possui ou já encerrou uma conta neste banco e moeda; não é permitido duplicar a titularidade.'; end if;
  v_number:=lpad((floor(random()*89999999)+10000000)::bigint::text,8,'0');
  insert into public.bank_accounts(bank_id,owner_company_id,country_id,currency_id,account_number,account_type,status,balance)
  values(b.id,c.id,c.country_id,p_currency_id,v_number,'business','active',0) returning id into v_id;
