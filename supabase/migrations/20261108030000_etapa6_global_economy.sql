@@ -553,6 +553,25 @@ grant select on public.national_treasuries,public.economic_gdp_records,public.ec
   public.tax_collections,public.treasury_ledger_entries,public.budget_plans,public.budget_allocations,
   public.public_investment_projects,public.economic_audit_logs to authenticated;
 
+create or replace function public.has_any_economy_scoped_access(p_country_id uuid)
+returns boolean language sql stable security definer set search_path=public,auth as $$
+  select auth.uid() is not null and exists(
+    select 1 from public.government_members gm
+    join public.government_member_permissions gp on gp.member_id=gm.id and gp.country_id=gm.country_id
+    join public.profiles member_profile on member_profile.id=gm.profile_id
+      and coalesce(member_profile.account_status,'active')='active'
+      and member_profile.registration_status='active'
+    where gm.profile_id=auth.uid() and gm.country_id=p_country_id and gm.status='active'
+      and gp.permission_key in ('economy.manage','budget.read','budget.manage','investment.read','investment.manage',
+        'treasury.read','treasury.expense','treasury.revenue','tax.read','tax.manage')
+      and (
+        gp.scope_type='country'
+        or (gp.scope_type='ministry' and gp.scope_id=gm.ministry_id)
+        or (gp.scope_type='department' and gp.scope_id=gm.department_id)
+      )
+  );
+$$;
+
 create or replace function public.get_economy_dashboard(p_country_id uuid default null)
 returns jsonb language plpgsql stable security definer set search_path=public,auth as $$
 declare v_country uuid:=p_country_id; v_result jsonb;
@@ -617,6 +636,7 @@ begin
               lag((sum((o.price/base.price)*w.weight)/nullif(sum(w.weight),0))*100) over(order by reference_date) as old_ipc
             from public.economic_price_observations o
             join public.economic_price_items i on i.id=o.item_id and i.is_active
+            join lateral(select weight from public.economic_price_item_weights wh where wh.item_id=i.id and wh.effective_from<=o.reference_date order by wh.effective_from desc limit 1) w on true
             join lateral(select price from public.economic_price_observations b where b.item_id=i.id order by b.reference_date limit 1) base on true
             where o.country_id=c.id group by reference_date
             having count(distinct o.item_id)=(select count(*) from public.economic_price_items ai where ai.country_id=c.id and ai.is_active)
@@ -654,9 +674,25 @@ begin
       or public.is_government_country_citizen(v_country)
     ) then raise exception 'Sem permissão para consultar a economia deste país.'; end if;
   end if;
+  if not public.is_world_admin() and not public.is_country_president(v_country)
+    and not public.has_economy_permission(v_country,'economy.read')
+    and not public.has_economy_permission(v_country,'economy.manage')
+    and not public.is_government_country_citizen(v_country) then
+    select jsonb_build_object('scope','national','restricted_scope',true,'country_id',c.id,'country_name',c.name,
+      'country_flag',c.flag,'currency_code',t.currency_code,'currency_label',t.currency_label,
+      'operations_suspended',t.operations_suspended,
+      'currency_consistent',((t.opening_balance=0 or t.opening_balance_currency_code_snapshot=coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))
+        and not exists(select 1 from public.treasury_ledger_entries x where x.country_id=c.id
+          and x.currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED')),
+      'treasury_balance',null,'gdp',null,'gdp_growth',null,'inflation',null,'ipc',null,'inflation_history','[]'::jsonb,
+      'revenue',null,'expenses',null,'tax_collected',null,'tax_open',null,'budget_approved',null,
+      'budget_executed',null,'budget_available',null,'budget_execution_pct',null,'investment_approved',null)
+    into v_result from public.countries c join public.national_treasuries t on t.country_id=c.id where c.id=v_country;
+    return v_result;
+  end if;
   select jsonb_build_object(
     'scope','national','country_id',c.id,'country_name',c.name,'country_flag',c.flag,
-    'currency_code',t.currency_code,'currency_label',t.currency_label,
+    'currency_code',t.currency_code,'currency_label',t.currency_label,'operations_suspended',t.operations_suspended,
     'currency_consistent',((t.opening_balance=0 or t.opening_balance_currency_code_snapshot=coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))
       and not exists(select 1 from public.treasury_ledger_entries x where x.country_id=c.id
         and x.currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))),
@@ -1129,8 +1165,10 @@ $$;
 revoke all on function public.can_manage_economy(uuid,text) from public,anon;
 revoke all on function public.has_economy_scope_permission(uuid,text,uuid) from public,anon,authenticated;
 revoke all on function public.has_economy_read_scope_permission(uuid,text,uuid) from public,anon;
+revoke all on function public.has_any_economy_scoped_access(uuid) from public,anon;
 revoke all on function public.has_economy_allocation_read_permission(uuid,text,uuid) from public,anon;
 grant execute on function public.has_economy_read_scope_permission(uuid,text,uuid) to authenticated;
+grant execute on function public.has_any_economy_scoped_access(uuid) to authenticated;
 grant execute on function public.has_economy_allocation_read_permission(uuid,text,uuid) to authenticated;
 revoke all on function public.has_economy_permission(uuid,text) from public,anon;
 grant execute on function public.has_economy_permission(uuid,text) to authenticated;
