@@ -225,7 +225,7 @@ export function CitizenPortal({ profileId, notify, initialTab = "overview" }: { 
           {memberships.length > 0 && <section className="we-panel"><header><h2><ShieldCheck/> Vínculos governamentais</h2></header>{memberships.map(item => <article className="we-citizen-event" key={item.id}><div><b>{item.position}</b><small>Nomeação em {dateLabel(item.appointed_at)}</small></div><span className="we-tag">Ativo</span></article>)}</section>}
           <div className="we-citizen-grid">
             <article className="we-panel"><header><h2><ShieldCheck/> Situação</h2></header><strong>{statusLabel[profile.citizen_status] ?? profile.citizen_status ?? "Ativo"}</strong><small className="we-citizen-muted">Situação da conta: {statusLabel[profile.account_status] ?? profile.account_status}</small></article>
-            <article className="we-panel"><header><h2><Wallet/> Vínculos futuros</h2></header><strong>Emprego e banco</strong><small className="we-citizen-muted">As informações serão conectadas quando as respectivas etapas forem implementadas.</small></article>
+            <article className="we-panel"><header><h2><Wallet/> Serviços disponíveis</h2></header><strong>Empresas e bancos</strong><small className="we-citizen-muted">Consulte seus vínculos profissionais no módulo Empresas e suas contas e extratos no módulo Bancos.</small></article>
           </div>
         </>}
 
