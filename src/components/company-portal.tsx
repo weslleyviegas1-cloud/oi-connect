@@ -59,7 +59,7 @@ export function CompanyPortal({profile,notify}:Props){
   finally{setLoading(false);}
  },[notify]);
  useEffect(()=>{void load();},[load]);
- useEffect(()=>{if(!selected&&companies.length)setSelected(companies[0].id);},[companies,selected]);
+ useEffect(()=>{const first=companies[0];if(!selected&&first?.id)setSelected(first.id);},[companies,selected]);
  useEffect(()=>{const country=countries.find(x=>x.id===profile.country_id);const cur=currencies.find(x=>x.internal_code===country?.currency_code);if(cur&&!currencyId)setCurrencyId(cur.id);},[countries,currencies,profile.country_id,currencyId]);
  const call=async(fn:string,args:Row,msg:string)=>{setBusy(true);try{const {error}=await supabase.rpc(fn as never,args as never);if(error)throw error;notify(msg);await load();return true;}catch(e){notify("Operação não concluída: "+(e instanceof Error?e.message:"erro desconhecido"));return false;}finally{setBusy(false);}};
  const submit=(e:FormEvent,fn:string,args:Row,msg:string)=>{e.preventDefault();void call(fn,args,msg);};
@@ -85,7 +85,7 @@ export function CompanyPortal({profile,notify}:Props){
  if(loading)return <div className="we-empty">Carregando empresas, vagas, contratos e folha…</div>;
  return <div className="we-company">
   <section className="we-company-indicators"><b>Indicadores do mercado de trabalho</b><div className="we-company-stats"><span><b>{indicators?.companies_active??"—"}</b><small>Empresas ativas</small></span><span><b>{indicators?.employees_active??"—"}</b><small>Funcionários ativos</small></span><span><b>{indicators?.open_positions??"—"}</b><small>Vagas disponíveis</small></span></div></section>
-  <nav className="we-company-tabs">{[["companies","Empresas"],["jobs","Vagas"],["contracts","Contratos"],["payroll","Folha"],["finance","Finanças e tributos"],["life","Minha vida profissional"]].map(([id,name])=><button key={id} className={tab===id?"active":""} onClick={()=>setTab(id)}>{name}</button>)}</nav>
+  <nav className="we-company-tabs">{[{id:"companies",name:"Empresas"},{id:"jobs",name:"Vagas"},{id:"contracts",name:"Contratos"},{id:"payroll",name:"Folha"},{id:"finance",name:"Finanças e tributos"},{id:"life",name:"Minha vida profissional"}].map(item=><button key={item.id} className={tab===item.id?"active":""} onClick={()=>setTab(item.id)}>{item.name}</button>)}</nav>
   {tab==="companies"&&<div className="we-company-grid"><section className="we-company-panel"><h2><Building2/> Empresas</h2>
    {companies.map(c=><button key={c.id} className={"we-company-choice "+(selected===c.id?"selected":"")} onClick={()=>setSelected(c.id)}><b>{c.trade_name||c.legal_name}</b><small>{c.company_identifier} · {statusLabel(c.status)} · {c.countries?.name}</small></button>)}
    {company&&<div className="we-company-detail"><h3>{company.trade_name||company.legal_name}</h3><p>{company.description||"Sem descrição."}</p><div className="we-company-stats"><span><b>{ownedContracts.filter(x=>x.status==="active").length}</b><small>Funcionários</small></span><span><b>{ownedJobs.filter(x=>x.status==="open").length}</b><small>Vagas abertas</small></span><span><b>{money(ownedPayroll.reduce((n,x)=>n+Number(x.net_amount||0),0),code(company.currency_id))}</b><small>Folha registrada</small></span></div>
