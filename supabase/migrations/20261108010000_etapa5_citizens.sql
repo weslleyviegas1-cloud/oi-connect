@@ -470,4 +470,29 @@ grant execute on function public.get_country_citizens(uuid,text) to authenticate
 grant execute on function public.admin_list_nationality_change_requests() to authenticated;
 grant execute on function public.admin_review_nationality_change(uuid,text,text) to authenticated;
 
+
+-- Mantém a data de ingresso no país coerente com qualquer alteração autorizada de country_id.
+create or replace function public.track_citizen_country_joined_at()
+returns trigger
+language plpgsql
+security definer
+set search_path=public
+as $
+begin
+  if new.country_id is distinct from old.country_id then
+    new.country_joined_at := case when new.country_id is null then null else now() end;
+  elsif new.country_id is not null and new.country_joined_at is null then
+    new.country_joined_at := now();
+  end if;
+  return new;
+end;
+$;
+
+drop trigger if exists profiles_track_country_joined_at on public.profiles;
+create trigger profiles_track_country_joined_at
+before update of country_id on public.profiles
+for each row execute function public.track_citizen_country_joined_at();
+
+revoke all on function public.track_citizen_country_joined_at() from public,anon,authenticated;
+
 commit;
