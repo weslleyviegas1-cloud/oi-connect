@@ -607,13 +607,18 @@ grant execute on function public.get_my_bank_dashboard() to authenticated;
 
 create or replace function public.admin_review_monetary_withdrawal(p_request_id uuid,p_approve boolean,p_note text)
 returns void language plpgsql security definer set search_path=public,auth as $function$
-declare r public.monetary_withdrawals%rowtype; v_supply numeric; v_pending numeric; v_committed numeric;
+declare r public.monetary_withdrawals%rowtype; v_supply numeric; v_pending numeric; v_committed numeric; v_code text;
 begin
  if not public.is_world_admin() then raise exception 'Somente o Super Admin pode aprovar retiradas.'; end if;
  select * into r from public.monetary_withdrawals where id=p_request_id for update;
  if not found or r.status<>'pending' then raise exception 'Solicitação inexistente ou já revisada.'; end if;
  if p_approve then
   perform 1 from public.central_banks where id=r.central_bank_id for update;
+  select internal_code into v_code from public.currencies where id=r.currency_id;
+  if exists(select 1 from public.national_treasuries t where t.country_id=r.country_id and t.opening_balance>0 and t.opening_balance_currency_code_snapshot<>v_code)
+   or exists(select 1 from public.treasury_ledger_entries e where e.country_id=r.country_id and e.currency_code_snapshot<>v_code) then
+   raise exception 'O Tesouro possui registros em unidade monetária divergente; concilie antes de retirar moeda.';
+  end if;
   select coalesce(sum(case when operation_type='issuance' then amount else -amount end),0)
    into v_supply from public.money_supply_records where country_id=r.country_id and currency_id=r.currency_id;
   select coalesce(sum(amount),0) into v_pending from public.monetary_withdrawals
@@ -622,6 +627,7 @@ begin
    coalesce((select sum(balance) from public.bank_accounts where country_id=r.country_id and currency_id=r.currency_id),0)
   +coalesce((select sum(w.balance) from public.bank_cash_wallets w where w.country_id=r.country_id and w.currency_id=r.currency_id),0)
   +coalesce((select sum(l.balance) from public.bank_liquidity l join public.commercial_banks b on b.id=l.bank_id where b.country_id=r.country_id and l.currency_id=r.currency_id),0)
+  +coalesce((select sum(t.opening_balance+coalesce((select sum(e.signed_amount) from public.treasury_ledger_entries e where e.country_id=t.country_id and e.currency_code_snapshot=v_code),0)) from public.national_treasuries t where t.country_id=r.country_id and t.currency_code=v_code),0)
   into v_committed;
   if r.amount>v_supply-v_pending or v_supply-v_pending-r.amount<v_committed then
    raise exception 'A retirada excederia a oferta monetária ainda disponível, considerando saldos em carteiras e bancos.';
