@@ -297,15 +297,16 @@ $$;
 create or replace function public.convert_currency_amount(
   p_amount numeric,p_from_currency_id uuid,p_to_currency_id uuid,p_at timestamptz default now()
 ) returns jsonb language plpgsql stable security definer set search_path=public,auth as $$
-declare r public.exchange_rates%rowtype; v_rate numeric(38,18); v_direct boolean; v_converted numeric(38,12);
+declare r public.exchange_rates%rowtype; v_rate numeric; v_direct boolean; v_converted numeric; v_to_decimals smallint;
 begin
   if auth.uid() is null then raise exception 'Autenticação necessária.'; end if;
   if p_amount is null or p_amount<0 or p_amount>999999999999999999999999::numeric then raise exception 'Valor de conversão inválido.'; end if;
   if p_from_currency_id is null or p_to_currency_id is null then raise exception 'Selecione as duas moedas.'; end if;
   if not exists(select 1 from public.currencies where id=p_from_currency_id and status='active')
     or not exists(select 1 from public.currencies where id=p_to_currency_id and status='active') then raise exception 'Moeda inexistente ou indisponível.'; end if;
+  select decimal_places into v_to_decimals from public.currencies where id=p_to_currency_id;
   if p_from_currency_id=p_to_currency_id then
-    return jsonb_build_object('amount',p_amount,'rate',1,'rate_id',null,'from_currency_id',p_from_currency_id,
+    return jsonb_build_object('amount',round(p_amount,v_to_decimals),'rate',1,'rate_id',null,'from_currency_id',p_from_currency_id,
       'to_currency_id',p_to_currency_id,'as_of',coalesce(p_at,now()),'direction','same');
   end if;
   select * into r from public.exchange_rates x where x.from_currency_id=p_from_currency_id and x.to_currency_id=p_to_currency_id
@@ -321,7 +322,7 @@ begin
     if not found then raise exception 'Não existe cotação vigente entre as moedas selecionadas.'; end if;
     v_rate:=1::numeric/r.rate;v_direct:=false;
   end if;
-  v_converted:=p_amount*v_rate;
+  v_converted:=round(p_amount*v_rate,v_to_decimals);
   return jsonb_build_object('amount',v_converted,'rate',v_rate,'rate_id',r.id,
     'from_currency_id',p_from_currency_id,'to_currency_id',p_to_currency_id,
     'as_of',coalesce(p_at,now()),'direction',case when v_direct then 'direct' else 'inverse' end);
