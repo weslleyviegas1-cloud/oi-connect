@@ -206,7 +206,7 @@ using(exists(select 1 from public.commercial_banks b where b.id=bank_id and b.st
 drop policy if exists bank_accounts_read on public.bank_accounts;
 drop policy if exists bank_members_read on public.bank_members;
 create policy bank_members_read on public.bank_members for select to authenticated using(profile_id=auth.uid() or public.is_world_admin() or public.is_bank_member(bank_id,'staff.manage'));
-drop policy if exists bank_accounts_read on public.bank_accounts for select to authenticated
+create policy bank_accounts_read on public.bank_accounts for select to authenticated
 using(owner_profile_id=auth.uid() or public.is_world_admin() or public.is_bank_member(bank_id,'account.read'));
 drop policy if exists bank_transactions_read on public.bank_transactions;
 create policy bank_transactions_read on public.bank_transactions for select to authenticated
