@@ -779,7 +779,7 @@ begin
  if p_ownership_percent is null or p_ownership_percent<=0 or p_ownership_percent>100 or p_ownership_percent<>round(p_ownership_percent,4) or p_owner_role not in ('owner','shareholder','founder') or p_status not in ('active','removed') then raise exception 'Participação societária inválida.'; end if;
  if not exists(select 1 from public.profiles p join public.companies c on c.id=p_company_id and c.country_id=p.country_id where p.id=p_profile_id and p.registration_status='active' and coalesce(p.account_status,'active')='active') then raise exception 'Sócio deve ser cidadão ativo do país da empresa.'; end if;
  select coalesce(sum(ownership_percent),0) into v_total from public.company_owners where company_id=p_company_id and status='active' and profile_id<>p_profile_id;
- if p_status='active' and v_total+p_ownership_percent>100 then raise exception 'A soma das participações societárias não pode exceder 100%.'; end if;
+ if p_status='active' and v_total+p_ownership_percent>100 then raise exception 'A soma das participações societárias não pode exceder 100%%.'; end if;
  insert into public.company_owners(company_id,profile_id,ownership_percent,owner_role,status,appointed_by)
  values(p_company_id,p_profile_id,p_ownership_percent,p_owner_role,p_status,auth.uid())
  on conflict(company_id,profile_id) do update set ownership_percent=excluded.ownership_percent,owner_role=excluded.owner_role,status=excluded.status,appointed_by=auth.uid()
@@ -874,7 +874,7 @@ begin
  else
   if p_exempt then raise exception 'Há regra tributária de folha ativa; não é permitido marcar isenção.'; end if;
   v_deduction:=round(p.gross_amount*v_total_rate/100,2);
-  if v_total_rate>100 then raise exception 'As alíquotas ativas de folha excedem 100%.'; end if;
+  if v_total_rate>100 then raise exception 'As alíquotas ativas de folha excedem 100%%.'; end if;
   if v_deduction>p.gross_amount then raise exception 'As alíquotas de folha excedem o salário bruto.'; end if;
   update public.payroll_records set deductions_amount=v_deduction,tax_calculation_status='reviewed' where id=p.id;
   for r in select * from public.tax_rules where country_id=(select country_id from public.companies where id=p.company_id)
