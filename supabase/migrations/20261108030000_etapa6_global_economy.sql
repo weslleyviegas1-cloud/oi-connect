@@ -13,7 +13,15 @@ returns boolean language sql stable security definer set search_path=public,auth
       and coalesce(member_profile.account_status,'active')='active'
       and member_profile.registration_status='active'
     where gm.profile_id=auth.uid() and gm.country_id=p_country_id and gm.status='active'
-      and gp.permission_key in (p_permission,'economy.manage')
+      and gp.permission_key in (p_permission,'economy.manage',
+              case p_permission
+                when 'tax.read' then 'tax.manage'
+                when 'budget.read' then 'budget.manage'
+                when 'investment.read' then 'investment.manage'
+                when 'treasury.read' then 'treasury.expense'
+                when 'economy.read' then 'economy.manage'
+                else '__no_implied_read_permission__'
+              end)
       and gp.scope_type='country'
       and exists(select 1 from public.countries c where c.id=p_country_id and c.is_active)
   );
@@ -330,7 +338,15 @@ returns boolean language sql stable security definer set search_path=public,auth
             and coalesce(member_profile.account_status,'active')='active'
             and member_profile.registration_status='active'
           where gm.profile_id=auth.uid() and gm.country_id=p_country_id and gm.status='active'
-            and gp.permission_key in (p_permission,'economy.manage')
+            and gp.permission_key in (p_permission,'economy.manage',
+              case p_permission
+                when 'tax.read' then 'tax.manage'
+                when 'budget.read' then 'budget.manage'
+                when 'investment.read' then 'investment.manage'
+                when 'treasury.read' then 'treasury.expense'
+                when 'economy.read' then 'economy.manage'
+                else '__no_implied_read_permission__'
+              end)
             and (
               gp.scope_type='country'
               or (p_ministry_id is not null and gp.scope_type='ministry'
@@ -357,7 +373,15 @@ returns boolean language sql stable security definer set search_path=public,auth
         and coalesce(member_profile.account_status,'active')='active'
         and member_profile.registration_status='active'
       where gm.profile_id=auth.uid() and gm.country_id=p_country_id and gm.status='active'
-        and gp.permission_key in (p_permission,'economy.manage')
+        and gp.permission_key in (p_permission,'economy.manage',
+              case p_permission
+                when 'tax.read' then 'tax.manage'
+                when 'budget.read' then 'budget.manage'
+                when 'investment.read' then 'investment.manage'
+                when 'treasury.read' then 'treasury.expense'
+                when 'economy.read' then 'economy.manage'
+                else '__no_implied_read_permission__'
+              end)
         and (
           (p_ministry_id is null and gp.scope_type='country')
           or (p_ministry_id is not null and gp.scope_type='country')
@@ -563,7 +587,7 @@ returns boolean language sql stable security definer set search_path=public,auth
       and member_profile.registration_status='active'
     where gm.profile_id=auth.uid() and gm.country_id=p_country_id and gm.status='active'
       and gp.permission_key in ('economy.manage','budget.read','budget.manage','investment.read','investment.manage',
-        'treasury.read','treasury.expense','treasury.revenue','tax.read','tax.manage')
+        'treasury.read','treasury.expense','treasury.revenue','tax.read','tax.manage','tax.collect')
       and (
         gp.scope_type='country'
         or (gp.scope_type='ministry' and gp.scope_id=gm.ministry_id)
