@@ -703,6 +703,7 @@ begin
   if not found then raise exception 'Obrigação não encontrada ou sem permissão.'; end if;
   if not public.can_manage_economy(o.country_id,'tax.collect') then raise exception 'Obrigação não encontrada ou sem permissão.'; end if;
   if p_amount<=0 or length(trim(coalesce(p_confirmation_reference,'')))<3 then raise exception 'Valor ou referência inválidos.'; end if;
+  perform 1 from public.national_treasuries where country_id=o.country_id for update;
   if o.status not in ('open','partially_paid','overdue','pending_confirmation') then raise exception 'Esta obrigação não aceita novas arrecadações.'; end if;
   select coalesce(sum(amount),0) into v_paid from public.tax_collections where obligation_id=o.id;
   if v_paid+p_amount>o.amount_due then raise exception 'A arrecadação excede o valor ainda devido.'; end if;
@@ -811,6 +812,7 @@ begin
     raise exception 'A alocação orçamentária não pertence a este país.'; end if;
   select t.opening_balance+coalesce(sum(x.signed_amount),0) into v_balance from public.treasury_ledger_entries x where x.country_id=p_country_id;
   if p_entry_type='revenue' then
+    if p_budget_allocation_id is not null then raise exception 'Receitas não podem ser vinculadas a alocações de despesas.'; end if;
     if not public.can_manage_economy(p_country_id,'treasury.revenue') then raise exception 'Sem permissão para registrar receita.'; end if;
   else
     if not public.can_manage_economy(p_country_id,'treasury.expense') then raise exception 'Sem permissão para registrar despesa.'; end if;
@@ -854,6 +856,7 @@ begin
   if not public.is_world_admin() then raise exception 'Somente o Super Admin pode estornar lançamentos.'; end if;
   select * into e from public.treasury_ledger_entries where id=p_entry_id for update;
   if not found then raise exception 'Lançamento não encontrado.'; end if;
+  perform 1 from public.national_treasuries where country_id=e.country_id for update;
   if e.source_type='tax_collection' then raise exception 'Arrecadação tributária exige procedimento próprio de retificação; estorno genérico bloqueado.'; end if;
   if e.entry_type='reversal' then raise exception 'Um estorno não pode ser estornado por este procedimento.'; end if;
   if length(trim(coalesce(p_reason,'')))<3 or length(trim(coalesce(p_idempotency_key,'')))<8 then raise exception 'Informe o motivo e uma chave de estorno válida.'; end if;
