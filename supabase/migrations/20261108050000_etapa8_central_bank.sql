@@ -387,6 +387,7 @@ begin
   select * into b from public.central_banks where id=p_bank_id and status='active' for update;
   if not found then raise exception 'Banco Central indisponível.'; end if;
   if not public.has_central_bank_permission(b.country_id,'withdrawal.request') then raise exception 'Sem permissão para solicitar retirada.'; end if;
+  select * into s from public.central_bank_settings where central_bank_id=b.id;
   select coalesce(sum(case when operation_type='issuance' then amount else -amount end),0) into v_supply from public.money_supply_records where country_id=b.country_id;
   select coalesce(sum(amount),0) into v_pending from public.monetary_withdrawals where country_id=b.country_id and status='pending';
   if p_amount>v_supply-v_pending then raise exception 'A retirada supera a oferta monetária disponível.'; end if;
