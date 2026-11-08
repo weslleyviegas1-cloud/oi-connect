@@ -31,6 +31,7 @@ export function EconomyPortal({ profile, notify }: Props) {
   const [budgets, setBudgets] = useState<Row[]>([]);
   const [allocations, setAllocations] = useState<Row[]>([]);
   const [projects, setProjects] = useState<Row[]>([]);
+  const [ministries, setMinistries] = useState<Row[]>([]);
   const [treasury, setTreasury] = useState<Row | null>(null);
   const [permissions, setPermissions] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -69,16 +70,17 @@ export function EconomyPortal({ profile, notify }: Props) {
         leQuery = leQuery.eq("country_id", selected); buQuery = buQuery.eq("country_id", selected);
         alQuery = alQuery.eq("country_id", selected); prQuery = prQuery.eq("country_id", selected);
       }
-      const [dash, g, p, tr, ob, le, bu, al, pr, ts] = await Promise.all([
+      const [dash, g, p, tr, ob, le, bu, al, pr, ts, mi] = await Promise.all([
         supabase.rpc("get_economy_dashboard", { p_country_id: selected }),
         gQuery, pQuery, trQuery, obQuery, leQuery, buQuery, alQuery, prQuery,
         selected ? supabase.from("national_treasuries").select("*").eq("country_id", selected).maybeSingle() : Promise.resolve({ data: null, error: null }),
+        selected ? supabase.from("ministries").select("id,name").eq("country_id", selected).eq("status","active").order("name") : Promise.resolve({ data: [], error: null }),
       ]);
       if (dash.error) throw dash.error;
       setDashboard(dash.data);
       setGdp(g.data ?? []); setPrices(p.data ?? []); setTaxRules(tr.data ?? []);
       setObligations(ob.data ?? []); setLedger(le.data ?? []); setBudgets(bu.data ?? []);
-      setAllocations(al.data ?? []); setProjects(pr.data ?? []); setTreasury(ts.data);
+      setAllocations(al.data ?? []); setProjects(pr.data ?? []); setTreasury(ts.data); setMinistries(mi.data ?? []);
     } catch (error) {
       notify(error instanceof Error ? error.message : "Não foi possível carregar a economia.");
     } finally { setLoading(false); }
@@ -161,8 +163,8 @@ export function EconomyPortal({ profile, notify }: Props) {
           {canManage && countryId && <button className="eco-secondary" onClick={()=>void invoke("set_treasury_public_visibility",{p_country_id:selectedCountryId,p_visible:!treasury?.public_balance_visible},"Visibilidade pública atualizada.")}>{treasury?.public_balance_visible ? "Ocultar saldo público" : "Tornar saldo do Tesouro público"}</button>}
         </section>}
         {tab === "budget" && <section className="eco-panel"><SectionTitle title="Orçamento Nacional" subtitle="Previsão e aprovação não movimentam dinheiro; a execução exige lançamento no Tesouro." onExport={() => exportCsv(budgets,"world-economy-orcamento.csv")}/>
-          {canBudget && <form className="eco-form" onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void invoke("create_budget_plan",{p_country_id:selectedCountryId,p_name:f.get("name"),p_period_start:f.get("start"),p_period_end:f.get("end"),p_allocations:[{category:f.get("category"),planned_amount:Number(f.get("amount"))}]},"Orçamento criado e enviado conforme a regra de aprovação.");e.currentTarget.reset();}}>
-            <h3>Elaborar orçamento</h3><div className="eco-grid-2"><Field label="Nome" name="name" required/><Field label="Categoria / Ministério" name="category" required/><Field label="Início" name="start" type="date" required/><Field label="Fim" name="end" type="date" required/><Field label="Valor previsto" name="amount" type="number" min="0" step="0.01" required/></div><button disabled={busy}>Criar orçamento</button>
+          {canBudget && <form className="eco-form" onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void invoke("create_budget_plan",{p_country_id:selectedCountryId,p_name:f.get("name"),p_period_start:f.get("start"),p_period_end:f.get("end"),p_allocations:[{category:f.get("category"),planned_amount:Number(f.get("amount")),ministry_id:f.get("ministry") || null}]},"Orçamento criado e enviado conforme a regra de aprovação.");e.currentTarget.reset();}}>
+            <h3>Elaborar orçamento</h3><div className="eco-grid-2"><Field label="Nome" name="name" required/><Field label="Categoria orçamentária" name="category" required/><label>Ministério responsável<select name="ministry"><option value="">Sem ministério específico</option>{ministries.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select></label><Field label="Início" name="start" type="date" required/><Field label="Fim" name="end" type="date" required/><Field label="Valor previsto" name="amount" type="number" min="0" step="0.01" required/></div><button disabled={busy}>Criar orçamento</button>
           </form>}
           <DataTable rows={budgets} columns={[["name","Orçamento"],["period_start","Início"],["period_end","Fim"],["total_planned","Previsto"],["status","Situação"]]}/>
           {isAdmin && <ReviewList rows={budgets.filter(x=>x.status==="awaiting_approval")} onReview={(id,decision)=>void invoke("review_budget_plan",{p_plan_id:id,p_decision:decision,p_note:"Revisão do Super Admin"},"Orçamento revisado.")}/>}
