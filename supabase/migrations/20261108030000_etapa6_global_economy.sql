@@ -82,6 +82,22 @@ create table if not exists public.economic_price_observations (
   created_at timestamptz not null default now(),
   unique(item_id,reference_date)
 );
+create table if not exists public.economic_price_observation_history (
+  id uuid primary key default gen_random_uuid(),
+  observation_id uuid not null references public.economic_price_observations(id) on delete restrict,
+  previous_price numeric(24,4) not null,
+  previous_recorded_by uuid references public.profiles(id),
+  revised_by uuid not null references public.profiles(id),
+  revised_at timestamptz not null default now()
+);
+alter table public.economic_price_observation_history enable row level security;
+drop policy if exists price_observation_history_read on public.economic_price_observation_history;
+create policy price_observation_history_read on public.economic_price_observation_history for select to authenticated
+using (exists(select 1 from public.economic_price_observations o where o.id=observation_id
+  and (public.is_world_admin() or public.is_country_president(o.country_id)
+    or public.has_government_permission(o.country_id,'economy.read',null,null))));
+revoke all on public.economic_price_observation_history from public,anon,authenticated;
+grant select on public.economic_price_observation_history to authenticated;
 
 create table if not exists public.tax_rules (
   id uuid primary key default gen_random_uuid(),
@@ -540,6 +556,9 @@ begin
   values(p_country_id,trim(p_name),trim(p_category),p_weight,auth.uid())
   on conflict(country_id,name) do update set category=excluded.category,updated_at=now()
   returning id into v_item;
+  insert into public.economic_price_observation_history(observation_id,previous_price,previous_recorded_by,revised_by)
+  select id,price,recorded_by,auth.uid() from public.economic_price_observations
+  where item_id=v_item and reference_date=p_reference_date;
   insert into public.economic_price_observations(item_id,country_id,reference_date,price,recorded_by)
   values(v_item,p_country_id,p_reference_date,p_price,auth.uid())
   on conflict(item_id,reference_date) do update set price=excluded.price,recorded_by=excluded.recorded_by;
