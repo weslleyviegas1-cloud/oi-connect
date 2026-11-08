@@ -82,7 +82,7 @@ create index if not exists exchange_rate_events_rate_idx on public.exchange_rate
 
 -- Sincroniza a unidade corrente do Tesouro com a atribuição nacional sem reescrever snapshots.
 create or replace function public.sync_treasury_currency_from_country()
-returns trigger language plpgsql security definer set search_path=public as $
+returns trigger language plpgsql security definer set search_path=public as $function$
 begin
   update public.national_treasuries
     set currency_code=new.currency_code,
@@ -91,7 +91,7 @@ begin
   where country_id=new.id;
   return new;
 end;
-$;
+$function$;
 drop trigger if exists countries_sync_treasury_currency on public.countries;
 create trigger countries_sync_treasury_currency after update of currency_code on public.countries
 for each row when (old.currency_code is distinct from new.currency_code)
