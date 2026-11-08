@@ -30,6 +30,8 @@ create table if not exists public.central_bank_creation_requests (
 );
 create unique index if not exists central_bank_creation_one_pending_country
  on public.central_bank_creation_requests(country_id) where status='pending';
+create unique index if not exists central_bank_creation_pending_identifier_uidx
+ on public.central_bank_creation_requests(lower(proposed_identifier)) where status='pending';
 create index if not exists central_bank_creation_requests_status_idx
  on public.central_bank_creation_requests(status,created_at desc);
 
@@ -56,11 +58,14 @@ begin
  if length(trim(coalesce(p_name,'')))<3 or upper(trim(coalesce(p_identifier,''))) !~ '^[A-Z0-9][A-Z0-9._-]{2,39}$' then
   raise exception 'Nome ou identificador institucional inválido.';
  end if;
- if not exists(select 1 from public.countries co join public.currencies cu on cu.internal_code=co.currency_code and cu.status='active' where co.id=p_country_id) then
+ if not exists(select 1 from public.countries co join public.currencies cu on cu.internal_code=co.currency_code and cu.status='active' join public.country_currency_assignments a on a.country_id=co.id and a.currency_id=cu.id and a.effective_until is null where co.id=p_country_id) then
   raise exception 'O país precisa ter moeda nacional ativa configurada na Etapa 7 antes da solicitação.';
  end if;
  if exists(select 1 from public.central_banks where country_id=p_country_id and is_primary) then
   raise exception 'Este país já possui um Banco Central principal.';
+ end if;
+ if exists(select 1 from public.central_banks where bank_identifier=upper(trim(p_identifier))) then
+  raise exception 'Este identificador já pertence a um Banco Central existente.';
  end if;
  if p_proposed_governor_profile_id is not null and not exists(
    select 1 from public.profiles p where p.id=p_proposed_governor_profile_id
@@ -163,7 +168,7 @@ create or replace function public.admin_allocate_issued_money_to_wallet(
 declare p public.profiles%rowtype; v_currency uuid; v_code text; v_wallet uuid; v_balance numeric; v_issued numeric; v_committed numeric; v_key text;
 begin
  if not public.is_world_admin() then raise exception 'Somente o Super Admin pode distribuir moeda emitida.'; end if;
- if p_amount is null or p_amount<=0 or length(trim(coalesce(p_reason,'')))<5 then raise exception 'Valor ou justificativa inválidos.'; end if;
+ if p_amount is null or p_amount<=0 or p_amount<>round(p_amount,6) or length(trim(coalesce(p_reason,'')))<5 then raise exception 'Valor ou justificativa inválidos.'; end if;
  select * into p from public.profiles where id=p_profile_id for update;
  if not found or p.country_id is null or p.registration_status<>'active' or coalesce(p.account_status,'active')<>'active' then raise exception 'Cidadão inexistente, inativo ou sem país associado.'; end if;
  select c.id into v_currency from public.currencies c join public.country_currency_assignments a on a.currency_id=c.id
@@ -203,7 +208,7 @@ create or replace function public.bank_deposit(
 declare a public.bank_accounts%rowtype; w public.bank_cash_wallets%rowtype; v_id uuid;
 begin
  if auth.uid() is null then raise exception 'Autenticação necessária.'; end if;
- if p_amount is null or p_amount<=0 or length(trim(coalesce(p_idempotency_key,'')))<12 then raise exception 'Valor ou chave de idempotência inválidos.'; end if;
+ if p_amount is null or p_amount<=0 or p_amount<>round(p_amount,6) or length(trim(coalesce(p_idempotency_key,'')))<12 then raise exception 'Valor ou chave de idempotência inválidos.'; end if;
  perform pg_advisory_xact_lock(hashtextextended(p_idempotency_key,0));
  select id into v_id from public.bank_transactions where idempotency_key=p_idempotency_key;
  if v_id is not null then return v_id; end if;
@@ -441,7 +446,7 @@ begin
  select * into v_policy from public.bank_credit_policies where bank_id=a.bank_id;
  if not found then v_policy.annual_interest_rate:=12; v_policy.max_term_months:=60; v_policy.enabled:=true; end if;
  if not v_policy.enabled then raise exception 'Este banco não está aceitando solicitações de crédito.'; end if;
- if p_amount is null or p_amount<=0 or p_term_months not between 1 and v_policy.max_term_months or length(trim(coalesce(p_purpose,'')))<5 then raise exception 'Dados de crédito inválidos.'; end if;
+ if p_amount is null or p_amount<=0 or p_amount<>round(p_amount,6) or p_term_months not between 1 and v_policy.max_term_months or length(trim(coalesce(p_purpose,'')))<5 then raise exception 'Dados de crédito inválidos.'; end if;
  insert into public.loan_applications(bank_id,applicant_profile_id,account_id,amount,currency_id,term_months,annual_interest_rate,installments_count,purpose)
  values(a.bank_id,auth.uid(),a.id,p_amount,a.currency_id,p_term_months,v_policy.annual_interest_rate,p_term_months,trim(p_purpose)) returning id into v_id;
  perform public.bank_audit(a.bank_id,'loan_requested','loan_application',v_id,jsonb_build_object('amount',p_amount,'term',p_term_months,'annual_rate',v_policy.annual_interest_rate));
@@ -454,7 +459,7 @@ returns void language plpgsql security definer set search_path=public,auth as $f
 declare a public.bank_accounts%rowtype; b public.commercial_banks%rowtype; v_balance numeric; v_key text;
 begin
  if auth.uid() is null then raise exception 'Autenticação necessária.'; end if;
- if p_amount is null or p_amount<=0 then raise exception 'Valor de capitalização inválido.'; end if;
+ if p_amount is null or p_amount<=0 or p_amount<>round(p_amount,6) then raise exception 'Valor de capitalização inválido.'; end if;
  select * into b from public.commercial_banks where id=p_bank_id and status='active' for update;
  if not found or not (public.is_world_admin() or public.is_bank_member(p_bank_id,'bank.manage')) then raise exception 'Banco ou permissão inválidos.'; end if;
  select * into a from public.bank_accounts where id=p_source_account for update;
