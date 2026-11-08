@@ -481,8 +481,8 @@ begin
         'inflation_average',(select round(avg(country_index.inflation),2) from (
           select c.id,(select case when old_ipc>0 then ((new_ipc-old_ipc)/old_ipc)*100 end from (
             select reference_date,
-              sum((o.price/base.price)*w.weight)/nullif(sum(w.weight),0) as new_ipc,
-              lag(sum((o.price/base.price)*w.weight)/nullif(sum(w.weight),0)) over(order by reference_date) as old_ipc
+              (sum((o.price/base.price)*w.weight)/nullif(sum(w.weight),0))*100 as new_ipc,
+              lag((sum((o.price/base.price)*w.weight)/nullif(sum(w.weight),0))*100) over(order by reference_date) as old_ipc
             from public.economic_price_observations o
             join public.economic_price_items i on i.id=o.item_id and i.is_active
             join lateral(select price from public.economic_price_observations b where b.item_id=i.id order by b.reference_date limit 1) base on true
@@ -559,10 +559,20 @@ begin
        from public.treasury_ledger_entries x where x.country_id=c.id and x.budget_allocation_id is not null)
       /sum(total_planned))*100,2) end from public.budget_plans where country_id=c.id and status in ('approved','in_execution')),
     'investment_approved',(select coalesce(sum(approved_amount),0) from public.public_investment_projects where country_id=c.id and status in ('approved','in_progress','completed')),
+    'ipc',(select round(new_ipc,2) from (
+      select reference_date,
+        (sum((o.price/base.price)*w.weight)/nullif(sum(w.weight),0))*100 as new_ipc
+      from public.economic_price_observations o
+      join public.economic_price_items i on i.id=o.item_id and i.is_active
+      join lateral(select weight from public.economic_price_item_weights wh where wh.item_id=i.id and wh.effective_from<=o.reference_date order by wh.effective_from desc limit 1) w on true
+      join lateral(select price from public.economic_price_observations b where b.item_id=i.id order by b.reference_date limit 1) base on true
+      where o.country_id=c.id group by reference_date
+      having count(distinct o.item_id)=(select count(*) from public.economic_price_items active_items where active_items.country_id=c.id and active_items.is_active)
+    ) ipc_values order by reference_date desc limit 1),
     'inflation',(select case when old_ipc>0 then round(((new_ipc-old_ipc)/old_ipc)*100,2) end from (
       select reference_date,
-        sum((o.price/base.price)*w.weight)/nullif(sum(w.weight),0) as new_ipc,
-        lag(sum((o.price/base.price)*w.weight)/nullif(sum(w.weight),0)) over(order by reference_date) as old_ipc
+        (sum((o.price/base.price)*w.weight)/nullif(sum(w.weight),0))*100 as new_ipc,
+        lag((sum((o.price/base.price)*w.weight)/nullif(sum(w.weight),0))*100) over(order by reference_date) as old_ipc
       from public.economic_price_observations o
       join public.economic_price_items i on i.id=o.item_id and i.is_active
       join lateral(select weight from public.economic_price_item_weights wh where wh.item_id=i.id and wh.effective_from<=o.reference_date order by wh.effective_from desc limit 1) w on true
