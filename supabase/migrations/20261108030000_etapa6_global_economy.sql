@@ -944,16 +944,24 @@ create or replace function public.create_budget_plan(
 ) returns uuid language plpgsql security definer set search_path=public,auth as $$
 declare v_id uuid; v_total numeric(24,2); v_status text;
 begin
-  if not public.can_manage_economy(p_country_id,'budget.manage') then raise exception 'Sem permissão para elaborar orçamento.'; end if;
-  if p_period_start>p_period_end or jsonb_typeof(p_allocations)<>'array' or jsonb_array_length(p_allocations)=0 then raise exception 'Período ou alocações inválidos.'; end if;
+  if p_period_start is null or p_period_end is null or p_period_start>p_period_end
+    or length(trim(coalesce(p_name,'')))<2 then raise exception 'Nome ou período do orçamento inválido.'; end if;
+  if p_allocations is null or jsonb_typeof(p_allocations)<>'array' then raise exception 'Informe as alocações do orçamento.'; end if;
+  if jsonb_array_length(p_allocations)=0 then raise exception 'Informe ao menos uma alocação orçamentária.'; end if;
   if exists(select 1 from jsonb_to_recordset(p_allocations) as x(category text,planned_amount numeric,ministry_id uuid)
-    where nullif(trim(category),'') is null or planned_amount is null or planned_amount<0) then raise exception 'Alocação inválida.'; end if;
+    where nullif(trim(category),'') is null or planned_amount is null or planned_amount<0) then
+    raise exception 'Alocação inválida.'; end if;
   if exists(select 1 from jsonb_to_recordset(p_allocations) as x(category text,planned_amount numeric,ministry_id uuid)
-    where ministry_id is not null and not exists(select 1 from public.ministries m where m.id=x.ministry_id and m.country_id=p_country_id)) then
-    raise exception 'Uma alocação referencia ministério de outro país.'; end if;
+    where ministry_id is not null and not exists(select 1 from public.ministries m
+      where m.id=x.ministry_id and m.country_id=p_country_id and m.status='active')) then
+    raise exception 'Uma alocação referencia ministério de outro país ou inativo.'; end if;
+  if exists(select 1 from jsonb_to_recordset(p_allocations) as x(category text,planned_amount numeric,ministry_id uuid)
+    where not public.has_economy_scope_permission(p_country_id,'budget.manage',ministry_id)) then
+    raise exception 'Sem permissão para uma ou mais alocações ministeriais deste orçamento.'; end if;
   select sum(planned_amount) into v_total from jsonb_to_recordset(p_allocations) as x(category text,planned_amount numeric,ministry_id uuid);
   select case when require_global_budget_approval then 'awaiting_approval' else 'approved' end into v_status
-  from public.national_treasuries where country_id=p_country_id;
+    from public.national_treasuries where country_id=p_country_id;
+  if v_status is null then raise exception 'Tesouro Nacional não encontrado.'; end if;
   insert into public.budget_plans(country_id,name,period_start,period_end,status,total_planned,created_by)
   values(p_country_id,trim(p_name),p_period_start,p_period_end,v_status,v_total,auth.uid()) returning id into v_id;
   insert into public.budget_allocations(budget_plan_id,country_id,category,planned_amount,ministry_id)
