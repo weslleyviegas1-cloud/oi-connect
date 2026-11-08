@@ -1,0 +1,181 @@
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type InputHTMLAttributes, type ReactNode } from "react";
+import { Activity, BarChart3, Coins, FileSpreadsheet, Landmark, RefreshCw, ShieldCheck, TrendingDown, TrendingUp, Wallet, XCircle } from "lucide-react";
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { supabase } from "@/lib/supabase";
+
+type Row = Record<string, any>;
+type Props = { profile: Row; notify: (message: string) => void };
+type Tab = "overview" | "gdp" | "prices" | "tax" | "treasury" | "budget" | "investments" | "reports";
+const tabs: { id: Tab; label: string }[] = [
+  { id: "overview", label: "Visão geral" }, { id: "gdp", label: "PIB" }, { id: "prices", label: "Inflação" },
+  { id: "tax", label: "Tributação" }, { id: "treasury", label: "Tesouro" }, { id: "budget", label: "Orçamento" },
+  { id: "investments", label: "Investimentos" }, { id: "reports", label: "Relatórios" },
+];
+const today = () => new Date().toISOString().slice(0, 10);
+const money = (value: unknown) => value == null ? "Dados insuficientes" : Number(value).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const date = (value: string) => value ? new Date(value + (value.length === 10 ? "T12:00:00" : "")).toLocaleDateString("pt-BR") : "—";
+
+export function EconomyPortal({ profile, notify }: Props) {
+  const isAdmin = profile?.role === "super_admin";
+  const isPresident = profile?.role === "president";
+  const [tab, setTab] = useState<Tab>("overview");
+  const [countries, setCountries] = useState<Row[]>([]);
+  const [countryId, setCountryId] = useState<string>(profile?.country_id ?? "");
+  const [dashboard, setDashboard] = useState<Row | null>(null);
+  const [gdp, setGdp] = useState<Row[]>([]);
+  const [prices, setPrices] = useState<Row[]>([]);
+  const [taxRules, setTaxRules] = useState<Row[]>([]);
+  const [obligations, setObligations] = useState<Row[]>([]);
+  const [ledger, setLedger] = useState<Row[]>([]);
+  const [budgets, setBudgets] = useState<Row[]>([]);
+  const [allocations, setAllocations] = useState<Row[]>([]);
+  const [projects, setProjects] = useState<Row[]>([]);
+  const [treasury, setTreasury] = useState<Row | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const canManage = isAdmin || isPresident;
+  const activeCountry = useMemo(() => countries.find(c => c.id === countryId), [countries, countryId]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      if (isAdmin) {
+        const c = await supabase.from("countries").select("id,name,flag,currency_code,is_active").order("name");
+        if (c.error) throw c.error;
+        setCountries(c.data ?? []);
+      }
+      const selected = isAdmin ? countryId || null : profile?.country_id ?? null;
+      const [dash, g, p, tr, ob, le, bu, al, pr, ts] = await Promise.all([
+        supabase.rpc("get_economy_dashboard", { p_country_id: selected }),
+        supabase.from("economic_gdp_records").select("*").order("period_end", { ascending: false }).limit(36),
+        supabase.from("economic_price_observations").select("*,economic_price_items(name,category,base_weight)").order("reference_date", { ascending: false }).limit(100),
+        supabase.from("tax_rules").select("*").order("created_at", { ascending: false }).limit(100),
+        supabase.from("tax_obligations").select("*").order("created_at", { ascending: false }).limit(100),
+        supabase.from("treasury_ledger_entries").select("*").order("created_at", { ascending: false }).limit(100),
+        supabase.from("budget_plans").select("*").order("created_at", { ascending: false }).limit(50),
+        supabase.from("budget_allocations").select("*").limit(200),
+        supabase.from("public_investment_projects").select("*").order("created_at", { ascending: false }).limit(100),
+        selected ? supabase.from("national_treasuries").select("*").eq("country_id", selected).maybeSingle() : Promise.resolve({ data: null, error: null }),
+      ]);
+      if (dash.error) throw dash.error;
+      setDashboard(dash.data);
+      setGdp(g.data ?? []); setPrices(p.data ?? []); setTaxRules(tr.data ?? []);
+      setObligations(ob.data ?? []); setLedger(le.data ?? []); setBudgets(bu.data ?? []);
+      setAllocations(al.data ?? []); setProjects(pr.data ?? []); setTreasury(ts.data);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Não foi possível carregar a economia.");
+    } finally { setLoading(false); }
+  }, [countryId, isAdmin, profile?.country_id, notify]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const invoke = async (name: string, args: Row, success: string) => {
+    setBusy(true);
+    try {
+      const result = await supabase.rpc(name as never, args as never);
+      if (result.error) throw result.error;
+      notify(success);
+      await load();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "A operação não foi concluída.");
+    } finally { setBusy(false); }
+  };
+
+  const exportCsv = (rows: Row[], filename: string) => {
+    if (!rows.length) { notify("Não há registros para exportar."); return; }
+    const keys = Object.keys(rows[0]);
+    const csv = [keys.join(";"), ...rows.map(row => keys.map(key => '"' + String(row[key] ?? "").replaceAll('"', '""') + '"').join(";"))].join("\n");
+    const url = URL.createObjectURL(new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" }));
+    const anchor = document.createElement("a"); anchor.href = url; anchor.download = filename; anchor.click(); URL.revokeObjectURL(url);
+  };
+  const selectedCountryId = isAdmin ? countryId : profile?.country_id ?? "";
+  const canCreate = canManage && !!selectedCountryId;
+
+  return <div className="eco-root">
+    <div className="eco-toolbar"><div><span className="eco-eyebrow">WORLD ECONOMY / ECONOMIA</span><h2>{isAdmin && !countryId ? "Economia Global" : "Economia Nacional"}</h2><p>{isAdmin ? "Supervisão consolidada dos países e dos Tesouros Nacionais." : isPresident ? "Administração econômica do seu país." : "Indicadores públicos da economia do seu país."}</p></div>
+      <div className="eco-toolbar-actions">{isAdmin && <select value={countryId} onChange={e => setCountryId(e.target.value)}><option value="">Visão global</option>{countries.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>}<button type="button" onClick={() => void load()} disabled={loading}><RefreshCw size={16}/> Atualizar</button></div>
+    </div>
+    <div className="eco-tabs">{tabs.map(item => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}>{item.label}</button>)}</div>
+    {loading ? <div className="eco-empty">Carregando dados econômicos...</div> : !dashboard ? <div className="eco-empty">Não há país vinculado ou dados econômicos disponíveis para esta conta.</div> :
+      <>
+        {tab === "overview" && <Overview dashboard={dashboard} countries={dashboard.countries ?? []} gdp={gdp}/>}
+        {tab === "gdp" && <section className="eco-panel"><SectionTitle title="Produto Interno Bruto" subtitle="O PIB soma somente componentes de produção registrados. Tesouro e transferências não entram no cálculo." onExport={() => exportCsv(gdp,"world-economy-pib.csv")}/>
+          {canCreate && <form className="eco-form" onSubmit={e => { e.preventDefault(); const f = new FormData(e.currentTarget); const sectors = [["industrial","Produção industrial"],["mining","Produção mineral"],["agriculture","Produção agrícola"],["services","Serviços"],["commerce","Comércio"],["construction","Construção e infraestrutura"],["other","Outras atividades"]]; const components = sectors.map(([key,label]) => ({ sector: label, amount: Number(f.get(key) || 0) })).filter(x => x.amount > 0); void invoke("save_gdp_record",{p_country_id:selectedCountryId,p_period_start:f.get("start"),p_period_end:f.get("end"),p_components:components,p_source_description:f.get("source") || "Registro manual autorizado"},"Registro do PIB salvo."); e.currentTarget.reset(); }}>
+            <h3>Novo registro manual</h3><div className="eco-grid-2"><Field label="Início do período" name="start" type="date" required/><Field label="Fim do período" name="end" type="date" required/></div>
+            <div className="eco-grid-2">{[["industrial","Produção industrial"],["mining","Produção mineral"],["agriculture","Produção agrícola"],["services","Serviços"],["commerce","Comércio"],["construction","Construção e infraestrutura"],["other","Outras atividades"]].map(([name,label])=><Field key={name} label={label+" (unidades monetárias)"} name={name} type="number" min="0" step="0.01" defaultValue="0"/>)}</div><Field label="Fonte / observação" name="source" placeholder="Registro manual do governo"/><button disabled={busy}>Salvar PIB calculado</button>
+          </form>}
+          <div className="eco-chart"><ResponsiveContainer width="100%" height={260}><LineChart data={[...gdp].reverse()}><CartesianGrid strokeDasharray="3 3" opacity={.15}/><XAxis dataKey="period_end"/><YAxis/><Tooltip formatter={(v: any) => money(v)}/><Line type="monotone" dataKey="total_value" stroke="#39a9ff" strokeWidth={2} dot={false}/></LineChart></ResponsiveContainer></div>
+          <DataTable rows={gdp} columns={[["period_start","Início"],["period_end","Fim"],["total_value","PIB"],["source","Fonte"],["status","Situação"]]}/>
+        </section>}
+        {tab === "prices" && <section className="eco-panel"><SectionTitle title="Preços e inflação simulada" subtitle="IPC calculado a partir das observações de preços e pesos cadastrados; sem base suficiente, a inflação não é exibida."/>
+          {canCreate && <form className="eco-form" onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void invoke("save_price_item",{p_country_id:selectedCountryId,p_name:f.get("name"),p_category:f.get("category"),p_weight:Number(f.get("weight")),p_price:Number(f.get("price")),p_reference_date:f.get("date")},"Preço de referência atualizado.");e.currentTarget.reset();}}>
+            <h3>Registrar preço de item</h3><div className="eco-grid-2"><Field label="Produto ou serviço" name="name" required/><Field label="Categoria" name="category" required/><Field label="Peso no índice" name="weight" type="number" min="0.0001" step="0.0001" defaultValue="1" required/><Field label="Preço observado" name="price" type="number" min="0.01" step="0.01" required/><Field label="Data de referência" name="date" type="date" defaultValue={today()} required/></div><button disabled={busy}>Salvar observação</button>
+          </form>}<DataTable rows={prices} columns={[["reference_date","Data"],["name","Item"],["category","Categoria"],["price","Preço"]]}/>
+        </section>}
+        {tab === "tax" && <section className="eco-panel"><SectionTitle title="Sistema tributário" subtitle="Regras tributárias versionadas e obrigações registradas no país." onExport={() => exportCsv(obligations,"world-economy-tributos.csv")}/>
+          {canCreate && <><form className="eco-form" onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void invoke("create_tax_rule",{p_country_id:selectedCountryId,p_name:f.get("name"),p_identifier:f.get("identifier"),p_category:f.get("category"),p_description:f.get("description"),p_rate:Number(f.get("rate")),p_calculation_base:f.get("base"),p_effective_from:f.get("effective")},"Proposta tributária enviada para aprovação.");e.currentTarget.reset();}}>
+            <h3>Propor tributo</h3><div className="eco-grid-2"><Field label="Nome" name="name" required/><Field label="Identificador" name="identifier" required/><Field label="Categoria" name="category" required/><Field label="Alíquota (%)" name="rate" type="number" min="0" max="100" step="0.01" required/><Field label="Base de cálculo" name="base" defaultValue="declared_value"/><Field label="Início da vigência" name="effective" type="date" defaultValue={today()} required/></div><Field label="Descrição" name="description"/><button disabled={busy}>Enviar proposta</button>
+          </form><form className="eco-form" onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void invoke("create_tax_obligation",{p_country_id:selectedCountryId,p_rule_id:f.get("rule"),p_taxpayer_profile_id:null,p_taxpayer_label:f.get("taxpayer"),p_reference_period:f.get("period"),p_calculation_base:Number(f.get("base")),p_due_date:f.get("due") || null},"Obrigação tributária lançada.");e.currentTarget.reset();}}>
+            <h3>Lançar obrigação</h3><label>Regra ativa<select name="rule" required><option value="">Selecione</option>{taxRules.filter(x=>x.status==="active").map(x=><option key={x.id} value={x.id}>{x.name} — {x.rate}%</option>)}</select></label><div className="eco-grid-2"><Field label="Contribuinte (referência)" name="taxpayer" required/><Field label="Período" name="period" placeholder="2026-11" required/><Field label="Base de cálculo" name="base" type="number" min="0" step="0.01" required/><Field label="Vencimento" name="due" type="date"/></div><button disabled={busy}>Calcular e lançar</button>
+          </form></>}
+          <h3>Regras tributárias</h3><DataTable rows={taxRules} columns={[["name","Tributo"],["category","Categoria"],["rate","Alíquota %"],["status","Situação"],["effective_from","Vigência"]]}/>
+          {isAdmin && <ReviewList rows={taxRules.filter(x=>x.status==="awaiting_approval")} onReview={(id,decision)=>void invoke("review_tax_rule",{p_rule_id:id,p_decision:decision,p_note:"Revisão do Super Admin"},"Regra tributária revisada.")}/>}
+          <h3>Obrigações tributárias</h3><DataTable rows={obligations} columns={[["taxpayer_label","Contribuinte"],["reference_period","Período"],["amount_due","Valor devido"],["status","Situação"],["due_date","Vencimento"]]}/>
+          {canCreate && <form className="eco-form" onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void invoke("confirm_tax_collection",{p_obligation_id:f.get("obligation"),p_amount:Number(f.get("amount")),p_confirmation_reference:f.get("reference")},"Arrecadação confirmada e lançada no Tesouro.");e.currentTarget.reset();}}>
+            <h3>Confirmar arrecadação manual</h3><label>Obrigação<select name="obligation" required><option value="">Selecione</option>{obligations.filter(x=>["open","partially_paid","overdue"].includes(x.status)).map(x=><option key={x.id} value={x.id}>{x.taxpayer_label || "Contribuinte"} — {money(x.amount_due)} ({x.status})</option>)}</select></label><div className="eco-grid-2"><Field label="Valor recebido" name="amount" type="number" min="0.01" step="0.01" required/><Field label="Referência única" name="reference" required/></div><button disabled={busy}>Confirmar recebimento</button>
+          </form>}
+        </section>}
+        {tab === "treasury" && <section className="eco-panel"><SectionTitle title="Tesouro Nacional" subtitle="Saldo derivado do saldo inicial e do livro-razão; não existe campo para editar o saldo diretamente." onExport={() => exportCsv(ledger,"world-economy-tesouro.csv")}/>
+          <div className="eco-metrics"><Metric title="Saldo atual" value={money(dashboard.treasury_balance)} icon={<Wallet/>}/><Metric title="Receitas realizadas" value={money(dashboard.revenue)} icon={<TrendingUp/>}/><Metric title="Despesas realizadas" value={money(dashboard.expenses)} icon={<TrendingDown/>}/><Metric title="Arrecadação tributária" value={money(dashboard.tax_collected)} icon={<Coins/>}/></div>
+          {canCreate && <form className="eco-form" onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void invoke("post_treasury_entry",{p_country_id:selectedCountryId,p_entry_type:f.get("type"),p_category:f.get("category"),p_description:f.get("description"),p_amount:Number(f.get("amount")),p_idempotency_key:crypto.randomUUID(),p_budget_allocation_id:f.get("allocation") || null,p_investment_project_id:null},"Lançamento registrado no livro-razão.");e.currentTarget.reset();}}>
+            <h3>Registrar receita ou despesa</h3><div className="eco-grid-2"><label>Tipo<select name="type"><option value="revenue">Receita não tributária</option><option value="expense">Despesa</option></select></label><Field label="Categoria" name="category" required/><Field label="Descrição e origem" name="description" required/><Field label="Valor" name="amount" type="number" min="0.01" step="0.01" required/><label>Alocação orçamentária (obrigatória para despesa)<select name="allocation"><option value="">Selecione se despesa</option>{allocations.map(a=><option key={a.id} value={a.id}>{a.category} — limite {money(a.planned_amount)}</option>)}</select></label></div><button disabled={busy}>Registrar no Tesouro</button>
+          </form>}
+          <DataTable rows={ledger} columns={[["created_at","Data"],["entry_type","Tipo"],["category","Categoria"],["description","Descrição"],["amount","Valor"],["idempotency_key","Referência"]]}/>
+          {isAdmin && <ReviewList rows={ledger} onReview={(id)=>{if(confirm("Estornar este lançamento? O registro original será preservado."))void invoke("reverse_treasury_entry",{p_entry_id:id,p_reason:"Correção administrativa",p_idempotency_key:"reversal-"+crypto.randomUUID()},"Estorno registrado.");}} reversal/>}
+          {isAdmin && countryId && <button className="eco-secondary" onClick={()=>void invoke("set_treasury_public_visibility",{p_country_id:selectedCountryId,p_visible:!treasury?.public_balance_visible},"Visibilidade pública atualizada.")}>{treasury?.public_balance_visible ? "Ocultar saldo público" : "Tornar saldo do Tesouro público"}</button>}
+        </section>}
+        {tab === "budget" && <section className="eco-panel"><SectionTitle title="Orçamento Nacional" subtitle="Previsão e aprovação não movimentam dinheiro; a execução exige lançamento no Tesouro." onExport={() => exportCsv(budgets,"world-economy-orcamento.csv")}/>
+          {canCreate && <form className="eco-form" onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void invoke("create_budget_plan",{p_country_id:selectedCountryId,p_name:f.get("name"),p_period_start:f.get("start"),p_period_end:f.get("end"),p_allocations:[{category:f.get("category"),planned_amount:Number(f.get("amount"))}]},"Orçamento criado e enviado conforme a regra de aprovação.");e.currentTarget.reset();}}>
+            <h3>Elaborar orçamento</h3><div className="eco-grid-2"><Field label="Nome" name="name" required/><Field label="Categoria / Ministério" name="category" required/><Field label="Início" name="start" type="date" required/><Field label="Fim" name="end" type="date" required/><Field label="Valor previsto" name="amount" type="number" min="0" step="0.01" required/></div><button disabled={busy}>Criar orçamento</button>
+          </form>}
+          <DataTable rows={budgets} columns={[["name","Orçamento"],["period_start","Início"],["period_end","Fim"],["total_planned","Previsto"],["status","Situação"]]}/>
+          {isAdmin && <ReviewList rows={budgets.filter(x=>x.status==="awaiting_approval")} onReview={(id,decision)=>void invoke("review_budget_plan",{p_plan_id:id,p_decision:decision,p_note:"Revisão do Super Admin"},"Orçamento revisado.")}/>}
+          <DataTable rows={allocations} columns={[["category","Categoria"],["planned_amount","Limite aprovado"]]}/>
+        </section>}
+        {tab === "investments" && <section className="eco-panel"><SectionTitle title="Investimentos públicos" subtitle="Projetos aprovados só entram como execução após lançamento financeiro correspondente." onExport={() => exportCsv(projects,"world-economy-investimentos.csv")}/>
+          {canCreate && <form className="eco-form" onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void invoke("create_investment_project",{p_country_id:selectedCountryId,p_name:f.get("name"),p_description:f.get("description"),p_category:f.get("category"),p_budget_allocation_id:f.get("allocation") || null,p_planned_amount:Number(f.get("amount")),p_starts_on:f.get("start") || null,p_expected_end:f.get("end") || null},"Projeto de investimento criado.");e.currentTarget.reset();}}>
+            <h3>Propor projeto</h3><div className="eco-grid-2"><Field label="Nome" name="name" required/><Field label="Categoria" name="category" required/><Field label="Valor previsto" name="amount" type="number" min="0" step="0.01" required/><Field label="Início" name="start" type="date"/><Field label="Prazo" name="end" type="date"/><label>Alocação aprovada<select name="allocation"><option value="">Sem alocação</option>{allocations.map(a=><option key={a.id} value={a.id}>{a.category}</option>)}</select></label></div><Field label="Descrição" name="description"/><button disabled={busy}>Criar projeto</button>
+          </form>}
+          <DataTable rows={projects} columns={[["name","Projeto"],["category","Categoria"],["planned_amount","Previsto"],["approved_amount","Aprovado"],["executed_amount","Executado"],["status","Situação"]]}/>
+          {isAdmin && <ReviewList rows={projects.filter(x=>["proposed","under_review"].includes(x.status))} onReview={(id,decision)=>{const item=projects.find(x=>x.id===id);const approved=decision==="approved"?prompt("Valor aprovado (até "+item?.planned_amount+")",String(item?.planned_amount ?? 0)):null;if(decision==="approved" && approved===null)return;void invoke("review_investment_project",{p_project_id:id,p_decision:decision,p_approved_amount:approved===null?null:Number(approved)},"Projeto revisado.");}}/>}
+        </section>}
+        {tab === "reports" && <section className="eco-panel"><SectionTitle title="Relatórios econômicos" subtitle="Exportação CSV dos registros visíveis nesta conta; os dados incompletos permanecem identificados."/><div className="eco-report-list"><button onClick={()=>exportCsv(gdp,"world-economy-pib.csv")}><BarChart3/> Exportar PIB</button><button onClick={()=>exportCsv(obligations,"world-economy-tributos.csv")}><FileSpreadsheet/> Exportar tributos</button><button onClick={()=>exportCsv(ledger,"world-economy-tesouro.csv")}><Landmark/> Exportar Tesouro</button><button onClick={()=>exportCsv(budgets,"world-economy-orcamento.csv")}>Exportar orçamento</button><button onClick={()=>exportCsv(projects,"world-economy-investimentos.csv")}>Exportar investimentos</button></div></section>}
+      </>}
+  </div>;
+}
+
+function Overview({ dashboard, countries, gdp }: { dashboard: Row; countries: Row[]; gdp: Row[] }) {
+  if (dashboard.scope === "global") return <section className="eco-panel"><SectionTitle title="Panorama econômico global" subtitle="Consolidação dos últimos registros disponíveis por país; sem dados artificiais."/>
+    <div className="eco-metrics"><Metric title="Países ativos" value={String(dashboard.countries_active ?? 0)} icon={<Activity/>}/><Metric title="PIB registrado" value={money(dashboard.gdp_total)} icon={<BarChart3/>}/><Metric title="Tesouros consolidados" value={money(dashboard.treasury_total)} icon={<Landmark/>}/><Metric title="Arrecadação confirmada" value={money(dashboard.tax_revenue_total)} icon={<Coins/>}/></div>
+    <DataTable rows={countries} columns={[["name","País"],["gdp","PIB mais recente"],["treasury_balance","Saldo do Tesouro"],["currency_label","Unidade monetária"]]}/><p className="eco-muted">O total global é uma soma contábil de valores registrados. Não há conversão cambial entre países nesta etapa.</p>
+  </section>;
+  const growth = dashboard.gdp_growth;
+  const fiscal = Number(dashboard.revenue ?? 0) - Number(dashboard.expenses ?? 0);
+  return <section className="eco-panel"><SectionTitle title={dashboard.country_name ?? "Economia Nacional"} subtitle="Indicadores calculados a partir dos registros confirmados deste país."/>
+    <div className="eco-country-heading"><strong>{dashboard.country_flag ?? "🌐"} {dashboard.country_name}</strong><span>{dashboard.currency_code || dashboard.currency_label || "Unidade monetária provisória"}</span></div>
+    <div className="eco-metrics">
+      <Metric title="PIB mais recente" value={money(dashboard.gdp)} icon={<BarChart3/>}/><Metric title="Crescimento" value={growth == null ? "Sem base de comparação" : Number(growth).toFixed(2)+"%"} icon={growth > 0 ? <TrendingUp/> : <TrendingDown/>}/>
+      <Metric title="Inflação" value={dashboard.inflation == null ? "Dados insuficientes" : Number(dashboard.inflation).toFixed(2)+"%"} icon={<Activity/>}/><Metric title="Saldo do Tesouro" value={money(dashboard.treasury_balance)} icon={<Wallet/>}/>
+      <Metric title="Receitas realizadas" value={money(dashboard.revenue)} icon={<TrendingUp/>}/><Metric title="Despesas realizadas" value={money(dashboard.expenses)} icon={<TrendingDown/>}/>
+      <Metric title="Arrecadação tributária" value={money(dashboard.tax_collected)} icon={<Coins/>}/><Metric title="Obrigações em aberto" value={money(dashboard.tax_open)} icon={<ShieldCheck/>}/>
+      <Metric title="Orçamento aprovado" value={money(dashboard.budget_approved)} icon={<FileSpreadsheet/>}/><Metric title="Investimentos aprovados" value={money(dashboard.investment_approved)} icon={<Landmark/>}/>
+    </div>
+    <p className="eco-muted">Resultado fiscal = receitas realizadas − despesas realizadas: <b>{money(fiscal)}</b>. Unidade: {dashboard.currency_code || "não configurada; unidade provisória"}. {dashboard.gdp == null ? "Dados insuficientes para calcular o PIB." : "Último período do PIB encerrado em "+date(dashboard.gdp_period_end)+"."}</p>
+    <div className="eco-chart"><ResponsiveContainer width="100%" height={240}><LineChart data={[...gdp].reverse()}><CartesianGrid strokeDasharray="3 3" opacity={.15}/><XAxis dataKey="period_end"/><YAxis/><Tooltip formatter={(v: any)=>money(v)}/><Line type="monotone" dataKey="total_value" stroke="#39a9ff" strokeWidth={2} dot={false}/></LineChart></ResponsiveContainer></div>
+  </section>;
+}
+function SectionTitle({title,subtitle,onExport}:{title:string;subtitle:string;onExport?:()=>void}){return <header className="eco-section-title"><div><h3>{title}</h3><p>{subtitle}</p></div>{onExport&&<button type="button" onClick={onExport}><FileSpreadsheet size={15}/> CSV</button>}</header>}
+function Metric({title,value,icon}:{title:string;value:string;icon:ReactNode}){return <article className="eco-metric"><span>{icon}</span><small>{title}</small><strong>{value}</strong></article>}
+function Field(props: InputHTMLAttributes<HTMLInputElement> & {label:string}){const {label,...rest}=props;return <label>{label}<input {...rest}/></label>}
+function DataTable({rows,columns}:{rows:Row[];columns:[string,string][]}){return <div className="eco-table-wrap"><table className="eco-table"><thead><tr>{columns.map(([key,label])=><th key={key}>{label}</th>)}</tr></thead><tbody>{rows.length===0?<tr><td colSpan={columns.length}>Nenhum registro disponível.</td></tr>:rows.map((row,i)=><tr key={row.id??i}>{columns.map(([key])=><td key={key}>{["created_at","period_start","period_end","reference_date","due_date","effective_from"].includes(key)?date(String(row[key]??"")):key==="price"||key.includes("amount")||key==="total_value"||key==="treasury_balance"||key==="gdp"?money(row[key]):key==="name" && row.economic_price_items?.name?row.economic_price_items.name:String(row[key]??"—")}</td>)}</tr>)}</tbody></table></div>}
+function ReviewList({rows,onReview,reversal=false}:{rows:Row[];onReview:(id:string,decision:string)=>void;reversal?:boolean}){if(!rows.length)return null;return <div className="eco-review-list"><h3>{reversal?"Estornos administrativos":"Itens aguardando revisão"}</h3>{rows.map(row=><article key={row.id}><span>{row.name??row.description??row.id}</span>{reversal?<button onClick={()=>onReview(row.id,"reversal")}><XCircle size={15}/> Estornar</button>:<><button onClick={()=>onReview(row.id,"approved")}>Aprovar</button><button onClick={()=>onReview(row.id,"rejected")}>Rejeitar</button></>}</article>)}</div>}
