@@ -507,7 +507,7 @@ declare v_id uuid; v_status text;
 begin
   if not public.can_manage_economy(p_country_id,'tax.manage') then raise exception 'Sem permissão para propor tributos.'; end if;
   if p_rate<0 or p_rate>100 or p_effective_from is null or length(trim(coalesce(p_name,'')))<2 then raise exception 'Regra tributária inválida.'; end if;
-  select case when require_global_tax_approval then 'awaiting_approval' else 'approved' end into v_status from public.national_treasuries where country_id=p_country_id;
+  select case when require_global_tax_approval then 'awaiting_approval' else 'active' end into v_status from public.national_treasuries where country_id=p_country_id;
   insert into public.tax_rules(country_id,name,identifier,category,description,rate,calculation_base,status,effective_from,created_by)
   values(p_country_id,trim(p_name),lower(trim(p_identifier)),trim(p_category),p_description,p_rate,p_calculation_base,v_status,p_effective_from,auth.uid())
   returning id into v_id;
@@ -652,13 +652,17 @@ create or replace function public.post_treasury_entry(
   p_country_id uuid,p_entry_type text,p_category text,p_description text,p_amount numeric,
   p_idempotency_key text,p_budget_allocation_id uuid default null,p_investment_project_id uuid default null
 ) returns uuid language plpgsql security definer set search_path=public,auth as $$
-declare v_id uuid; a public.budget_allocations%rowtype; p public.public_investment_projects%rowtype; v_spent numeric;
+declare v_id uuid; a public.budget_allocations%rowtype; p public.public_investment_projects%rowtype; t public.national_treasuries%rowtype; v_spent numeric; v_balance numeric;
 begin
   if p_entry_type not in ('revenue','expense') or p_amount<=0 or length(trim(coalesce(p_idempotency_key,'')))<8 then raise exception 'Lançamento inválido.'; end if;
+  select * into t from public.national_treasuries where country_id=p_country_id for update;
+  if not found then raise exception 'Tesouro Nacional não encontrado.'; end if;
+  select t.opening_balance+coalesce(sum(x.signed_amount),0) into v_balance from public.treasury_ledger_entries x where x.country_id=p_country_id;
   if p_entry_type='revenue' then
     if not public.can_manage_economy(p_country_id,'treasury.revenue') then raise exception 'Sem permissão para registrar receita.'; end if;
   else
     if not public.can_manage_economy(p_country_id,'treasury.expense') then raise exception 'Sem permissão para registrar despesa.'; end if;
+    if v_balance<p_amount then raise exception 'Saldo insuficiente no Tesouro Nacional para esta despesa.'; end if;
     if p_budget_allocation_id is null then raise exception 'Toda despesa precisa estar vinculada a uma alocação aprovada.'; end if;
     select * into a from public.budget_allocations where id=p_budget_allocation_id and country_id=p_country_id for update;
     if not found then raise exception 'Alocação não encontrada neste país.'; end if;
@@ -699,6 +703,9 @@ begin
   if not found then raise exception 'Lançamento não encontrado.'; end if;
   if not public.is_world_admin() then raise exception 'Somente o Super Admin pode estornar lançamentos.'; end if;
   if e.source_type='tax_collection' then raise exception 'Arrecadação tributária exige procedimento próprio de retificação; estorno genérico bloqueado.'; end if;
+  if e.entry_type='reversal' then raise exception 'Um estorno não pode ser estornado por este procedimento.'; end if;
+  if e.signed_amount>0 and (select t.opening_balance+coalesce(sum(x.signed_amount),0) from public.national_treasuries t left join public.treasury_ledger_entries x on x.country_id=t.country_id where t.country_id=e.country_id)<e.amount then
+    raise exception 'O estorno reduziria o saldo do Tesouro abaixo de zero.'; end if;
   if exists(select 1 from public.treasury_ledger_entries where reverses_entry_id=e.id) then raise exception 'Este lançamento já foi estornado.'; end if;
   insert into public.treasury_ledger_entries(country_id,entry_type,category,description,amount,signed_amount,source_type,source_id,
     reverses_entry_id,budget_allocation_id,investment_project_id,idempotency_key,created_by)
