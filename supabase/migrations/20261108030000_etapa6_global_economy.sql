@@ -803,6 +803,8 @@ begin
     or length(trim(coalesce(p_category,'')))<2 or length(trim(coalesce(p_description,'')))<3 then raise exception 'Lançamento inválido.'; end if;
   select * into t from public.national_treasuries where country_id=p_country_id for update;
   if not found then raise exception 'Tesouro Nacional não encontrado.'; end if;
+  if p_budget_allocation_id is not null and not exists(select 1 from public.budget_allocations a where a.id=p_budget_allocation_id and a.country_id=p_country_id) then
+    raise exception 'A alocação orçamentária não pertence a este país.'; end if;
   select t.opening_balance+coalesce(sum(x.signed_amount),0) into v_balance from public.treasury_ledger_entries x where x.country_id=p_country_id;
   if p_entry_type='revenue' then
     if not public.can_manage_economy(p_country_id,'treasury.revenue') then raise exception 'Sem permissão para registrar receita.'; end if;
