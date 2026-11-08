@@ -693,6 +693,58 @@ begin
 end;
 $function$;
 
+create or replace function public.admin_set_bank_member(p_bank_id uuid,p_profile_id uuid,p_position text,p_permissions text[],p_status text default 'active')
+returns uuid language plpgsql security definer set search_path=public,auth as $function$
+declare v_id uuid; v_country uuid;
+begin
+ if not public.is_world_admin() then raise exception 'Somente o Super Admin pode nomear funcionários bancários.'; end if;
+ if p_status not in ('active','suspended','removed') or length(trim(coalesce(p_position,'')))<2 then raise exception 'Dados do funcionário inválidos.'; end if;
+ select country_id into v_country from public.commercial_banks where id=p_bank_id and status='active' for update;
+ if v_country is null then raise exception 'Banco inexistente ou indisponível.'; end if;
+ if not exists(select 1 from public.profiles p where p.id=p_profile_id and p.country_id=v_country and p.registration_status='active' and coalesce(p.account_status,'active')='active') then
+  raise exception 'O funcionário precisa possuir perfil ativo no mesmo país do banco.';
+ end if;
+ insert into public.bank_members(bank_id,profile_id,position,permissions,status,appointed_by)
+ values(p_bank_id,p_profile_id,trim(p_position),coalesce(p_permissions,'{}'),p_status,auth.uid())
+ on conflict(bank_id,profile_id) do update set position=excluded.position,permissions=excluded.permissions,status=excluded.status
+ returning id into v_id;
+ perform public.bank_audit(p_bank_id,'member_updated','bank_member',v_id,jsonb_build_object('profile_id',p_profile_id,'status',p_status,'permissions',p_permissions));
+ return v_id;
+end;
+$function$;
+
+create or replace function public.admin_set_central_bank_member(
+ p_bank_id uuid,p_profile_id uuid,p_position text,p_permissions text[],p_status text
+) returns uuid language plpgsql security definer set search_path=public,auth as $function$
+declare b public.central_banks%rowtype; m public.central_bank_members%rowtype; v_id uuid;
+begin
+ if not public.is_world_admin() then raise exception 'Somente o Super Admin pode nomear dirigentes.'; end if;
+ if p_status not in ('active','suspended','removed') or length(trim(coalesce(p_position,'')))<2 then raise exception 'Cargo ou situação inválidos.'; end if;
+ select * into b from public.central_banks where id=p_bank_id for update;
+ if not found then raise exception 'Banco Central não encontrado.'; end if;
+ if not exists(select 1 from public.profiles p where p.id=p_profile_id and p.country_id=b.country_id and p.registration_status='active' and coalesce(p.account_status,'active')='active') then
+  raise exception 'O dirigente precisa possuir perfil ativo no mesmo país do Banco Central.';
+ end if;
+ if lower(trim(p_position))='governador do banco central' and exists(select 1 from public.profiles p where p.id=p_profile_id and p.role='president') then
+  raise exception 'Para preservar a independência monetária, o Presidente do país não pode ocupar simultaneamente o cargo de Governador do Banco Central.';
+ end if;
+ select * into m from public.central_bank_members where central_bank_id=p_bank_id and profile_id=p_profile_id for update;
+ if found then
+  update public.central_bank_members set position=trim(p_position),permissions=coalesce(p_permissions,'{}'),status=p_status,
+   ended_at=case when p_status='active' then null else now() end where id=m.id returning id into v_id;
+  perform public.central_bank_audit(b.id,b.country_id,'member_updated','central_bank_member',m.id,to_jsonb(m),
+   jsonb_build_object('position',p_position,'permissions',p_permissions,'status',p_status),'Atualização de dirigente');
+ else
+  insert into public.central_bank_members(central_bank_id,profile_id,position,permissions,status,appointed_by,ended_at)
+  values(p_bank_id,p_profile_id,trim(p_position),coalesce(p_permissions,'{}'),p_status,auth.uid(),
+   case when p_status='active' then null else now() end) returning id into v_id;
+  perform public.central_bank_audit(b.id,b.country_id,'member_appointed','central_bank_member',v_id,null,
+   jsonb_build_object('profile_id',p_profile_id,'position',p_position,'permissions',p_permissions,'status',p_status),'Nomeação de dirigente');
+ end if;
+ return v_id;
+end;
+$function$;
+
 -- Revisão do status do banco também é registrada e bloqueia operações ao suspender.
 create or replace function public.admin_review_commercial_bank(p_bank_id uuid,p_status text,p_note text default null)
 returns void language plpgsql security definer set search_path=public,auth as $function$
