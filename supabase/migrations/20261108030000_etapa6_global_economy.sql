@@ -540,7 +540,10 @@ begin
       or public.has_economy_permission(c.id,'economy.read')
       or t.public_balance_visible then t.opening_balance+(select coalesce(sum(signed_amount),0) from public.treasury_ledger_entries where country_id=c.id) else null end,
     'tax_collected',(select coalesce(sum(amount),0) from public.tax_collections where country_id=c.id),
-    'tax_open',(select coalesce(sum(greatest(o.amount_due-coalesce((select sum(col.amount) from public.tax_collections col where col.obligation_id=o.id),0),0)),0) from public.tax_obligations o where o.country_id=c.id and o.status in ('open','pending_confirmation','partially_paid','overdue')),
+    'tax_open',case when public.is_world_admin() or public.is_country_president(c.id) or public.has_economy_permission(c.id,'tax.read')
+      then (select coalesce(sum(greatest(o.amount_due-coalesce((select sum(col.amount) from public.tax_collections col where col.obligation_id=o.id),0),0)),0)
+        from public.tax_obligations o where o.country_id=c.id and o.status in ('open','pending_confirmation','partially_paid','overdue'))
+      else null end,
     'budget_approved',(select coalesce(sum(total_planned),0) from public.budget_plans where country_id=c.id and status in ('approved','in_execution')),
     'budget_executed',(select coalesce(sum(case when x.entry_type='expense' then x.amount
       when x.entry_type='reversal' and exists(select 1 from public.treasury_ledger_entries original where original.id=x.reverses_entry_id and original.entry_type='expense') then -x.amount else 0 end),0)
