@@ -809,6 +809,9 @@ begin
   if p_amount<=0 or length(trim(coalesce(p_confirmation_reference,'')))<3 then raise exception 'Valor ou referência inválidos.'; end if;
   select currency_code into v_currency from public.national_treasuries where country_id=o.country_id for update;
   if not found then raise exception 'Tesouro Nacional não encontrado.'; end if;
+  if exists(select 1 from public.treasury_ledger_entries x where x.country_id=o.country_id
+      and x.currency_code_snapshot<>coalesce(nullif(v_currency,''),'UNCONFIGURED')) then
+    raise exception 'O Tesouro possui registros em outra unidade monetária; a conciliação deve ocorrer antes de arrecadar.'; end if;
   if o.currency_code_snapshot<>coalesce(nullif(v_currency,''),'UNCONFIGURED') then raise exception 'A unidade monetária da obrigação diverge da unidade atual do Tesouro.'; end if;
   if o.status not in ('open','partially_paid','overdue','pending_confirmation') then raise exception 'Esta obrigação não aceita novas arrecadações.'; end if;
   select coalesce(sum(amount),0) into v_paid from public.tax_collections where obligation_id=o.id;
@@ -919,6 +922,10 @@ begin
     or length(trim(coalesce(p_category,'')))<2 or length(trim(coalesce(p_description,'')))<3 then raise exception 'Lançamento inválido.'; end if;
   select * into t from public.national_treasuries where country_id=p_country_id for update;
   if not found then raise exception 'Tesouro Nacional não encontrado.'; end if;
+  if (t.opening_balance>0 and t.opening_balance_currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))
+    or exists(select 1 from public.treasury_ledger_entries x where x.country_id=p_country_id
+      and x.currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED')) then
+    raise exception 'O Tesouro possui registros em outra unidade monetária; a conciliação deve ocorrer antes de novas operações.'; end if;
   if p_budget_allocation_id is not null and not exists(select 1 from public.budget_allocations a where a.id=p_budget_allocation_id and a.country_id=p_country_id) then
     raise exception 'A alocação orçamentária não pertence a este país.'; end if;
   select t.opening_balance+coalesce(sum(x.signed_amount),0) into v_balance from public.treasury_ledger_entries x where x.country_id=p_country_id;
@@ -971,6 +978,10 @@ begin
   if not found then raise exception 'Lançamento não encontrado.'; end if;
   select * into t from public.national_treasuries where country_id=e.country_id for update;
   if not found then raise exception 'Tesouro Nacional não encontrado.'; end if;
+  if (t.opening_balance>0 and t.opening_balance_currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))
+    or exists(select 1 from public.treasury_ledger_entries x where x.country_id=e.country_id
+      and x.currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED')) then
+    raise exception 'O Tesouro possui registros em outra unidade monetária; a conciliação deve ocorrer antes do estorno.'; end if;
   if e.currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED') then raise exception 'A unidade monetária do lançamento diverge da unidade atual do Tesouro.'; end if;
   if e.source_type='tax_collection' then raise exception 'Arrecadação tributária exige procedimento próprio de retificação; estorno genérico bloqueado.'; end if;
   if e.entry_type='reversal' then raise exception 'Um estorno não pode ser estornado por este procedimento.'; end if;
