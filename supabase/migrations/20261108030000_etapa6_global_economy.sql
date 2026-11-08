@@ -358,7 +358,7 @@ for each row execute function public.ensure_national_treasury_for_country();
 revoke all on function public.ensure_national_treasury_for_country() from public,anon,authenticated;
 
 create or replace function public.stamp_economy_currency_snapshot()
-returns trigger language plpgsql security definer set search_path=public as $
+returns trigger language plpgsql security definer set search_path=public as $$
 declare v_code text;
 begin
   if tg_table_name='economic_gdp_components' then
@@ -384,9 +384,9 @@ begin
   new.currency_code_snapshot:=coalesce(v_code,'UNCONFIGURED');
   return new;
 end;
-$;
+$$;
 
-do $
+do $$
 declare t text;
 begin
   foreach t in array array[
@@ -786,7 +786,14 @@ begin
   select * into r from public.tax_rules where id=p_rule_id and country_id=p_country_id and status='active'
     and effective_from<=current_date and (effective_until is null or effective_until>=current_date);
   if not found then raise exception 'Regra tributária não está vigente.'; end if;
-  if p_calculation_base<0 or coalesce(p_reference_period,'') !~ '^[0-9]{4}-(0[1-9]|1[0-2]) and not exists(select 1 from public.profiles where id=p_taxpayer_profile_id and country_id=p_country_id) then
+  if p_calculation_base<0 or coalesce(p_reference_period,'') !~ '^[0-9]{4}-(0[1-9]|1[0-2])$' then
+    raise exception 'Informe o período no formato AAAA-MM e uma base válida.'; end if;
+  v_period_start:=to_date(p_reference_period||'-01','YYYY-MM-DD');
+  if v_period_start<date_trunc('month',current_date)::date or v_period_start<r.effective_from then
+    raise exception 'Cobranças retroativas não são permitidas por esta operação.'; end if;
+  if p_taxpayer_profile_id is null and length(trim(coalesce(p_taxpayer_label,'')))<2 then
+    raise exception 'Informe o cidadão ou contribuinte desta obrigação.'; end if;
+  if p_taxpayer_profile_id is not null and not exists(select 1 from public.profiles where id=p_taxpayer_profile_id and country_id=p_country_id) then
     raise exception 'O contribuinte informado não pertence a este país.'; end if;
   v_amount:=round(p_calculation_base*r.rate/100,2);
   insert into public.tax_obligations(country_id,tax_rule_id,taxpayer_profile_id,taxpayer_label,reference_period,
@@ -876,11 +883,12 @@ drop function if exists public.create_investment_project(uuid,text,text,text,uui
 create or replace function public.create_investment_project(
   p_country_id uuid,p_name text,p_description text,p_category text,p_budget_allocation_id uuid,
   p_planned_amount numeric,p_starts_on date,p_expected_end date,p_ministry_id uuid default null
-) returns uuid language plpgsql security definer set search_path=public,auth as $
+) returns uuid language plpgsql security definer set search_path=public,auth as $$
 declare v_id uuid; v_allocation_limit numeric(24,2); v_allocation_currency text; v_treasury_currency text;
 begin
   if not public.can_manage_economy(p_country_id,'investment.manage') then raise exception 'Sem permissão para propor investimento.'; end if;
-  if p_planned_amount<0 or length(trim(coalesce(p_name,'')))<2 then raise exception 'Projeto inválido.'; end if;
+  if p_planned_amount<0 or length(trim(coalesce(p_name,'')))<2 or length(trim(coalesce(p_category,'')))<2 then
+    raise exception 'Projeto inválido.'; end if;
   select a.planned_amount,a.currency_code_snapshot into v_allocation_limit,v_allocation_currency
     from public.budget_allocations a join public.budget_plans b on b.id=a.budget_plan_id
     where a.id=p_budget_allocation_id and a.country_id=p_country_id and b.status in ('approved','in_execution');
@@ -889,10 +897,12 @@ begin
   if v_allocation_currency<>coalesce(nullif(v_treasury_currency,''),'UNCONFIGURED') then
     raise exception 'A unidade monetária do orçamento diverge da unidade atual do Tesouro.'; end if;
   if p_planned_amount>v_allocation_limit then raise exception 'O valor previsto excede a alocação orçamentária.'; end if;
-  insert into public.public_investment_projects(country_id,name,description,category,budget_allocation_id,planned_amount,starts_on,expected_end,created_by)
-  values(p_country_id,trim(p_name),p_description,trim(p_category),p_budget_allocation_id,p_planned_amount,p_starts_on,p_expected_end)
+  if p_ministry_id is not null and not exists(select 1 from public.ministries where id=p_ministry_id and country_id=p_country_id and status='active') then
+    raise exception 'O ministério informado não pertence a este país ou está inativo.'; end if;
+  insert into public.public_investment_projects(country_id,name,description,category,budget_allocation_id,planned_amount,starts_on,expected_end,ministry_id,created_by)
+  values(p_country_id,trim(p_name),p_description,trim(p_category),p_budget_allocation_id,p_planned_amount,p_starts_on,p_expected_end,p_ministry_id,auth.uid())
   returning id into v_id;
-  perform public.economy_audit(p_country_id,'create','investment_project',v_id,null,jsonb_build_object('planned_amount',p_planned_amount));
+  perform public.economy_audit(p_country_id,'create','investment_project',v_id,null,jsonb_build_object('planned_amount',p_planned_amount,'ministry_id',p_ministry_id));
   return v_id;
 end;
 $$;
@@ -1065,266 +1075,6 @@ grant execute on function public.confirm_tax_collection(uuid,numeric,text) to au
 grant execute on function public.create_budget_plan(uuid,text,date,date,jsonb) to authenticated;
 grant execute on function public.review_budget_plan(uuid,text,text) to authenticated;
 grant execute on function public.create_investment_project(uuid,text,text,text,uuid,numeric,date,date,uuid) to authenticated;
-grant execute on function public.review_investment_project(uuid,text,numeric) to authenticated;
-grant execute on function public.post_treasury_entry(uuid,text,text,text,numeric,text,uuid,uuid) to authenticated;
-grant execute on function public.reverse_treasury_entry(uuid,text,text) to authenticated;
-grant execute on function public.set_treasury_public_visibility(uuid,boolean) to authenticated;
-grant execute on function public.set_treasury_opening_balance(uuid,numeric) to authenticated;
-
-commit;
- then raise exception 'Informe o período no formato AAAA-MM e uma base válida.'; end if;
-  v_period_start:=to_date(p_reference_period||'-01','YYYY-MM-DD');
-  if v_period_start<date_trunc('month',current_date)::date or v_period_start<r.effective_from then
-    raise exception 'Cobranças retroativas não são permitidas por esta operação.';
-  end if;
-  if p_taxpayer_profile_id is null and length(trim(coalesce(p_taxpayer_label,'')))<2 then
-    raise exception 'Informe o cidadão ou contribuinte desta obrigação.'; end if;
-  if p_taxpayer_profile_id is not null and not exists(select 1 from public.profiles where id=p_taxpayer_profile_id and country_id=p_country_id) then
-    raise exception 'O contribuinte informado não pertence a este país.'; end if;
-  v_amount:=round(p_calculation_base*r.rate/100,2);
-  insert into public.tax_obligations(country_id,tax_rule_id,taxpayer_profile_id,taxpayer_label,reference_period,
-    calculation_base,applied_rate,amount_due,due_date,status,created_by)
-  values(p_country_id,p_rule_id,p_taxpayer_profile_id,nullif(trim(p_taxpayer_label),''),p_reference_period,
-    p_calculation_base,r.rate,v_amount,p_due_date,case when p_due_date<current_date then 'overdue' else 'open' end,auth.uid()) returning id into v_id;
-  perform public.economy_audit(p_country_id,'create','tax_obligation',v_id,null,jsonb_build_object('amount_due',v_amount,'rate',r.rate));
-  return v_id;
-end;
-$$;
-
-create or replace function public.confirm_tax_collection(
-  p_obligation_id uuid,p_amount numeric,p_confirmation_reference text
-) returns uuid language plpgsql security definer set search_path=public,auth as $$
-declare o public.tax_obligations%rowtype; v_col uuid; v_paid numeric;
-begin
-  select * into o from public.tax_obligations where id=p_obligation_id for update;
-  if not found then raise exception 'Obrigação não encontrada ou sem permissão.'; end if;
-  if not public.can_manage_economy(o.country_id,'tax.collect') then raise exception 'Obrigação não encontrada ou sem permissão.'; end if;
-  if p_amount<=0 or length(trim(coalesce(p_confirmation_reference,'')))<3 then raise exception 'Valor ou referência inválidos.'; end if;
-  if o.status not in ('open','partially_paid','overdue','pending_confirmation') then raise exception 'Esta obrigação não aceita novas arrecadações.'; end if;
-  select coalesce(sum(amount),0) into v_paid from public.tax_collections where obligation_id=o.id;
-  if v_paid+p_amount>o.amount_due then raise exception 'A arrecadação excede o valor ainda devido.'; end if;
-  insert into public.tax_collections(country_id,obligation_id,amount,confirmation_reference,confirmed_by)
-  values(o.country_id,o.id,p_amount,trim(p_confirmation_reference),auth.uid()) returning id into v_col;
-  insert into public.treasury_ledger_entries(country_id,entry_type,category,description,amount,signed_amount,source_type,source_id,
-    idempotency_key,created_by)
-  values(o.country_id,'revenue','tax_collection','Arrecadação tributária — obrigação '||o.id,p_amount,p_amount,
-    'tax_collection',v_col,'tax-collection:'||v_col,auth.uid());
-  v_paid:=v_paid+p_amount;
-  update public.tax_obligations set status=case when v_paid>=amount_due then 'paid' else 'partially_paid' end,updated_at=now()
-  where id=o.id;
-  perform public.economy_audit(o.country_id,'confirm','tax_collection',v_col,null,jsonb_build_object('amount',p_amount,'obligation_id',o.id));
-  return v_col;
-end;
-$$;
-
-create or replace function public.create_budget_plan(
-  p_country_id uuid,p_name text,p_period_start date,p_period_end date,p_allocations jsonb
-) returns uuid language plpgsql security definer set search_path=public,auth as $$
-declare v_id uuid; v_total numeric(24,2); v_status text;
-begin
-  if not public.can_manage_economy(p_country_id,'budget.manage') then raise exception 'Sem permissão para elaborar orçamento.'; end if;
-  if p_period_start>p_period_end or jsonb_typeof(p_allocations)<>'array' or jsonb_array_length(p_allocations)=0 then raise exception 'Período ou alocações inválidos.'; end if;
-  if exists(select 1 from jsonb_to_recordset(p_allocations) as x(category text,planned_amount numeric,ministry_id uuid)
-    where nullif(trim(category),'') is null or planned_amount is null or planned_amount<0) then raise exception 'Alocação inválida.'; end if;
-  if exists(select 1 from jsonb_to_recordset(p_allocations) as x(category text,planned_amount numeric,ministry_id uuid)
-    where ministry_id is not null and not exists(select 1 from public.ministries m where m.id=x.ministry_id and m.country_id=p_country_id)) then
-    raise exception 'Uma alocação referencia ministério de outro país.'; end if;
-  select sum(planned_amount) into v_total from jsonb_to_recordset(p_allocations) as x(category text,planned_amount numeric,ministry_id uuid);
-  select case when require_global_budget_approval then 'awaiting_approval' else 'approved' end into v_status
-  from public.national_treasuries where country_id=p_country_id;
-  insert into public.budget_plans(country_id,name,period_start,period_end,status,total_planned,created_by)
-  values(p_country_id,trim(p_name),p_period_start,p_period_end,v_status,v_total,auth.uid()) returning id into v_id;
-  insert into public.budget_allocations(budget_plan_id,country_id,category,planned_amount,ministry_id)
-  select v_id,p_country_id,x.category,x.planned_amount,x.ministry_id
-  from jsonb_to_recordset(p_allocations) as x(category text,planned_amount numeric,ministry_id uuid);
-  perform public.economy_audit(p_country_id,'create','budget_plan',v_id,null,jsonb_build_object('total_planned',v_total));
-  return v_id;
-end;
-$$;
-
-create or replace function public.review_budget_plan(p_plan_id uuid,p_decision text,p_note text default null)
-returns void language plpgsql security definer set search_path=public,auth as $$
-declare b public.budget_plans%rowtype;
-begin
-  if not public.is_world_admin() then raise exception 'Somente o Super Admin pode aprovar orçamento globalmente.'; end if;
-  if p_decision not in ('approved','rejected','cancelled') then raise exception 'Decisão inválida.'; end if;
-  select * into b from public.budget_plans where id=p_plan_id for update;
-  if not found then raise exception 'Orçamento não encontrado.'; end if;
-  update public.budget_plans set status=case when p_decision='approved' then 'approved' else p_decision end,
-    reviewed_by=auth.uid(),reviewed_at=now(),review_note=p_note,updated_at=now() where id=b.id;
-  perform public.economy_audit(b.country_id,'review','budget_plan',b.id,to_jsonb(b),jsonb_build_object('status',p_decision,'note',p_note));
-end;
-$$;
-
-create or replace function public.create_investment_project(
-  p_country_id uuid,p_name text,p_description text,p_category text,p_budget_allocation_id uuid,
-  p_planned_amount numeric,p_starts_on date,p_expected_end date
-) returns uuid language plpgsql security definer set search_path=public,auth as $$
-declare v_id uuid;
-begin
-  if not public.can_manage_economy(p_country_id,'investment.manage') then raise exception 'Sem permissão para propor investimento.'; end if;
-  if p_planned_amount<0 or length(trim(coalesce(p_name,'')))<2 then raise exception 'Projeto inválido.'; end if;
-  if p_budget_allocation_id is null or not exists(select 1 from public.budget_allocations a join public.budget_plans b on b.id=a.budget_plan_id
-    where a.id=p_budget_allocation_id and a.country_id=p_country_id and b.status in ('approved','in_execution')) then
-    raise exception 'O projeto precisa de uma alocação orçamentária aprovada neste país.'; end if;
-  insert into public.public_investment_projects(country_id,name,description,category,budget_allocation_id,planned_amount,starts_on,expected_end,created_by)
-  values(p_country_id,trim(p_name),p_description,trim(p_category),p_budget_allocation_id,p_planned_amount,p_starts_on,p_expected_end)
-  returning id into v_id;
-  perform public.economy_audit(p_country_id,'create','investment_project',v_id,null,jsonb_build_object('planned_amount',p_planned_amount));
-  return v_id;
-end;
-$$;
-
-create or replace function public.review_investment_project(p_project_id uuid,p_decision text,p_approved_amount numeric default null)
-returns void language plpgsql security definer set search_path=public,auth as $$
-declare p public.public_investment_projects%rowtype;
-begin
-  if not public.is_world_admin() then raise exception 'Somente o Super Admin pode aprovar projetos nesta configuração.'; end if;
-  if p_decision not in ('approved','rejected','suspended','cancelled') then raise exception 'Decisão inválida.'; end if;
-  select * into p from public.public_investment_projects where id=p_project_id for update;
-  if not found then raise exception 'Projeto não encontrado.'; end if;
-  if p_decision='approved' and (p_approved_amount is null or p_approved_amount<0 or p_approved_amount>p.planned_amount) then
-    raise exception 'Valor aprovado inválido.'; end if;
-  update public.public_investment_projects set status=case when p_decision='approved' then 'approved' else p_decision end,
-    approved_amount=case when p_decision='approved' then p_approved_amount else approved_amount end,
-    reviewed_by=auth.uid(),reviewed_at=now(),updated_at=now() where id=p.id;
-  perform public.economy_audit(p.country_id,'review','investment_project',p.id,to_jsonb(p),jsonb_build_object('status',p_decision,'approved_amount',p_approved_amount));
-end;
-$$;
-
-create or replace function public.post_treasury_entry(
-  p_country_id uuid,p_entry_type text,p_category text,p_description text,p_amount numeric,
-  p_idempotency_key text,p_budget_allocation_id uuid default null,p_investment_project_id uuid default null
-) returns uuid language plpgsql security definer set search_path=public,auth as $$
-declare v_id uuid; a public.budget_allocations%rowtype; p public.public_investment_projects%rowtype; t public.national_treasuries%rowtype; v_spent numeric; v_balance numeric;
-begin
-  if p_entry_type not in ('revenue','expense') or p_amount<=0 or length(trim(coalesce(p_idempotency_key,'')))<8
-    or length(trim(coalesce(p_category,'')))<2 or length(trim(coalesce(p_description,'')))<3 then raise exception 'Lançamento inválido.'; end if;
-  select * into t from public.national_treasuries where country_id=p_country_id for update;
-  if not found then raise exception 'Tesouro Nacional não encontrado.'; end if;
-  select t.opening_balance+coalesce(sum(x.signed_amount),0) into v_balance from public.treasury_ledger_entries x where x.country_id=p_country_id;
-  if p_entry_type='revenue' then
-    if not public.can_manage_economy(p_country_id,'treasury.revenue') then raise exception 'Sem permissão para registrar receita.'; end if;
-  else
-    if not public.can_manage_economy(p_country_id,'treasury.expense') then raise exception 'Sem permissão para registrar despesa.'; end if;
-    if v_balance<p_amount then raise exception 'Saldo insuficiente no Tesouro Nacional para esta despesa.'; end if;
-    if p_budget_allocation_id is null then raise exception 'Toda despesa precisa estar vinculada a uma alocação aprovada.'; end if;
-    select * into a from public.budget_allocations where id=p_budget_allocation_id and country_id=p_country_id for update;
-    if not found then raise exception 'Alocação não encontrada neste país.'; end if;
-    if not exists(select 1 from public.budget_plans b where b.id=a.budget_plan_id and b.status in ('approved','in_execution')) then
-      raise exception 'O orçamento ainda não está aprovado.'; end if;
-    select greatest(coalesce(sum(-signed_amount),0),0) into v_spent from public.treasury_ledger_entries where budget_allocation_id=a.id;
-    if v_spent+p_amount>a.planned_amount then raise exception 'A despesa excede o limite orçamentário disponível.'; end if;
-  end if;
-  if p_investment_project_id is not null then
-    select * into p from public.public_investment_projects where id=p_investment_project_id and country_id=p_country_id for update;
-    if not found or p.status not in ('approved','in_progress') then raise exception 'Projeto não aprovado ou não encontrado.'; end if;
-    if p.budget_allocation_id is distinct from p_budget_allocation_id then raise exception 'A execução deve usar a alocação aprovada do próprio projeto.'; end if;
-    if p_entry_type<>'expense' or p.executed_amount+p_amount>p.approved_amount then raise exception 'Execução excede o valor aprovado.'; end if;
-    update public.public_investment_projects set executed_amount=executed_amount+p_amount,
-      status=case when executed_amount+p_amount>=approved_amount then 'completed' else 'in_progress' end,updated_at=now()
-    where id=p.id;
-  end if;
-  insert into public.treasury_ledger_entries(country_id,entry_type,category,description,amount,signed_amount,source_type,source_id,
-    budget_allocation_id,investment_project_id,idempotency_key,created_by)
-  values(p_country_id,p_entry_type,p_category,trim(p_description),p_amount,
-    case when p_entry_type='revenue' then p_amount else -p_amount end,
-    case when p_investment_project_id is not null then 'investment_execution' else 'manual' end,
-    case when p_investment_project_id is not null then gen_random_uuid() else null end,
-    p_budget_allocation_id,p_investment_project_id,p_idempotency_key,auth.uid())
-  returning id into v_id;
-  perform public.economy_audit(p_country_id,'post','treasury_entry',v_id,null,jsonb_build_object('type',p_entry_type,'amount',p_amount,'category',p_category));
-  return v_id;
-exception when unique_violation then
-  raise exception 'Operação duplicada: chave de idempotência ou origem já utilizada.';
-end;
-$$;
-
-create or replace function public.reverse_treasury_entry(p_entry_id uuid,p_reason text,p_idempotency_key text)
-returns uuid language plpgsql security definer set search_path=public,auth as $$
-declare e public.treasury_ledger_entries%rowtype; v_id uuid;
-begin
-  if not public.is_world_admin() then raise exception 'Somente o Super Admin pode estornar lançamentos.'; end if;
-  select * into e from public.treasury_ledger_entries where id=p_entry_id for update;
-  if not found then raise exception 'Lançamento não encontrado.'; end if;
-  if e.source_type='tax_collection' then raise exception 'Arrecadação tributária exige procedimento próprio de retificação; estorno genérico bloqueado.'; end if;
-  if e.entry_type='reversal' then raise exception 'Um estorno não pode ser estornado por este procedimento.'; end if;
-  if length(trim(coalesce(p_reason,'')))<3 or length(trim(coalesce(p_idempotency_key,'')))<8 then raise exception 'Informe o motivo e uma chave de estorno válida.'; end if;
-  if e.signed_amount>0 and (select t.opening_balance+coalesce((select sum(x.signed_amount) from public.treasury_ledger_entries x where x.country_id=e.country_id),0)
-    from public.national_treasuries t where t.country_id=e.country_id)<e.amount then
-    raise exception 'O estorno reduziria o saldo do Tesouro abaixo de zero.'; end if;
-  if exists(select 1 from public.treasury_ledger_entries where reverses_entry_id=e.id) then raise exception 'Este lançamento já foi estornado.'; end if;
-  insert into public.treasury_ledger_entries(country_id,entry_type,category,description,amount,signed_amount,source_type,source_id,
-    reverses_entry_id,budget_allocation_id,investment_project_id,idempotency_key,created_by)
-  values(e.country_id,'reversal',e.category,'Estorno: '||trim(p_reason),e.amount,-e.signed_amount,'reversal',e.id,
-    e.id,e.budget_allocation_id,e.investment_project_id,p_idempotency_key,auth.uid())
-  returning id into v_id;
-  if e.investment_project_id is not null then
-    update public.public_investment_projects set executed_amount=greatest(0,executed_amount-e.amount),
-      status=case when status='completed' then 'in_progress' else status end,updated_at=now()
-    where id=e.investment_project_id;
-  end if;
-  perform public.economy_audit(e.country_id,'reverse','treasury_entry',v_id,to_jsonb(e),jsonb_build_object('reverses_entry_id',e.id,'reason',p_reason));
-  return v_id;
-end;
-$$;
-
-create or replace function public.set_treasury_opening_balance(p_country_id uuid,p_amount numeric)
-returns void language plpgsql security definer set search_path=public,auth as $$
-declare t public.national_treasuries%rowtype;
-begin
-  if not public.is_world_admin() then raise exception 'Somente o Super Admin pode definir o saldo inicial.'; end if;
-  if p_amount<0 then raise exception 'Saldo inicial não pode ser negativo.'; end if;
-  select * into t from public.national_treasuries where country_id=p_country_id for update;
-  if not found then raise exception 'Tesouro Nacional não encontrado.'; end if;
-  if t.opening_balance_set_at is not null or exists(select 1 from public.treasury_ledger_entries where country_id=p_country_id) then
-    raise exception 'O saldo inicial só pode ser definido uma vez, antes do primeiro lançamento.';
-  end if;
-  update public.national_treasuries set opening_balance=p_amount,opening_balance_set_at=now(),updated_at=now() where country_id=p_country_id;
-  perform public.economy_audit(p_country_id,'initialize','national_treasury',t.id,to_jsonb(t),jsonb_build_object('opening_balance',p_amount));
-end;
-$$;
-
-create or replace function public.set_treasury_public_visibility(p_country_id uuid,p_visible boolean)
-returns void language plpgsql security definer set search_path=public,auth as $$
-begin
-  if not public.is_world_admin() and not public.is_country_president(p_country_id) then raise exception 'Sem permissão para alterar visibilidade do Tesouro.'; end if;
-  update public.national_treasuries set public_balance_visible=p_visible,updated_at=now() where country_id=p_country_id;
-  perform public.economy_audit(p_country_id,'visibility','national_treasury',null,null,jsonb_build_object('public_balance_visible',p_visible));
-end;
-$$;
-
--- Nenhuma tabela de dinheiro pessoal, banco comercial, câmbio ou Banco Central é criada nesta etapa.
-revoke all on function public.can_manage_economy(uuid,text) from public,anon;
-revoke all on function public.has_economy_permission(uuid,text) from public,anon;
-grant execute on function public.has_economy_permission(uuid,text) to authenticated;
-revoke all on function public.economy_audit(uuid,text,text,uuid,jsonb,jsonb) from public,anon,authenticated;
-revoke all on function public.get_economy_dashboard(uuid) from public,anon;
-revoke all on function public.save_gdp_record(uuid,date,date,jsonb,text) from public,anon;
-revoke all on function public.save_price_item(uuid,text,text,numeric,numeric,date) from public,anon;
-revoke all on function public.create_tax_rule(uuid,text,text,text,text,numeric,text,date) from public,anon;
-revoke all on function public.review_tax_rule(uuid,text,text) from public,anon;
-revoke all on function public.create_tax_obligation(uuid,uuid,uuid,text,text,numeric,date) from public,anon;
-revoke all on function public.confirm_tax_collection(uuid,numeric,text) from public,anon;
-revoke all on function public.create_budget_plan(uuid,text,date,date,jsonb) from public,anon;
-revoke all on function public.review_budget_plan(uuid,text,text) from public,anon;
-revoke all on function public.create_investment_project(uuid,text,text,text,uuid,numeric,date,date) from public,anon;
-revoke all on function public.review_investment_project(uuid,text,numeric) from public,anon;
-revoke all on function public.post_treasury_entry(uuid,text,text,text,numeric,text,uuid,uuid) from public,anon;
-revoke all on function public.reverse_treasury_entry(uuid,text,text) from public,anon;
-revoke all on function public.set_treasury_public_visibility(uuid,boolean) from public,anon;
-revoke all on function public.set_treasury_opening_balance(uuid,numeric) from public,anon;
-
-grant execute on function public.get_economy_dashboard(uuid) to authenticated;
-grant execute on function public.save_gdp_record(uuid,date,date,jsonb,text) to authenticated;
-grant execute on function public.save_price_item(uuid,text,text,numeric,numeric,date) to authenticated;
-grant execute on function public.create_tax_rule(uuid,text,text,text,text,numeric,text,date) to authenticated;
-grant execute on function public.review_tax_rule(uuid,text,text) to authenticated;
-grant execute on function public.create_tax_obligation(uuid,uuid,uuid,text,text,numeric,date) to authenticated;
-grant execute on function public.confirm_tax_collection(uuid,numeric,text) to authenticated;
-grant execute on function public.create_budget_plan(uuid,text,date,date,jsonb) to authenticated;
-grant execute on function public.review_budget_plan(uuid,text,text) to authenticated;
-grant execute on function public.create_investment_project(uuid,text,text,text,uuid,numeric,date,date) to authenticated;
 grant execute on function public.review_investment_project(uuid,text,numeric) to authenticated;
 grant execute on function public.post_treasury_entry(uuid,text,text,text,numeric,text,uuid,uuid) to authenticated;
 grant execute on function public.reverse_treasury_entry(uuid,text,text) to authenticated;
