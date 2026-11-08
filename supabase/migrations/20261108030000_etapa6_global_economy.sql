@@ -397,7 +397,7 @@ begin
     execute format('drop trigger if exists %I on public.%I',t||'_stamp_currency',t);
     execute format('create trigger %I before insert on public.%I for each row execute function public.stamp_economy_currency_snapshot()',t||'_stamp_currency',t);
   end loop;
-end $;
+end $$;
 revoke all on function public.stamp_economy_currency_snapshot() from public,anon,authenticated;
 
 alter table public.national_treasuries enable row level security;
