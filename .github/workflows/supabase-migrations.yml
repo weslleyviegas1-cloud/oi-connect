@@ -27,11 +27,9 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
         run: |
           test -n "$SUPABASE_ACCESS_TOKEN" || (echo "::error::Missing GitHub secret SUPABASE_ACCESS_TOKEN" && exit 1)
           test -n "$SUPABASE_DB_PASSWORD" || (echo "::error::Missing GitHub secret SUPABASE_DB_PASSWORD" && exit 1)
-          test -n "$SUPABASE_PROJECT_ID" || (echo "::error::Missing GitHub secret SUPABASE_PROJECT_ID" && exit 1)
 
       - name: Install Supabase CLI
         uses: supabase/setup-cli@v1
@@ -42,8 +40,7 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
-        run: supabase link --project-ref "$SUPABASE_PROJECT_ID" --password "$SUPABASE_DB_PASSWORD"
+        run: supabase link --project-ref "minirkotshmgidgymndt" --password "$SUPABASE_DB_PASSWORD"
 
       - name: Apply pending migrations
         env:
