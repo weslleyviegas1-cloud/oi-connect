@@ -222,7 +222,7 @@ function Overview({ dashboard, countries, gdp }: { dashboard: Row; countries: Ro
         <select aria-label="Situação econômica" value={status} onChange={e=>setStatus(e.target.value)}><option value="all">Todas as situações</option><option value="active">Países ativos</option><option value="inactive">Países inativos</option><option value="with-gdp">Com PIB no período</option><option value="without-gdp">Sem PIB no período</option><option value="growth-positive">Crescimento positivo</option><option value="growth-negative">Crescimento negativo</option><option value="stable">Estabilidade</option></select>
         <select aria-label="Indicador" value={indicator} onChange={e=>setIndicator(e.target.value)}><option value="both">PIB e Tesouro</option><option value="gdp">Somente PIB</option><option value="treasury">Somente Tesouro</option></select>
       </div>
-      <DataTable rows={filtered} columns={columns}/><p className="eco-muted">O total global é uma soma nominal de valores registrados. Não representa uma comparação de poder de compra e não há conversão cambial nesta etapa.</p>
+      <DataTable rows={filtered} columns={columns}/><p className="eco-muted">O PIB e os saldos são somas nominais, sem conversão cambial ou comparação de poder de compra. A inflação média é uma média simples apenas dos países com cesta completa.</p>
     </section>;
   }
   const nationalDays = Number(period);
