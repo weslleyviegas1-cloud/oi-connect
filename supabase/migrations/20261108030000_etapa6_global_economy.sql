@@ -520,8 +520,15 @@ begin
           from public.economic_gdp_records where status in ('confirmed','revised')
           order by country_id,period_end desc
         ) latest),
+        'currency_mismatched_countries',(select count(*) from public.national_treasuries t
+          where t.opening_balance_currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED')
+            or exists(select 1 from public.treasury_ledger_entries x where x.country_id=t.country_id
+              and x.currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))),
         'treasury_total',(select sum(t.opening_balance + coalesce(l.total,0)) from public.national_treasuries t
-          left join lateral (select sum(signed_amount) total from public.treasury_ledger_entries x where x.country_id=t.country_id) l on true),
+          left join lateral (select sum(signed_amount) total from public.treasury_ledger_entries x where x.country_id=t.country_id) l on true
+          where t.opening_balance_currency_code_snapshot=coalesce(nullif(t.currency_code,''),'UNCONFIGURED')
+            and not exists(select 1 from public.treasury_ledger_entries x where x.country_id=t.country_id
+              and x.currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))),
         'revenue_total',(select coalesce(sum(case when x.entry_type='revenue' then x.amount
           when x.entry_type='reversal' and exists(select 1 from public.treasury_ledger_entries original where original.id=x.reverses_entry_id and original.entry_type='revenue') then -x.amount else 0 end),0)
           from public.treasury_ledger_entries x),
@@ -549,7 +556,10 @@ begin
         ) country_index where country_index.inflation is not null),
         'countries',(select coalesce(jsonb_agg(jsonb_build_object('id',c.id,'name',c.name,'flag',c.flag,'continent',c.continent,'is_active',c.is_active,
           'currency_code',t.currency_code,'currency_label',t.currency_label,
-          'treasury_balance',t.opening_balance+coalesce(l.total,0),
+          'treasury_balance',case when t.opening_balance_currency_code_snapshot=coalesce(nullif(t.currency_code,''),'UNCONFIGURED')
+            and not exists(select 1 from public.treasury_ledger_entries x where x.country_id=c.id
+              and x.currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))
+            then t.opening_balance+coalesce(l.total,0) else null end,
           'gdp',(select r.total_value from public.economic_gdp_records r where r.country_id=c.id and r.status in ('confirmed','revised') order by r.period_end desc limit 1),
           'gdp_period_end',(select r.period_end from public.economic_gdp_records r where r.country_id=c.id and r.status in ('confirmed','revised') order by r.period_end desc limit 1),
           'gdp_growth',(select case when prev.total_value>0 then round(((cur.total_value-prev.total_value)/prev.total_value)*100,2) end
@@ -578,6 +588,9 @@ begin
   select jsonb_build_object(
     'scope','national','country_id',c.id,'country_name',c.name,'country_flag',c.flag,
     'currency_code',t.currency_code,'currency_label',t.currency_label,
+    'currency_consistent',(t.opening_balance_currency_code_snapshot=coalesce(nullif(t.currency_code,''),'UNCONFIGURED')
+      and not exists(select 1 from public.treasury_ledger_entries x where x.country_id=c.id
+        and x.currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))),
     'gdp',(select r.total_value from public.economic_gdp_records r where r.country_id=c.id and r.status='confirmed' order by r.period_end desc limit 1),
     'gdp_period_end',(select r.period_end from public.economic_gdp_records r where r.country_id=c.id and r.status='confirmed' order by r.period_end desc limit 1),
     'previous_gdp',(select r.total_value from public.economic_gdp_records r where r.country_id=c.id and r.status='confirmed' order by r.period_end desc offset 1 limit 1),
@@ -595,7 +608,10 @@ begin
     'treasury_balance',case when public.is_world_admin() or public.is_country_president(c.id)
       or public.has_economy_permission(c.id,'treasury.read')
       or public.has_economy_permission(c.id,'economy.read')
-      or t.public_balance_visible then t.opening_balance+(select coalesce(sum(signed_amount),0) from public.treasury_ledger_entries where country_id=c.id) else null end,
+      or t.public_balance_visible then case when t.opening_balance_currency_code_snapshot=coalesce(nullif(t.currency_code,''),'UNCONFIGURED')
+        and not exists(select 1 from public.treasury_ledger_entries x where x.country_id=c.id
+          and x.currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))
+        then t.opening_balance+(select coalesce(sum(signed_amount),0) from public.treasury_ledger_entries where country_id=c.id) else null end else null end,
     'tax_collected',(select coalesce(sum(amount),0) from public.tax_collections where country_id=c.id),
     'tax_open',case when public.is_world_admin() or public.is_country_president(c.id) or public.has_economy_permission(c.id,'tax.read')
       then (select coalesce(sum(greatest(o.amount_due-coalesce((select sum(col.amount) from public.tax_collections col where col.obligation_id=o.id),0),0)),0)
@@ -779,13 +795,15 @@ $$;
 create or replace function public.confirm_tax_collection(
   p_obligation_id uuid,p_amount numeric,p_confirmation_reference text
 ) returns uuid language plpgsql security definer set search_path=public,auth as $$
-declare o public.tax_obligations%rowtype; v_col uuid; v_paid numeric;
+declare o public.tax_obligations%rowtype; v_col uuid; v_paid numeric; v_currency text;
 begin
   select * into o from public.tax_obligations where id=p_obligation_id for update;
   if not found then raise exception 'Obrigação não encontrada ou sem permissão.'; end if;
   if not public.can_manage_economy(o.country_id,'tax.collect') then raise exception 'Obrigação não encontrada ou sem permissão.'; end if;
   if p_amount<=0 or length(trim(coalesce(p_confirmation_reference,'')))<3 then raise exception 'Valor ou referência inválidos.'; end if;
-  perform 1 from public.national_treasuries where country_id=o.country_id for update;
+  select currency_code into v_currency from public.national_treasuries where country_id=o.country_id for update;
+  if not found then raise exception 'Tesouro Nacional não encontrado.'; end if;
+  if o.currency_code_snapshot<>coalesce(nullif(v_currency,''),'UNCONFIGURED') then raise exception 'A unidade monetária da obrigação diverge da unidade atual do Tesouro.'; end if;
   if o.status not in ('open','partially_paid','overdue','pending_confirmation') then raise exception 'Esta obrigação não aceita novas arrecadações.'; end if;
   select coalesce(sum(amount),0) into v_paid from public.tax_collections where obligation_id=o.id;
   if v_paid+p_amount>o.amount_due then raise exception 'A arrecadação excede o valor ainda devido.'; end if;
@@ -902,6 +920,7 @@ begin
     if p_budget_allocation_id is null then raise exception 'Toda despesa precisa estar vinculada a uma alocação aprovada.'; end if;
     select * into a from public.budget_allocations where id=p_budget_allocation_id and country_id=p_country_id for update;
     if not found then raise exception 'Alocação não encontrada neste país.'; end if;
+    if a.currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED') then raise exception 'A moeda da alocação diverge da moeda atual do Tesouro.'; end if;
     if not exists(select 1 from public.budget_plans b where b.id=a.budget_plan_id and b.status in ('approved','in_execution')) then
       raise exception 'O orçamento ainda não está aprovado.'; end if;
     select greatest(coalesce(sum(-signed_amount),0),0) into v_spent from public.treasury_ledger_entries where budget_allocation_id=a.id;
@@ -911,6 +930,7 @@ begin
     select * into p from public.public_investment_projects where id=p_investment_project_id and country_id=p_country_id for update;
     if not found or p.status not in ('approved','in_progress') then raise exception 'Projeto não aprovado ou não encontrado.'; end if;
     if p.budget_allocation_id is distinct from p_budget_allocation_id then raise exception 'A execução deve usar a alocação aprovada do próprio projeto.'; end if;
+    if p.currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED') then raise exception 'A moeda do projeto diverge da moeda atual do Tesouro.'; end if;
     if p_entry_type<>'expense' or p.executed_amount+p_amount>p.approved_amount then raise exception 'Execução excede o valor aprovado.'; end if;
     update public.public_investment_projects set executed_amount=executed_amount+p_amount,
       status=case when executed_amount+p_amount>=approved_amount then 'completed' else 'in_progress' end,updated_at=now()
@@ -933,12 +953,14 @@ $$;
 
 create or replace function public.reverse_treasury_entry(p_entry_id uuid,p_reason text,p_idempotency_key text)
 returns uuid language plpgsql security definer set search_path=public,auth as $$
-declare e public.treasury_ledger_entries%rowtype; v_id uuid;
+declare e public.treasury_ledger_entries%rowtype; v_id uuid; t public.national_treasuries%rowtype;
 begin
   if not public.is_world_admin() then raise exception 'Somente o Super Admin pode estornar lançamentos.'; end if;
   select * into e from public.treasury_ledger_entries where id=p_entry_id for update;
   if not found then raise exception 'Lançamento não encontrado.'; end if;
-  perform 1 from public.national_treasuries where country_id=e.country_id for update;
+  select * into t from public.national_treasuries where country_id=e.country_id for update;
+  if not found then raise exception 'Tesouro Nacional não encontrado.'; end if;
+  if e.currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED') then raise exception 'A unidade monetária do lançamento diverge da unidade atual do Tesouro.'; end if;
   if e.source_type='tax_collection' then raise exception 'Arrecadação tributária exige procedimento próprio de retificação; estorno genérico bloqueado.'; end if;
   if e.entry_type='reversal' then raise exception 'Um estorno não pode ser estornado por este procedimento.'; end if;
   if length(trim(coalesce(p_reason,'')))<3 or length(trim(coalesce(p_idempotency_key,'')))<8 then raise exception 'Informe o motivo e uma chave de estorno válida.'; end if;
