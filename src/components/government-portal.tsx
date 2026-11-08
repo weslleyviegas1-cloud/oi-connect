@@ -92,8 +92,9 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
         const countryList = await supabase.from("countries").select("id,name,flag,is_active").order("name");
         if (countryList.error) throw countryList.error;
         setAdminCountries(countryList.data ?? []);
-        if (!selectedCountryId && countryList.data?.length) {
-          setSelectedCountryId(countryList.data[0].id);
+        const firstCountry = countryList.data?.[0];
+        if (!selectedCountryId && firstCountry) {
+          setSelectedCountryId(firstCountry.id);
           setLoading(false);
           return;
         }
