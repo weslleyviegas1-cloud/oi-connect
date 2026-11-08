@@ -97,7 +97,16 @@ export function AdminGovernance({ notify }: { notify: (message: string) => void 
   }, [notify]);
 
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { if (tab === "nationality") void loadNationalityRequests(); }, [tab]);
+  useEffect(() => {
+    if (tab !== "nationality") return;
+    let active = true;
+    void supabase.rpc("admin_list_nationality_change_requests").then(({ data, error }) => {
+      if (!active) return;
+      if (error) notify("Falha ao carregar solicitações de nacionalidade: " + error.message);
+      else setNationalityRequests(data ?? []);
+    });
+    return () => { active = false; };
+  }, [tab, notify]);
 
   const filteredCountries = useMemo(() => countries.filter(country => {
     const matchesName = country.name.toLowerCase().includes(countrySearch.toLowerCase());
