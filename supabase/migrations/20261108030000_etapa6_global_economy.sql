@@ -667,18 +667,21 @@ begin
         'treasury_total',case when public.is_global_currency_comparable() then (select sum(t.opening_balance + coalesce(l.total,0)) from public.national_treasuries t
           left join lateral (select sum(signed_amount) total from public.treasury_ledger_entries x where x.country_id=t.country_id) l on true
           join public.countries c on c.id=t.country_id where c.is_active) else null end,
-        'revenue_total',(select coalesce(sum(case when x.entry_type='revenue' then x.amount
+        'revenue_total',case when public.is_global_currency_comparable() then (select coalesce(sum(case when x.entry_type='revenue' then x.amount
           when x.entry_type='reversal' and exists(select 1 from public.treasury_ledger_entries original where original.id=x.reverses_entry_id and original.entry_type='revenue') then -x.amount else 0 end),0)
-          from public.treasury_ledger_entries x),
-        'expenses_total',(select coalesce(sum(case when x.entry_type='expense' then x.amount
+          from public.treasury_ledger_entries x) else null end,
+        'expenses_total',case when public.is_global_currency_comparable() then (select coalesce(sum(case when x.entry_type='expense' then x.amount
           when x.entry_type='reversal' and exists(select 1 from public.treasury_ledger_entries original where original.id=x.reverses_entry_id and original.entry_type='expense') then -x.amount else 0 end),0)
-          from public.treasury_ledger_entries x),
-        'investment_total',case when public.is_global_currency_comparable() then (select coalesce(sum(approved_amount),0) from public.public_investment_projects where status in ('approved','in_progress','completed')) else null end,
-        'budget_approved_total',case when public.is_global_currency_comparable() then (select coalesce(sum(total_planned),0) from public.budget_plans where status in ('approved','in_execution')) else null end,
-        'budget_executed_total',(select coalesce(sum(case when x.entry_type='expense' then x.amount
+          from public.treasury_ledger_entries x) else null end,
+        'investment_total',case when public.is_global_currency_comparable() then (select coalesce(sum(approved_amount),0)
+          from public.public_investment_projects where status in ('approved','in_progress','completed')) else null end,
+        'budget_approved_total',case when public.is_global_currency_comparable() then (select coalesce(sum(total_planned),0)
+          from public.budget_plans where status in ('approved','in_execution')) else null end,
+        'budget_executed_total',case when public.is_global_currency_comparable() then (select coalesce(sum(case when x.entry_type='expense' then x.amount
           when x.entry_type='reversal' and exists(select 1 from public.treasury_ledger_entries original where original.id=x.reverses_entry_id and original.entry_type='expense') then -x.amount else 0 end),0)
-          from public.treasury_ledger_entries x where x.budget_allocation_id is not null),
-        'tax_revenue_total',case when public.is_global_currency_comparable() then (select coalesce(sum(amount),0) from public.tax_collections) else null end,
+          from public.treasury_ledger_entries x where x.budget_allocation_id is not null) else null end,
+        'tax_revenue_total',case when public.is_global_currency_comparable() then (select coalesce(sum(amount),0)
+          from public.tax_collections) else null end,
         'inflation_average',(select round(avg(country_index.inflation),2) from (
           select c.id,(select case when old_ipc>0 then ((new_ipc-old_ipc)/old_ipc)*100 end from (
             select reference_date,
