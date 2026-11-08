@@ -277,7 +277,7 @@ begin
       'Seu cargo na plataforma foi atualizado para ' || new.role || '.',new.country_id,auth.uid());
   end if;
   if new.account_status is distinct from old.account_status then
-    update public.citizen_profiles set citizen_status=case when new.account_status='suspended' then 'suspended' else 'active' end, updated_at=now() where profile_id=new.id;
+    update public.citizen_profiles set citizen_status=case when new.account_status='suspended' then 'suspended' when citizen_status='suspended' then 'active' else citizen_status end, updated_at=now() where profile_id=new.id;
     update public.citizen_documents set status=case when new.account_status='suspended' then 'suspended' else 'active' end, updated_at=now() where profile_id=new.id and document_type='national_identity';
     insert into public.citizen_history(profile_id,event_type,title,description,country_id,actor_id,metadata)
     values (new.id,'account_status_changed','Situação da conta alterada',
@@ -649,6 +649,66 @@ begin
 end;
 $$;
 
+
+-- Eventos de nomeação/exoneração e comunicados publicados chegam ao histórico/notificações pessoais.
+create or replace function public.capture_citizen_government_membership()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $
+begin
+  if tg_op='INSERT' and new.status='active' then
+    insert into public.citizen_history(profile_id,event_type,title,description,country_id,actor_id,metadata)
+    values (new.profile_id,'government_appointment','Nomeação governamental',
+      'Você foi nomeado(a) para o cargo de ' || new.position || '.',new.country_id,new.appointed_by,
+      jsonb_build_object('membership_id',new.id,'position',new.position));
+    insert into public.citizen_notifications(recipient_id,event_type,title,description,object_type,object_id)
+    values (new.profile_id,'government_appointment','Nomeação governamental',
+      'Você foi nomeado(a) para o cargo de ' || new.position || '.','government_member',new.id);
+  elsif tg_op='UPDATE' and new.status is distinct from old.status and new.status in ('inactive','exonerated') then
+    insert into public.citizen_history(profile_id,event_type,title,description,country_id,actor_id,metadata)
+    values (new.profile_id,'government_exoneration','Vínculo governamental encerrado',
+      'Seu vínculo no cargo de ' || new.position || ' foi encerrado.',new.country_id,auth.uid(),
+      jsonb_build_object('membership_id',new.id,'position',new.position,'status',new.status));
+    insert into public.citizen_notifications(recipient_id,event_type,title,description,object_type,object_id)
+    values (new.profile_id,'government_exoneration','Vínculo governamental encerrado',
+      'Seu vínculo no cargo de ' || new.position || ' foi encerrado.','government_member',new.id);
+  end if;
+  return new;
+end;
+$;
+
+drop trigger if exists government_members_citizen_events on public.government_members;
+create trigger government_members_citizen_events
+after insert or update of status on public.government_members
+for each row execute function public.capture_citizen_government_membership();
+
+create or replace function public.notify_citizens_of_published_announcement()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $
+begin
+  if new.status='published' and (tg_op='INSERT' or old.status is distinct from 'published') then
+    insert into public.citizen_notifications(recipient_id,event_type,title,description,object_type,object_id)
+    select p.id,'country_announcement','Comunicado do país: ' || new.title,
+      left(new.content,500),'government_announcement',new.id
+    from public.profiles p
+    where p.country_id=new.country_id
+      and p.registration_status='active'
+      and coalesce(p.account_status,'active')='active';
+  end if;
+  return new;
+end;
+$;
+
+drop trigger if exists government_announcements_citizen_notifications on public.government_announcements;
+create trigger government_announcements_citizen_notifications
+after insert or update of status on public.government_announcements
+for each row execute function public.notify_citizens_of_published_announcement();
+
 -- RLS: documentos e informações privadas só podem ser consultados pelo titular ou Super Admin.
 alter table public.citizen_profiles enable row level security;
 alter table public.citizen_documents enable row level security;
@@ -709,6 +769,8 @@ revoke all on function public.prevent_player_number_change() from public,anon,au
 revoke all on function public.capture_citizen_nickname_change() from public,anon,authenticated;
 revoke all on function public.initialize_citizen_record() from public,anon,authenticated;
 revoke all on function public.capture_citizen_country_change() from public,anon,authenticated;
+revoke all on function public.capture_citizen_government_membership() from public,anon,authenticated;
+revoke all on function public.notify_citizens_of_published_announcement() from public,anon,authenticated;
 revoke all on function public.update_my_citizen_profile(date,text,text,boolean,boolean) from public,anon;
 revoke all on function public.update_my_minecraft_nickname(text) from public,anon;
 revoke all on function public.get_my_citizen_profile() from public,anon;
