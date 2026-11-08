@@ -172,7 +172,7 @@ begin
  perform pg_advisory_xact_lock(hashtextextended(p_idempotency_key,0));
  select t.* into v_existing from public.bank_cash_wallet_transactions t join public.bank_cash_wallets w on w.id=t.wallet_id where t.idempotency_key=p_idempotency_key;
  if found then
-  if v_existing.transaction_type='issuance_allocation' and v_existing.amount=p_amount and exists(select 1 from public.bank_cash_wallets w where w.id=v_existing.wallet_id and w.profile_id=p_profile_id) then return v_existing.wallet_id; end if;
+  if v_existing.transaction_type='issuance_allocation' and v_existing.amount=p_amount and v_existing.actor_id=auth.uid() and exists(select 1 from public.bank_cash_wallets w where w.id=v_existing.wallet_id and w.profile_id=p_profile_id) then return v_existing.wallet_id; end if;
   raise exception 'Chave de idempotência já utilizada por outra operação.';
  end if;
  select * into p from public.profiles where id=p_profile_id for update;
@@ -371,7 +371,7 @@ create or replace function public.bank_set_fee(
 ) returns void language plpgsql security definer set search_path=public,auth as $function$
 begin
  if not (public.is_world_admin() or public.is_bank_member(p_bank_id,'bank.manage')) then raise exception 'Sem permissão para configurar tarifas.'; end if;
- if p_fee_type not in ('maintenance','transfer','international','withdrawal') or p_amount is null or p_amount<0 then raise exception 'Tarifa inválida.'; end if;
+ if p_fee_type not in ('maintenance','transfer','international','withdrawal') or p_amount is null or p_amount<0 or p_amount<>round(p_amount,6) then raise exception 'Tarifa inválida.'; end if;
  insert into public.bank_fees(bank_id,fee_type,amount,currency_id,active)
  values(p_bank_id,p_fee_type,p_amount,p_currency_id,p_active)
  on conflict(bank_id,fee_type) do update set amount=excluded.amount,currency_id=excluded.currency_id,active=excluded.active;
@@ -384,7 +384,7 @@ create or replace function public.bank_set_daily_limit(
 ) returns void language plpgsql security definer set search_path=public,auth as $function$
 begin
  if not (public.is_world_admin() or public.is_bank_member(p_bank_id,'bank.manage')) then raise exception 'Sem permissão para configurar limites.'; end if;
- if p_operation_type not in ('withdrawal','transfer') or p_daily_limit is null or p_daily_limit<=0 then raise exception 'Limite inválido.'; end if;
+ if p_operation_type not in ('withdrawal','transfer') or p_daily_limit is null or p_daily_limit<=0 or p_daily_limit<>round(p_daily_limit,6) then raise exception 'Limite inválido.'; end if;
  if not exists(select 1 from public.commercial_banks b join public.country_currency_assignments a on a.country_id=b.country_id and a.currency_id=p_currency_id and a.effective_until is null join public.currencies c on c.id=a.currency_id and c.status='active' where b.id=p_bank_id and b.status='active') then raise exception 'O limite deve usar a moeda nacional vigente do banco.'; end if;
  insert into public.bank_limits(bank_id,operation_type,daily_limit,currency_id,updated_by)
  values(p_bank_id,p_operation_type,p_daily_limit,p_currency_id,auth.uid())
@@ -434,7 +434,7 @@ create or replace function public.bank_set_credit_policy(
 ) returns void language plpgsql security definer set search_path=public,auth as $function$
 begin
  if not (public.is_world_admin() or public.is_bank_member(p_bank_id,'bank.manage')) then raise exception 'Sem permissão para configurar crédito.'; end if;
- if p_annual_rate is null or p_annual_rate not between 0 and 10000 or p_max_term_months not between 1 and 360 then raise exception 'Política de crédito inválida.'; end if;
+ if p_annual_rate is null or p_annual_rate not between 0 and 10000 or p_annual_rate<>round(p_annual_rate,6) or p_max_term_months not between 1 and 360 then raise exception 'Política de crédito inválida.'; end if;
  if not exists(select 1 from public.commercial_banks where id=p_bank_id and status='active') then raise exception 'Banco indisponível.'; end if;
  insert into public.bank_credit_policies(bank_id,annual_interest_rate,max_term_months,enabled,updated_by)
  values(p_bank_id,p_annual_rate,p_max_term_months,p_enabled,auth.uid())
@@ -443,19 +443,25 @@ begin
 end;
 $function$;
 
-create or replace function public.request_bank_loan(p_account_id uuid,p_amount numeric,p_term_months integer,p_rate numeric,p_purpose text)
+alter table public.loan_applications add column if not exists idempotency_key text;
+create unique index if not exists loan_applications_applicant_idempotency_uidx on public.loan_applications(applicant_profile_id,idempotency_key) where idempotency_key is not null;
+drop function if exists public.request_bank_loan(uuid,numeric,integer,numeric,text);
+create or replace function public.request_bank_loan(p_account_id uuid,p_amount numeric,p_term_months integer,p_rate numeric,p_purpose text,p_idempotency_key text)
 returns uuid language plpgsql security definer set search_path=public,auth as $function$
-declare a public.bank_accounts%rowtype; v_policy public.bank_credit_policies%rowtype; v_id uuid;
+declare a public.bank_accounts%rowtype; v_policy public.bank_credit_policies%rowtype; v_id uuid; v_existing public.loan_applications%rowtype;
 begin
- if auth.uid() is null then raise exception 'Autenticação necessária.'; end if;
+ if auth.uid() is null or length(trim(coalesce(p_idempotency_key,'')))<12 then raise exception 'Autenticação ou chave de idempotência inválida.'; end if;
+ perform pg_advisory_xact_lock(hashtextextended(p_idempotency_key,0));
+ select * into v_existing from public.loan_applications where applicant_profile_id=auth.uid() and idempotency_key=p_idempotency_key;
+ if found then if v_existing.account_id=p_account_id and v_existing.amount=p_amount and v_existing.term_months=p_term_months and v_existing.purpose=trim(p_purpose) then return v_existing.id; end if; raise exception 'Chave de idempotência já utilizada com dados diferentes.'; end if;
  select * into a from public.bank_accounts where id=p_account_id and owner_profile_id=auth.uid() and status='active';
  if not found or not exists(select 1 from public.commercial_banks b where b.id=a.bank_id and b.status='active') or not exists(select 1 from public.profiles p where p.id=auth.uid() and p.registration_status='active' and coalesce(p.account_status,'active')='active') then raise exception 'Conta de crédito inválida, banco indisponível ou perfil inativo.'; end if;
  select * into v_policy from public.bank_credit_policies where bank_id=a.bank_id;
  if not found then v_policy.annual_interest_rate:=12; v_policy.max_term_months:=60; v_policy.enabled:=true; end if;
  if not v_policy.enabled then raise exception 'Este banco não está aceitando solicitações de crédito.'; end if;
  if p_amount is null or p_amount<=0 or p_amount<>round(p_amount,6) or p_term_months not between 1 and v_policy.max_term_months or length(trim(coalesce(p_purpose,'')))<5 then raise exception 'Dados de crédito inválidos.'; end if;
- insert into public.loan_applications(bank_id,applicant_profile_id,account_id,amount,currency_id,term_months,annual_interest_rate,installments_count,purpose)
- values(a.bank_id,auth.uid(),a.id,p_amount,a.currency_id,p_term_months,v_policy.annual_interest_rate,p_term_months,trim(p_purpose)) returning id into v_id;
+ insert into public.loan_applications(bank_id,applicant_profile_id,account_id,amount,currency_id,term_months,annual_interest_rate,installments_count,purpose,idempotency_key)
+ values(a.bank_id,auth.uid(),a.id,p_amount,a.currency_id,p_term_months,v_policy.annual_interest_rate,p_term_months,trim(p_purpose),p_idempotency_key) returning id into v_id;
  perform public.bank_audit(a.bank_id,'loan_requested','loan_application',v_id,jsonb_build_object('amount',p_amount,'term',p_term_months,'annual_rate',v_policy.annual_interest_rate));
  return v_id;
 end;
@@ -469,7 +475,7 @@ begin
  if p_amount is null or p_amount<=0 or p_amount<>round(p_amount,6) or length(trim(coalesce(p_idempotency_key,'')))<12 then raise exception 'Valor ou chave de idempotência inválidos.'; end if;
  perform pg_advisory_xact_lock(hashtextextended(p_idempotency_key,0));
  select * into v_existing from public.bank_liquidity_transactions where idempotency_key=p_idempotency_key;
- if found then if v_existing.bank_id=p_bank_id and v_existing.transaction_type='capitalization' and v_existing.amount=p_amount and v_existing.reference_id=p_source_account then return; end if; raise exception 'Chave de idempotência já utilizada por outra operação.'; end if;
+ if found then if v_existing.bank_id=p_bank_id and v_existing.transaction_type='capitalization' and v_existing.amount=p_amount and v_existing.reference_id=p_source_account and v_existing.actor_id=auth.uid() then return; end if; raise exception 'Chave de idempotência já utilizada por outra operação.'; end if;
  select * into b from public.commercial_banks where id=p_bank_id and status='active' for update;
  if not found or not (public.is_world_admin() or public.is_bank_member(p_bank_id,'bank.manage')) then raise exception 'Banco ou permissão inválidos.'; end if;
  select * into a from public.bank_accounts where id=p_source_account for update;
@@ -567,7 +573,7 @@ begin
  if p_amount is null or p_amount<=0 or p_amount<>round(p_amount,2) then raise exception 'O valor do tributo deve ser positivo e compatível com duas casas decimais.'; end if;
  perform pg_advisory_xact_lock(hashtextextended(p_idempotency_key,0));
  select * into v_existing from public.bank_transactions where idempotency_key=p_idempotency_key;
- if found then if v_existing.transaction_type='tax_payment' and v_existing.account_id=p_account_id and v_existing.amount=p_amount and exists(select 1 from public.tax_collections tc where tc.id=v_existing.reference_id and tc.obligation_id=p_obligation_id and tc.amount=p_amount) then return v_existing.id; end if; raise exception 'Chave de idempotência já utilizada com dados diferentes.'; end if;
+ if found then if v_existing.transaction_type='tax_payment' and v_existing.account_id=p_account_id and v_existing.amount=p_amount and exists(select 1 from public.tax_collections tc where tc.id=v_existing.reference_id and tc.obligation_id=p_obligation_id and tc.amount=p_amount) and v_existing.actor_id=auth.uid() then return v_existing.id; end if; raise exception 'Chave de idempotência já utilizada com dados diferentes.'; end if;
  select * into o from public.tax_obligations where id=p_obligation_id and taxpayer_profile_id=auth.uid() for update;
  if not found or o.status not in ('open','partially_paid','overdue','pending_confirmation') then raise exception 'Obrigação tributária não encontrada ou indisponível.'; end if;
  select * into a from public.bank_accounts where id=p_account_id and owner_profile_id=auth.uid() for update;
@@ -793,7 +799,7 @@ revoke all on function public.bank_process_monthly_maintenance(uuid,date) from p
 revoke all on function public.bank_set_fee(uuid,text,numeric,uuid,boolean) from public,anon;
 revoke all on function public.bank_set_daily_limit(uuid,text,numeric,uuid) from public,anon;
 revoke all on function public.bank_set_credit_policy(uuid,numeric,integer,boolean) from public,anon;
-revoke all on function public.request_bank_loan(uuid,numeric,integer,numeric,text) from public,anon;
+revoke all on function public.request_bank_loan(uuid,numeric,integer,numeric,text,text) from public,anon;
 revoke all on function public.admin_review_bank_loan(uuid,text) from public,anon;
 revoke all on function public.pay_bank_loan_installment(uuid,uuid,text) from public,anon;
 revoke all on function public.get_my_bank_dashboard() from public,anon;
@@ -811,7 +817,7 @@ grant execute on function public.bank_set_daily_limit(uuid,text,numeric,uuid) to
 grant execute on function public.bank_set_credit_policy(uuid,numeric,integer,boolean) to authenticated;
 revoke all on function public.capitalize_bank_liquidity(uuid,uuid,numeric,text) from public,anon;
 grant execute on function public.capitalize_bank_liquidity(uuid,uuid,numeric,text) to authenticated;
-grant execute on function public.request_bank_loan(uuid,numeric,integer,numeric,text) to authenticated;
+grant execute on function public.request_bank_loan(uuid,numeric,integer,numeric,text,text) to authenticated;
 grant execute on function public.admin_review_bank_loan(uuid,text) to authenticated;
 grant execute on function public.pay_bank_loan_installment(uuid,uuid,text) to authenticated;
 grant execute on function public.get_my_bank_dashboard() to authenticated;
