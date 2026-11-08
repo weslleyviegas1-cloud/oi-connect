@@ -12,13 +12,13 @@ export function CompanyPortal({profile,notify}:Props){
  const [companies,setCompanies]=useState<Row[]>([]),[jobs,setJobs]=useState<Row[]>([]),[apps,setApps]=useState<Row[]>([]),[contracts,setContracts]=useState<Row[]>([]),[payroll,setPayroll]=useState<Row[]>([]);
  const [positions,setPositions]=useState<Row[]>([]),[accounts,setAccounts]=useState<Row[]>([]),[currencies,setCurrencies]=useState<Row[]>([]),[countries,setCountries]=useState<Row[]>([]),[taxRules,setTaxRules]=useState<Row[]>([]),[taxRecords,setTaxRecords]=useState<Row[]>([]),[financial,setFinancial]=useState<Row[]>([]),[payouts,setPayouts]=useState<Row[]>([]);
  const [selected,setSelected]=useState(""),[tab,setTab]=useState("companies"),[busy,setBusy]=useState(false),[loading,setLoading]=useState(true);
- const [legal,setLegal]=useState(""),[trade,setTrade]=useState(""),[city,setCity]=useState(""),[region,setRegion]=useState(""),[sector,setSector]=useState("commerce"),[kind,setKind]=useState("private"),[size,setSize]=useState("small_business"),[desc,setDesc]=useState(""),[capital,setCapital]=useState("0"),[currencyId,setCurrencyId]=useState("");
+ const [legal,setLegal]=useState(""),[trade,setTrade]=useState(""),[city,setCity]=useState(""),[region,setRegion]=useState(""),[sector,setSector]=useState("commerce"),[kind,setKind]=useState("private"),[size,setSize]=useState("small_business"),[desc,setDesc]=useState(""),[capital,setCapital]=useState("0"),[currencyId,setCurrencyId]=useState(""),[registerCountry,setRegisterCountry]=useState(profile.country_id??""),[governmentEntity,setGovernmentEntity]=useState("");
  const [positionTitle,setPositionTitle]=useState(""),[jobPosition,setJobPosition]=useState(""),[jobTitle,setJobTitle]=useState(""),[jobDesc,setJobDesc]=useState(""),[requirements,setRequirements]=useState(""),[jobSalary,setJobSalary]=useState(""),[openings,setOpenings]=useState("1");
  const [period,setPeriod]=useState(""),[gross,setGross]=useState(""),[deductions,setDeductions]=useState("0"),[payAccount,setPayAccount]=useState("");
  const [payoutContract,setPayoutContract]=useState(""),[employeeAccount,setEmployeeAccount]=useState("");
  const [fType,setFType]=useState("revenue"),[fCategory,setFCategory]=useState("sales"),[fDesc,setFDesc]=useState(""),[fAmount,setFAmount]=useState(""),[fStatus,setFStatus]=useState("planned");
  const [taxRule,setTaxRule]=useState(""),[taxDesc,setTaxDesc]=useState(""),[taxPeriod,setTaxPeriod]=useState(""),[taxBase,setTaxBase]=useState(""),[taxAmount,setTaxAmount]=useState("");
- const companiesIds=useMemo(()=>companies.map(c=>c.id),[companies]);
+ 
  const company=companies.find(c=>c.id===selected);
  const myContracts=contracts.filter(c=>c.employee_profile_id===profile.id);
  const myApps=apps.filter(a=>a.applicant_profile_id===profile.id);
@@ -30,7 +30,7 @@ export function CompanyPortal({profile,notify}:Props){
  const load=useCallback(async()=>{
   setLoading(true);
   try{
-   const [co,jo,ap,ct,pr,pos,ac,cu,cn,tr,tx,fr,pa]=await Promise.all([
+   const [co,jo,ap,ct,pr,pos,ac,cu,cn,tr,tx,fr,pa,bk,mi]=await Promise.all([
     supabase.from("companies").select("*,countries(name),currencies(internal_code,name,symbol)").order("created_at",{ascending:false}),
     supabase.from("job_openings").select("*,companies(legal_name,trade_name),currencies(internal_code,symbol),job_positions(title)").order("published_at",{ascending:false}).limit(100),
     supabase.from("job_applications").select("*").order("created_at",{ascending:false}).limit(200),
@@ -44,9 +44,11 @@ export function CompanyPortal({profile,notify}:Props){
     supabase.from("company_tax_records").select("*").order("created_at",{ascending:false}).limit(100),
     supabase.from("company_financial_records").select("*").order("created_at",{ascending:false}).limit(100),
     supabase.from("employment_payout_accounts").select("*"),
+    supabase.from("commercial_banks").select("id,name,bank_identifier,country_id,status").eq("status","active").order("name"),
+    supabase.from("ministries").select("id,name,country_id,status").eq("status","active").order("name"),
    ]);
-   for(const x of [co,jo,ap,ct,pr,pos,ac,cu,cn,tr,tx,fr,pa])if(x.error)throw x.error;
-   setCompanies(co.data??[]);setJobs(jo.data??[]);setApps(ap.data??[]);setContracts(ct.data??[]);setPayroll(pr.data??[]);setPositions(pos.data??[]);setAccounts(ac.data??[]);setCurrencies(cu.data??[]);setCountries(cn.data??[]);setTaxRules(tr.data??[]);setTaxRecords(tx.data??[]);setFinancial(fr.data??[]);setPayouts(pa.data??[]);
+   for(const x of [co,jo,ap,ct,pr,pos,ac,cu,cn,tr,tx,fr,pa,bk,mi])if(x.error)throw x.error;
+   setCompanies(co.data??[]);setJobs(jo.data??[]);setApps(ap.data??[]);setContracts(ct.data??[]);setPayroll(pr.data??[]);setPositions(pos.data??[]);setAccounts(ac.data??[]);setCurrencies(cu.data??[]);setCountries(cn.data??[]);setTaxRules(tr.data??[]);setTaxRecords(tx.data??[]);setFinancial(fr.data??[]);setPayouts(pa.data??[]);setBanks(bk.data??[]);setMinistries(mi.data??[]);
   }catch(e){notify("Falha ao carregar o módulo empresarial: "+(e instanceof Error?e.message:"erro desconhecido"));}
   finally{setLoading(false);}
  },[notify]);
@@ -56,7 +58,8 @@ export function CompanyPortal({profile,notify}:Props){
  const call=async(fn:string,args:Row,msg:string)=>{setBusy(true);try{const {error}=await supabase.rpc(fn as never,args as never);if(error)throw error;notify(msg);await load();return true;}catch(e){notify("Operação não concluída: "+(e instanceof Error?e.message:"erro desconhecido"));return false;}finally{setBusy(false);}};
  const submit=(e:FormEvent,fn:string,args:Row,msg:string)=>{e.preventDefault();void call(fn,args,msg);};
  const code=(id:string)=>currencies.find(x=>x.id===id)?.internal_code??"";
- const createCompany=(e:FormEvent)=>submit(e,"request_company_registration",{p_legal_name:legal,p_trade_name:trade||null,p_country_id:profile.country_id,p_city:city||null,p_region:region||null,p_sector:sector,p_company_type:kind,p_size_class:size,p_description:desc||null,p_declared_capital:Number(capital),p_currency_id:currencyId,p_government_entity_id:null,p_logo_url:null},"Solicitação empresarial enviada para aprovação.");
+ const createCompany=(e:FormEvent)=>submit(e,"request_company_registration",{p_legal_name:legal,p_trade_name:trade||null,p_country_id:registerCountry,p_city:city||null,p_region:region||null,p_sector:sector,p_company_type:kind,p_size_class:size,p_description:desc||null,p_declared_capital:Number(capital),p_currency_id:currencyId,p_government_entity_id:governmentEntity||null,p_logo_url:null},"Solicitação empresarial enviada para aprovação.");
+ const openAccount=(bankId:string)=>void call("open_company_bank_account",{p_company_id:selected,p_bank_id:bankId,p_currency_id:company?.currency_id},"Conta empresarial aberta sem saldo inicial.");
  const createPosition=()=>void call("company_upsert_position",{p_company_id:selected,p_position_id:null,p_title:positionTitle,p_description:null,p_department_id:null},"Cargo criado.");
  const publish=(e:FormEvent)=>submit(e,"company_open_job",{p_company_id:selected,p_position_id:jobPosition,p_title:jobTitle,p_description:jobDesc,p_requirements:requirements,p_salary:Number(jobSalary),p_currency_id:company?.currency_id,p_employment_type:"monthly",p_openings:Number(openings),p_city:company?.city,p_region:company?.region,p_deadline:null},"Vaga publicada.");
  const createPayroll=(e:FormEvent,c:Row)=>submit(e,"company_create_payroll",{p_company_id:selected,p_contract_id:c.id,p_period:period,p_gross:Number(gross||c.salary_amount),p_deductions:Number(deductions),p_tax_status:"not_configured"},"Folha criada. Calcule a tributação antes de aprovar.");
@@ -69,7 +72,6 @@ export function CompanyPortal({profile,notify}:Props){
  const accept=(id:string,yes:boolean)=>void call("respond_employment_offer",{p_contract_id:id,p_accept:yes},yes?"Contrato aceito.":"Oferta recusada.");
  const addFinancial=(e:FormEvent)=>submit(e,"company_record_financial_event",{p_company_id:selected,p_type:fType,p_category:fCategory,p_description:fDesc,p_amount:Number(fAmount),p_currency_id:company?.currency_id,p_status:fStatus,p_reference_type:null,p_reference_id:null},"Registro informativo salvo; saldo bancário não foi alterado.");
  const addTax=(e:FormEvent)=>submit(e,"company_create_tax_record",{p_company_id:selected,p_tax_rule_id:taxRule,p_description:taxDesc,p_period:taxPeriod,p_base:Number(taxBase),p_amount:Number(taxAmount)},"Registro tributário enviado para validação.");
- const openAccount=(bankId:string)=>void call("open_company_bank_account",{p_company_id:selected,p_bank_id:bankId,p_currency_id:company?.currency_id},"Conta empresarial aberta sem saldo inicial.");
  const publicJobs=jobs.filter(j=>j.status==="open"&&j.country_id===profile.country_id);
  if(loading)return <div className="we-empty">Carregando empresas, vagas, contratos e folha…</div>;
  return <div className="we-company">
@@ -82,11 +84,13 @@ export function CompanyPortal({profile,notify}:Props){
    </div>}</section>
    <section className="we-company-panel"><h2><Plus/> Solicitar registro</h2><form className="we-company-form" onSubmit={createCompany}>
     <label>Razão social<input value={legal} onChange={e=>setLegal(e.target.value)} required minLength={2}/></label><label>Nome fantasia<input value={trade} onChange={e=>setTrade(e.target.value)}/></label>
-    <div className="we-company-row"><label>Setor<select value={sector} onChange={e=>setSector(e.target.value)}>{sectors.map(([v,n])=><option value={v} key={v}>{n}</option>)}</select></label><label>Tipo<select value={kind} onChange={e=>setKind(e.target.value)}><option value="private">Privada</option><option value="partnership">Sociedade empresarial</option></select></label></div>
+    <div className="we-company-row"><label>Setor<select value={sector} onChange={e=>setSector(e.target.value)}>{sectors.map(([v,n])=><option value={v} key={v}>{n}</option>)}</select></label><label>Tipo<select value={kind} onChange={e=>setKind(e.target.value)}><option value="private">Privada</option><option value="partnership">Sociedade empresarial</option>{(profile.role==="president"||admin)&&<><option value="public">Pública</option><option value="state_owned">Estatal</option></>}</select></label></div>
     <div className="we-company-row"><label>Porte<select value={size} onChange={e=>setSize(e.target.value)}><option value="small_business">Pequeno negócio</option><option value="large_enterprise">Grande empresa</option></select></label><label>Capital declarado<input type="number" min="0" step="0.000001" value={capital} onChange={e=>setCapital(e.target.value)}/></label></div>
     <div className="we-company-row"><label>Cidade<input value={city} onChange={e=>setCity(e.target.value)}/></label><label>Região<input value={region} onChange={e=>setRegion(e.target.value)}/></label></div>
-    <label>Moeda nacional<select value={currencyId} onChange={e=>setCurrencyId(e.target.value)} required><option value="">Selecione</option>{currencies.filter(c=>c.internal_code===countries.find(x=>x.id===profile.country_id)?.currency_code).map(c=><option key={c.id} value={c.id}>{c.name} ({c.internal_code})</option>)}</select></label>
-    <label>Descrição<textarea value={desc} onChange={e=>setDesc(e.target.value)}/></label><button disabled={busy||!profile.country_id||!currencyId}>Enviar para aprovação</button>
+    <label>País de registro<select value={registerCountry} onChange={e=>{setRegisterCountry(e.target.value);setCurrencyId("");setGovernmentEntity("");}} required><option value="">Selecione</option>{countries.filter(c=>admin||c.id===profile.country_id).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
+    {(kind==="public"||kind==="state_owned")&&<label>Ministério responsável<select value={governmentEntity} onChange={e=>setGovernmentEntity(e.target.value)} required><option value="">Selecione</option>{ministries.filter(m=>m.country_id===registerCountry).map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select></label>}
+    <label>Moeda nacional<select value={currencyId} onChange={e=>setCurrencyId(e.target.value)} required><option value="">Selecione</option>{currencies.filter(c=>c.internal_code===countries.find(x=>x.id===registerCountry)?.currency_code).map(c=><option key={c.id} value={c.id}>{c.name} ({c.internal_code})</option>)}</select></label>
+    <label>Descrição<textarea value={desc} onChange={e=>setDesc(e.target.value)}/></label><button disabled={busy||!registerCountry||!currencyId||((kind==="public"||kind==="state_owned")&&!governmentEntity)}>Enviar para aprovação</button>
    </form><p className="we-note">Capital declarado é cadastral: não cria saldo. Empresas públicas/estatais exigem vínculo ministerial e autorização governamental.</p></section></div>}
   {tab==="jobs"&&<section className="we-company-panel"><h2><BriefcaseBusiness/> Vagas no seu país</h2>
    {publicJobs.map(j=><article className="we-company-item" key={j.id}><div><b>{j.title}</b><small>{j.companies?.trade_name||j.companies?.legal_name} · {money(j.salary_amount,j.currencies?.internal_code)}</small><p>{j.description}</p></div><button disabled={busy} onClick={e=>apply(e as unknown as FormEvent,j)}>Candidatar-se</button></article>)}
@@ -105,7 +109,7 @@ export function CompanyPortal({profile,notify}:Props){
   </article>)}</section>}
   {tab==="payroll"&&<section className="we-company-panel"><h2><Wallet/> Folha salarial</h2>{company&&<>
    <div className="we-company-row"><label>Período<input value={period} onChange={e=>setPeriod(e.target.value)} placeholder="2026-11"/></label><label>Conta empresarial<select value={payAccount} onChange={e=>setPayAccount(e.target.value)}><option value="">Selecione</option>{companyAccounts.map(a=><option key={a.id} value={a.id}>{a.bank?.name} · {a.account_number} · {money(a.balance,code(a.currency_id))}</option>)}</select></label></div>
-   <label className="we-company-bank-open">Abrir conta empresarial em banco ativo<select value="" onChange={e=>{if(e.target.value)openAccount(e.target.value)}}><option value="">Solicitar conta…</option>{accounts.filter(a=>!a.owner_company_id&&a.bank_id).map(a=><option key={a.bank_id} value={a.bank_id}>{a.bank?.name}</option>)}</select></label>
+   <label className="we-company-bank-open">Abrir conta empresarial em banco ativo<select value="" onChange={e=>{if(e.target.value)openAccount(e.target.value)}}><option value="">Solicitar conta…</option>{banks.filter(b=>b.country_id===company.country_id).map(b=><option key={b.id} value={b.id}>{b.name} ({b.bank_identifier})</option>)}</select></label>
    {ownedContracts.filter(c=>c.status==="active").map(c=><form className="we-company-row we-company-item" key={c.id} onSubmit={e=>createPayroll(e,c)}><span><b>{c.job_title}</b><small>{c.employee_profile_id.slice(0,8)} · {money(c.salary_amount,code(c.currency_id))}</small></span><label>Bruto<input type="number" step="0.000001" value={gross} onChange={e=>setGross(e.target.value)} placeholder={String(c.salary_amount)}/></label><label>Descontos<input type="number" step="0.000001" value={deductions} onChange={e=>setDeductions(e.target.value)}/></label><button disabled={busy||!period}>Gerar folha</button></form>)}
    <button disabled={busy||!payAccount||!period} onClick={payBatch}>Processar folha completa (atômica)</button>
   </>}
