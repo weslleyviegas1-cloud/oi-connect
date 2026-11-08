@@ -892,4 +892,66 @@ begin
  for f in select p.oid::regprocedure as signature from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='company_review_payroll_tax'
  loop execute format('revoke all on function %s from public,anon',f.signature); execute format('grant execute on function %s to authenticated',f.signature); end loop;
 end $etapa10$;
+
+create or replace function public.admin_issue_company_tax_obligation(p_tax_record_id uuid,p_due_date date default null)
+returns uuid language plpgsql security definer set search_path=public,auth as $function$
+declare r public.company_tax_records%rowtype; c public.companies%rowtype; v_id uuid; v_code text; v_rule public.tax_rules%rowtype;
+begin
+ if not public.is_world_admin() then raise exception 'Somente Super Admin pode constituir obrigação fiscal empresarial.'; end if;
+ select * into r from public.company_tax_records where id=p_tax_record_id for update;
+ if not found or r.status<>'pending_review' or r.tax_obligation_id is not null then raise exception 'Registro fiscal já validado ou indisponível.'; end if;
+ select * into c from public.companies where id=r.company_id;
+ select * into v_rule from public.tax_rules where id=r.tax_rule_id and country_id=c.country_id and status='active'
+  and current_date between effective_from and coalesce(effective_until,'infinity'::date);
+ if not found then raise exception 'A regra tributária não está mais ativa.'; end if;
+ select internal_code into v_code from public.currencies where id=r.currency_id and status='active';
+ if v_code is null or v_code<>(select currency_code from public.countries where id=c.country_id) then raise exception 'Moeda nacional mudou; concilie antes de constituir obrigação.'; end if;
+ insert into public.tax_obligations(country_id,tax_rule_id,taxpayer_company_id,taxpayer_label,reference_period,calculation_base,applied_rate,amount_due,currency_code_snapshot,due_date,status,created_by)
+ values(c.country_id,v_rule.id,c.trade_name, r.reference_period,r.tax_base,r.applied_rate,r.amount_due,v_code,p_due_date,'open',auth.uid())
+ returning id into v_id;
+ update public.company_tax_records set tax_obligation_id=v_id,status='validated',validated_by=auth.uid(),validated_at=now() where id=r.id;
+ perform public.company_audit(c.id,'company_tax_obligation_issued','company_tax_record',r.id,jsonb_build_object('tax_obligation_id',v_id,'amount',r.amount_due));
+ return v_id;
+end;
+$function$;
+
+create or replace function public.get_company_market_indicators(p_country_id uuid default null)
+returns jsonb language plpgsql stable security definer set search_path=public,auth as $function$
+declare v_country uuid; v_result jsonb;
+begin
+ if auth.uid() is null then raise exception 'Autenticação necessária.'; end if;
+ if public.is_world_admin() then v_country:=p_country_id;
+ else
+  select country_id into v_country from public.profiles where id=auth.uid();
+  if p_country_id is not null and p_country_id is distinct from v_country then raise exception 'Indicadores restritos ao país do usuário.'; end if;
+ end if;
+ if v_country is not null and not exists(select 1 from public.countries where id=v_country and is_active) then raise exception 'País inválido.'; end if;
+ select jsonb_build_object(
+  'country_id',v_country,
+  'companies_registered',(select count(*) from public.companies c where (v_country is null or c.country_id=v_country) and c.status<>'closed'),
+  'companies_active',(select count(*) from public.companies c where (v_country is null or c.country_id=v_country) and c.status='active'),
+  'employees_active',(select count(distinct e.employee_profile_id) from public.employment_contracts e join public.companies c on c.id=e.company_id where (v_country is null or c.country_id=v_country) and e.status='active'),
+  'open_positions',(select coalesce(sum(j.openings_count),0) from public.job_openings j where (v_country is null or j.country_id=v_country) and j.status='open' and (j.application_deadline is null or j.application_deadline>now())),
+  'applications',(select count(*) from public.job_applications a join public.job_openings j on j.id=a.opening_id where (v_country is null or j.country_id=v_country)),
+  'hires',(select count(*) from public.employment_history h join public.companies c on c.id=h.company_id where (v_country is null or c.country_id=v_country) and h.event_type='accepted'),
+  'terminations',(select count(*) from public.employment_history h join public.companies c on c.id=h.company_id where (v_country is null or c.country_id=v_country) and h.event_type in ('terminated','resigned','expired')),
+  'payroll_mass_by_currency',(select coalesce(jsonb_agg(jsonb_build_object('currency_id',x.currency_id,'currency_code',x.internal_code,'amount',x.total)), '[]'::jsonb) from (select p.currency_id,cu.internal_code,sum(p.gross_amount) total from public.payroll_records p join public.companies c on c.id=p.company_id join public.currencies cu on cu.id=p.currency_id where (v_country is null or c.country_id=v_country) and p.status='paid' group by p.currency_id,cu.internal_code) x),
+  'sector_distribution',(select coalesce(jsonb_agg(jsonb_build_object('sector',x.sector,'companies',x.total)), '[]'::jsonb) from (select c.sector,count(*) total from public.companies c where (v_country is null or c.country_id=v_country) and c.status='active' group by c.sector) x)
+ ) into v_result;
+ return v_result;
+end;
+$function$;
+
+revoke all on function public.admin_issue_company_tax_obligation(uuid,date) from public,anon;
+grant execute on function public.admin_issue_company_tax_obligation(uuid,date) to authenticated;
+revoke all on function public.get_company_market_indicators(uuid) from public,anon;
+grant execute on function public.get_company_market_indicators(uuid) to authenticated;
+
+
+do $etapa10$
+declare f record;
+begin
+ for f in select p.oid::regprocedure as signature from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in ('admin_issue_company_tax_obligation','get_company_market_indicators')
+ loop execute format('revoke all on function %s from public,anon',f.signature); execute format('grant execute on function %s to authenticated',f.signature); end loop;
+end $etapa10$;
 commit;
