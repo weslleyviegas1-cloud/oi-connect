@@ -19,6 +19,8 @@ export function CurrencyPortal({ profile, notify }: Props) {
   const [snapshot, setSnapshot] = useState<Snapshot>({ currencies: [], assignments: [], rates: [], reference_currency_id: null });
   const [countries, setCountries] = useState<Row[]>([]);
   const [history, setHistory] = useState<Row[]>([]);
+  const [currencyRequests, setCurrencyRequests] = useState<Row[]>([]);
+  const [requestReason, setRequestReason] = useState("");
   const [rateHistory, setRateHistory] = useState<Row[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -46,6 +48,9 @@ export function CurrencyPortal({ profile, notify }: Props) {
       const data = (snap.data ?? {}) as Snapshot;
       setSnapshot({ currencies: data.currencies ?? [], assignments: data.assignments ?? [], rates: data.rates ?? [], reference_currency_id: data.reference_currency_id ?? null });
       setReferenceId(data.reference_currency_id ?? "");
+      const requestResult = await supabase.from("currency_change_requests").select("*,currencies(name,internal_code)").order("created_at", { ascending: false }).limit(100);
+      if (requestResult.error) throw requestResult.error;
+      setCurrencyRequests(requestResult.data ?? []);
       if (isAdmin) {
         const [countryResult, eventResult, auditResult] = await Promise.all([
           supabase.from("countries").select("id,name,flag,currency_code").order("name"),
@@ -106,6 +111,22 @@ export function CurrencyPortal({ profile, notify }: Props) {
       p_country_id: assignmentForm.country_id, p_currency_id: assignmentForm.currency_id,
       p_effective_from: new Date().toISOString(), p_justification: assignmentForm.justification,
     }), "Moeda nacional atualizada. Os snapshots históricos foram preservados.");
+  };
+
+  const requestNationalCurrency = (e: FormEvent) => {
+    e.preventDefault();
+    if (!profile?.country_id || !assignmentForm.currency_id) return;
+    void run(() => supabase.rpc("request_country_currency_change", {
+      p_country_id: profile.country_id, p_currency_id: assignmentForm.currency_id, p_reason: requestReason,
+    }), "Solicitação enviada ao Super Admin.").then(result => { if (result) setRequestReason(""); });
+  };
+
+  const reviewCurrencyRequest = (id: string, decision: "approved" | "rejected") => {
+    const note = window.prompt("Observação da análise (obrigatória):");
+    if (!note || note.trim().length < 5) return;
+    void run(() => supabase.rpc("admin_review_currency_change_request", {
+      p_request_id: id, p_decision: decision, p_note: note.trim(),
+    }), decision === "approved" ? "Mudança de moeda aprovada." : "Solicitação rejeitada.");
   };
 
   const setReference = () => {
@@ -170,6 +191,8 @@ export function CurrencyPortal({ profile, notify }: Props) {
       {!currencies.length && <div className="currency-empty"><CircleAlert/> Ainda não existem moedas cadastradas. O Super Admin deverá criar as primeiras moedas antes de habilitar cotações.</div>}
       <div className="currency-panel"><h3><TrendingUp size={18}/> Evolução cambial registrada</h3>{chartRows.length > 1 ? <><p className="currency-hint">Histórico real de {byId.get(chartPair![0])?.internal_code} para {byId.get(chartPair![1])?.internal_code}. Não há preenchimento artificial de períodos sem cotação.</p><div className="currency-chart"><ResponsiveContainer width="100%" height="100%"><LineChart data={chartRows}><CartesianGrid stroke="#263b55" strokeDasharray="3 3"/><XAxis dataKey="effective_from" tickFormatter={(v)=>new Date(v).toLocaleDateString("pt-BR")} stroke="#91a7c2"/><YAxis stroke="#91a7c2" domain={["auto","auto"]}/><Tooltip labelFormatter={(v)=>dateTime(String(v))} formatter={(v)=>[fmt(v,8),"Taxa"]}/><Line type="monotone" dataKey="rate" stroke="#53b5ff" strokeWidth={2} dot={false}/></LineChart></ResponsiveContainer></div><p className="currency-hint">Variação entre o primeiro e o último registro do gráfico: {fmt(((Number(chartRows[chartRows.length-1]?.rate ?? 0)/Number(chartRows[0]?.rate ?? 1))-1)*100,2)}%.</p></> : <div className="currency-empty">Ainda não há histórico suficiente para desenhar um gráfico. Cadastre mais de uma versão de cotação para o par selecionado.</div>}</div>
 
+      {profile?.role === "president" && profile?.country_id && <div className="currency-panel"><h3>Solicitar alteração da moeda nacional</h3><form className="currency-form" onSubmit={requestNationalCurrency}><label>Moeda pretendida<select required value={assignmentForm.currency_id} onChange={e=>setAssignmentForm({...assignmentForm,currency_id:e.target.value})}><option value="">Selecione</option>{currencies.filter(c=>c.status==="active").map(c=><option key={c.id} value={c.id}>{c.name} ({c.internal_code})</option>)}</select></label><label>Justificativa<input required minLength={5} value={requestReason} onChange={e=>setRequestReason(e.target.value)} placeholder="Explique o motivo da solicitação"/></label><button className="currency-button" disabled={busy || !assignmentForm.currency_id}>Enviar solicitação</button></form><p className="currency-hint">A moeda do país só muda após análise e aprovação do Super Admin.</p></div>}
+      {isAdmin && <div className="currency-panel"><h3>Solicitações de mudança de moeda nacional</h3>{currencyRequests.filter(r=>r.status==="pending").length ? currencyRequests.filter(r=>r.status==="pending").map(r=><article className="currency-request" key={r.id}><div><strong>{r.currencies?.name ?? "Moeda solicitada"} ({r.currencies?.internal_code ?? "—"})</strong><p>País ID: {r.country_id}</p><small>{r.reason} · {dateTime(r.created_at)}</small></div><div className="currency-request-actions"><button className="currency-button" disabled={busy} onClick={()=>reviewCurrencyRequest(r.id,"approved")}>Aprovar</button><button className="currency-text-button" disabled={busy} onClick={()=>reviewCurrencyRequest(r.id,"rejected")}>Rejeitar</button></div></article>) : <div className="currency-empty">Não há solicitações pendentes.</div>}</div>}
       {isAdmin && <div className="currency-panel"><h3><Settings2 size={17}/> Moeda de referência internacional</h3><div className="currency-inline"><select value={referenceId} onChange={e=>setReferenceId(e.target.value)}><option value="">Selecione a moeda</option>{currencies.map(c=><option key={c.id} value={c.id}>{c.name} ({c.internal_code})</option>)}</select><button className="currency-button" disabled={busy || !referenceId} onClick={setReference}>Definir referência</button></div><p className="currency-hint">A moeda de referência é usada somente para comparações dentro da simulação. Não representa moeda real.</p></div>}
     </>}
 
