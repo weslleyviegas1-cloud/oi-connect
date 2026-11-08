@@ -211,14 +211,13 @@ $function$;
 create or replace function public.bank_deposit(
  p_account_id uuid,p_amount numeric,p_idempotency_key text
 ) returns uuid language plpgsql security definer set search_path=public,auth as $function$
-declare a public.bank_accounts%rowtype; w public.bank_cash_wallets%rowtype; v_id uuid;
+declare a public.bank_accounts%rowtype; w public.bank_cash_wallets%rowtype; v_id uuid; v_existing public.bank_transactions%rowtype;
 begin
  if auth.uid() is null then raise exception 'Autenticação necessária.'; end if;
  if p_amount is null or p_amount<=0 or p_amount<>round(p_amount,6) or length(trim(coalesce(p_idempotency_key,'')))<12 then raise exception 'Valor ou chave de idempotência inválidos.'; end if;
  perform pg_advisory_xact_lock(hashtextextended(p_idempotency_key,0));
- select id into v_id from public.bank_transactions where idempotency_key=p_idempotency_key and transaction_type='deposit';
- if v_id is not null then return v_id; end if;
- if exists(select 1 from public.bank_transactions where idempotency_key=p_idempotency_key) then raise exception 'Chave de idempotência já utilizada por outra operação.'; end if;
+ select * into v_existing from public.bank_transactions where idempotency_key=p_idempotency_key;
+ if found then if v_existing.transaction_type='deposit' and v_existing.account_id=p_account_id and v_existing.amount=p_amount and v_existing.actor_id=auth.uid() then return v_existing.id; end if; raise exception 'Chave de idempotência já utilizada com dados diferentes.'; end if;
  select * into a from public.bank_accounts where id=p_account_id for update;
  if not found or a.owner_profile_id<>auth.uid() or a.status<>'active' then raise exception 'Conta de destino inválida.'; end if;
  if not exists(select 1 from public.commercial_banks b where b.id=a.bank_id and b.status='active') then raise exception 'Banco indisponível.'; end if;
@@ -238,14 +237,13 @@ $function$;
 create or replace function public.bank_withdraw(
  p_account_id uuid,p_amount numeric,p_idempotency_key text
 ) returns uuid language plpgsql security definer set search_path=public,auth as $function$
-declare a public.bank_accounts%rowtype; w public.bank_cash_wallets%rowtype; v_fee numeric:=0; v_limit numeric; v_id uuid; v_after numeric; v_liquidity_after numeric;
+declare a public.bank_accounts%rowtype; w public.bank_cash_wallets%rowtype; v_fee numeric:=0; v_limit numeric; v_id uuid; v_after numeric; v_liquidity_after numeric; v_existing public.bank_transactions%rowtype;
 begin
  if auth.uid() is null then raise exception 'Autenticação necessária.'; end if;
  if p_amount is null or p_amount<=0 or length(trim(coalesce(p_idempotency_key,'')))<12 then raise exception 'Valor ou chave de idempotência inválidos.'; end if;
  perform pg_advisory_xact_lock(hashtextextended(p_idempotency_key,0));
- select id into v_id from public.bank_transactions where idempotency_key=p_idempotency_key and transaction_type='withdrawal';
- if v_id is not null then return v_id; end if;
- if exists(select 1 from public.bank_transactions where idempotency_key=p_idempotency_key) then raise exception 'Chave de idempotência já utilizada por outra operação.'; end if;
+ select * into v_existing from public.bank_transactions where idempotency_key=p_idempotency_key;
+ if found then if v_existing.transaction_type='withdrawal' and v_existing.account_id=p_account_id and v_existing.amount=p_amount and v_existing.actor_id=auth.uid() then return v_existing.id; end if; raise exception 'Chave de idempotência já utilizada com dados diferentes.'; end if;
  select * into a from public.bank_accounts where id=p_account_id for update;
  if not found or a.owner_profile_id<>auth.uid() or a.status<>'active' then raise exception 'Conta de origem inválida.'; end if;
  if not exists(select 1 from public.commercial_banks b where b.id=a.bank_id and b.status='active') then raise exception 'Banco indisponível.'; end if;
@@ -279,13 +277,13 @@ $function$;
 create or replace function public.bank_transfer(
  p_from_account uuid,p_to_account uuid,p_amount numeric,p_idempotency_key text,p_description text default null
 ) returns uuid language plpgsql security definer set search_path=public,auth as $function$
-declare a public.bank_accounts%rowtype; b public.bank_accounts%rowtype; v_id uuid; v_rate numeric:=1; v_rate_id uuid; v_received numeric; v_fee numeric:=0; v_limit numeric; v_liquidity_after numeric;
+declare a public.bank_accounts%rowtype; b public.bank_accounts%rowtype; v_id uuid; v_rate numeric:=1; v_rate_id uuid; v_received numeric; v_fee numeric:=0; v_limit numeric; v_liquidity_after numeric; v_existing public.bank_transfers%rowtype;
 begin
  if auth.uid() is null then raise exception 'Autenticação necessária.'; end if;
  if p_amount is null or p_amount<=0 or length(trim(coalesce(p_idempotency_key,'')))<12 then raise exception 'Valor ou chave de idempotência inválidos.'; end if;
  perform pg_advisory_xact_lock(hashtextextended(p_idempotency_key,0));
- select id into v_id from public.bank_transfers where idempotency_key=p_idempotency_key;
- if v_id is not null then return v_id; end if;
+ select * into v_existing from public.bank_transfers where idempotency_key=p_idempotency_key;
+ if found then if v_existing.from_account_id=p_from_account and v_existing.to_account_id=p_to_account and v_existing.amount_sent=p_amount and v_existing.initiated_by=auth.uid() then return v_existing.id; end if; raise exception 'Chave de idempotência já utilizada com dados diferentes.'; end if;
  if exists(select 1 from public.bank_transactions where idempotency_key=p_idempotency_key) then raise exception 'Chave de idempotência já utilizada por outra operação.'; end if;
  if p_from_account=p_to_account then raise exception 'A origem e o destino devem ser contas diferentes.'; end if;
  perform 1 from public.bank_accounts where id in (p_from_account,p_to_account) order by id for update;
@@ -531,14 +529,15 @@ $function$;
 
 create or replace function public.pay_bank_loan_installment(p_installment_id uuid,p_from_account uuid,p_idempotency_key text)
 returns void language plpgsql security definer set search_path=public,auth as $function$
-declare ins public.loan_installments%rowtype; l public.bank_loans%rowtype; a public.bank_accounts%rowtype; v_due numeric; v_id uuid; v_liquidity_after numeric;
+declare ins public.loan_installments%rowtype; l public.bank_loans%rowtype; a public.bank_accounts%rowtype; v_due numeric; v_id uuid; v_liquidity_after numeric; v_existing public.bank_transactions%rowtype;
 begin
  if auth.uid() is null or length(trim(coalesce(p_idempotency_key,'')))<12 then raise exception 'Autenticação ou chave de idempotência inválida.'; end if;
  perform pg_advisory_xact_lock(hashtextextended(p_idempotency_key,0));
- if exists(select 1 from public.bank_transactions where idempotency_key=p_idempotency_key and transaction_type='loan_payment') then return; end if;
- if exists(select 1 from public.bank_transactions where idempotency_key=p_idempotency_key) then raise exception 'Chave de idempotência já utilizada por outra operação.'; end if;
+ select * into v_existing from public.bank_transactions where idempotency_key=p_idempotency_key;
+ if found then if v_existing.transaction_type='loan_payment' and v_existing.account_id=p_from_account and v_existing.reference_id=p_installment_id and v_existing.actor_id=auth.uid() then return; end if; raise exception 'Chave de idempotência já utilizada com dados diferentes.'; end if;
  select * into ins from public.loan_installments where id=p_installment_id for update;
  if not found then raise exception 'Parcela inexistente.'; end if;
+ if ins.status='paid' or ins.amount_paid>=ins.amount_due then raise exception 'Esta parcela já foi quitada.'; end if;
  select * into l from public.bank_loans where id=ins.loan_id for update;
  if l.borrower_profile_id<>auth.uid() or l.status<>'active' then raise exception 'Parcela não pertence ao usuário ou empréstimo inativo.'; end if;
  select * into a from public.bank_accounts where id=p_from_account and owner_profile_id=auth.uid() and status='active' for update;
@@ -548,7 +547,7 @@ begin
  update public.bank_accounts set balance=balance-v_due where id=a.id returning * into a;
  update public.loan_installments set amount_paid=amount_due,paid_at=now(),status='paid' where id=ins.id;
  insert into public.bank_transactions(account_id,transaction_type,amount,currency_id,balance_after,description,reference_id,idempotency_key,actor_id)
- values(a.id,'loan_payment',v_due,a.currency_id,a.balance,'Pagamento de parcela de empréstimo',l.id,p_idempotency_key,auth.uid()) returning id into v_id;
+ values(a.id,'loan_payment',v_due,a.currency_id,a.balance,'Pagamento de parcela de empréstimo',ins.id,p_idempotency_key,auth.uid()) returning id into v_id;
  insert into public.bank_liquidity(bank_id,currency_id,balance) values(l.bank_id,l.currency_id,v_due)
  on conflict(bank_id,currency_id) do update set balance=bank_liquidity.balance+excluded.balance,updated_at=now() returning balance into v_liquidity_after;
  insert into public.bank_liquidity_transactions(bank_id,currency_id,transaction_type,amount,balance_after,reference_id,idempotency_key,description,actor_id)
@@ -561,15 +560,14 @@ $function$;
 create or replace function public.pay_tax_obligation_from_bank_account(
  p_obligation_id uuid,p_account_id uuid,p_amount numeric,p_idempotency_key text
 ) returns uuid language plpgsql security definer set search_path=public,auth as $function$
-declare o public.tax_obligations%rowtype; a public.bank_accounts%rowtype; t public.national_treasuries%rowtype;
+declare o public.tax_obligations%rowtype; a public.bank_accounts%rowtype; t public.national_treasuries%rowtype; v_existing public.bank_transactions%rowtype;
  v_paid numeric; v_remaining numeric; v_id uuid; v_currency_code text;
 begin
  if auth.uid() is null or length(trim(coalesce(p_idempotency_key,'')))<12 then raise exception 'Autenticação ou chave de idempotência inválida.'; end if;
  if p_amount is null or p_amount<=0 or p_amount<>round(p_amount,2) then raise exception 'O valor do tributo deve ser positivo e compatível com duas casas decimais.'; end if;
  perform pg_advisory_xact_lock(hashtextextended(p_idempotency_key,0));
- select id into v_id from public.bank_transactions where idempotency_key=p_idempotency_key and transaction_type='tax_payment';
- if v_id is not null then return v_id; end if;
- if exists(select 1 from public.bank_transactions where idempotency_key=p_idempotency_key) then raise exception 'Chave de idempotência já utilizada por outra operação.'; end if;
+ select * into v_existing from public.bank_transactions where idempotency_key=p_idempotency_key;
+ if found then if v_existing.transaction_type='tax_payment' and v_existing.account_id=p_account_id and v_existing.amount=p_amount and exists(select 1 from public.tax_collections tc where tc.id=v_existing.reference_id and tc.obligation_id=p_obligation_id and tc.amount=p_amount) then return v_existing.id; end if; raise exception 'Chave de idempotência já utilizada com dados diferentes.'; end if;
  select * into o from public.tax_obligations where id=p_obligation_id and taxpayer_profile_id=auth.uid() for update;
  if not found or o.status not in ('open','partially_paid','overdue','pending_confirmation') then raise exception 'Obrigação tributária não encontrada ou indisponível.'; end if;
  select * into a from public.bank_accounts where id=p_account_id and owner_profile_id=auth.uid() for update;
