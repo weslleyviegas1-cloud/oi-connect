@@ -363,6 +363,7 @@ begin
   if not public.is_world_admin() then raise exception 'Somente o Super Admin pode aprovar emissões.'; end if;
   select * into r from public.monetary_issuances where id=p_request_id for update;
   if not found or r.status<>'pending' then raise exception 'Solicitação inexistente ou já revisada.'; end if;
+  perform 1 from public.central_banks where id=r.central_bank_id for update;
   select * into s from public.central_bank_settings where central_bank_id=r.central_bank_id;
   if p_approve then
     select coalesce(sum(amount),0) into v_total from public.money_supply_records where country_id=r.country_id and operation_type='issuance';
@@ -387,6 +388,7 @@ begin
   select * into b from public.central_banks where id=p_bank_id and status='active' for update;
   if not found then raise exception 'Banco Central indisponível.'; end if;
   if not public.has_central_bank_permission(b.country_id,'withdrawal.request') then raise exception 'Sem permissão para solicitar retirada.'; end if;
+  select * into s from public.central_bank_settings where central_bank_id=b.id;
   select coalesce(sum(case when operation_type='issuance' then amount else -amount end),0) into v_supply from public.money_supply_records where country_id=b.country_id;
   select coalesce(sum(amount),0) into v_pending from public.monetary_withdrawals where country_id=b.country_id and status='pending';
   if p_amount>v_supply-v_pending then raise exception 'A retirada supera a oferta monetária disponível.'; end if;
@@ -410,6 +412,7 @@ begin
   select * into r from public.monetary_withdrawals where id=p_request_id for update;
   if not found or r.status<>'pending' then raise exception 'Solicitação inexistente ou já revisada.'; end if;
   if p_approve then
+    perform 1 from public.central_banks where id=r.central_bank_id for update;
     select coalesce(sum(case when operation_type='issuance' then amount else -amount end),0) into v_supply from public.money_supply_records where country_id=r.country_id;
     select coalesce(sum(amount),0) into v_pending from public.monetary_withdrawals where country_id=r.country_id and status='pending' and id<>r.id;
     if r.amount>v_supply-v_pending then raise exception 'A oferta disponível mudou; a retirada não pode ser aprovada.'; end if;
@@ -599,7 +602,8 @@ begin
       'circulating',coalesce((select sum(case when operation_type='issuance' then amount else -amount end) from public.money_supply_records where country_id=v_country),0)
     ),
     'reserves',case when public.has_central_bank_permission(v_country,'reserves.manage') then coalesce((select jsonb_agg(jsonb_build_object('currency_id',r.currency_id,'currency_code',c.internal_code,'currency_name',c.name,'asset_type',r.asset_type,'amount',r.amount,'national_amount',r.national_amount,'direction',r.direction,'exchange_rate_id',r.exchange_rate_id,'created_at',r.created_at) order by r.created_at desc) from public.central_bank_reserves r join public.currencies c on c.id=r.currency_id where r.central_bank_id=v_bank.id),'[]'::jsonb) else '[]'::jsonb end,
-    'reserve_total',case when public.has_central_bank_permission(v_country,'reserves.manage') then coalesce((select sum(case when direction='increase' then national_amount else -national_amount end) from public.central_bank_reserves where central_bank_id=v_bank.id),0) else null end,\n    'reference_currency_id',v_ref_currency_id,'reserve_reference_conversion',v_ref_conversion,
+    'reserve_total',case when public.has_central_bank_permission(v_country,'reserves.manage') then coalesce((select sum(case when direction='increase' then national_amount else -national_amount end) from public.central_bank_reserves where central_bank_id=v_bank.id),0) else null end,
+    'reference_currency_id',v_ref_currency_id,'reserve_reference_conversion',v_ref_conversion,
     'interest_rate',(select annual_rate from public.interest_rate_records where country_id=v_country and status='active' and effective_from<=current_date and (effective_until is null or effective_until>current_date) order by effective_from desc limit 1),
     'interest_history',coalesce((select jsonb_agg(to_jsonb(i) order by i.effective_from desc) from public.interest_rate_records i where i.country_id=v_country and (v_can_manage or i.status='active')),'[]'::jsonb),
     'inflation',v_economy->'inflation','ipc',v_economy->'ipc','inflation_history',v_economy->'inflation_history',
