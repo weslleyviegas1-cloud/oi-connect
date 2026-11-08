@@ -622,6 +622,10 @@ begin
     if p_reference_date<=v_weight_date then raise exception 'A nova ponderação deve começar em uma data posterior à ponderação vigente.'; end if;
     insert into public.economic_price_item_weights(item_id,country_id,weight,effective_from,created_by)
     values(v_item,p_country_id,p_weight,p_reference_date,auth.uid());
+  elsif p_reference_date<v_weight_date and not exists(select 1 from public.economic_price_item_weights
+    where item_id=v_item and effective_from=p_reference_date) then
+    insert into public.economic_price_item_weights(item_id,country_id,weight,effective_from,created_by)
+    values(v_item,p_country_id,p_weight,p_reference_date,auth.uid());
   end if;
   insert into public.economic_price_observation_history(observation_id,previous_price,previous_recorded_by,revised_by)
   select id,price,recorded_by,auth.uid() from public.economic_price_observations
