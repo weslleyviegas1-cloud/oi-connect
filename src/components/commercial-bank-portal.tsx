@@ -48,7 +48,7 @@ export function CommercialBankPortal({profile,notify}:{profile:Profile;notify:(s
   setLoading(false);
  },[notify]);
  useEffect(()=>{void load()},[load]);
- useEffect(()=>{if(!selectedBank&&data.banks.length)setSelectedBank((data.banks.find(b=>b.status==="active")??data.banks[0]).id)},[data.banks,selectedBank]);
+ useEffect(()=>{const nextBank=data.banks?.find(b=>b.status==="active")??data.banks?.[0];if(!selectedBank&&nextBank)setSelectedBank(nextBank.id)},[data.banks,selectedBank]);
  const call=async(fn:string,args:Record<string,unknown>,message:string)=>{
   setBusy(true);
   try{const {error}=await supabase.rpc(fn as never,args as never);if(error)throw error;notify(message);await load();return true;}
@@ -80,9 +80,10 @@ export function CommercialBankPortal({profile,notify}:{profile:Profile;notify:(s
  const activeAccounts=accounts.filter(a=>a.status==="active");
  const selectedAccount=accounts.find(a=>a.id===operationAccount);
  const overview=data.bank_overview;
+ const tabItems:Array<[string,string]>=[["contas","Minhas contas"],["carteira","Carteira em dinheiro"],["abrir","Abrir conta"],["depositar","Depositar"],["sacar","Sacar"],["transferir","Transferir"],["impostos","Impostos"],["credito","Empréstimos"],...(canManageBanks?[["gestao","Gestão bancária"] as [string,string]]:[])];
  return <div className="cbank-root">
   <header className="cbank-head"><div><small>WORLD ECONOMY / SISTEMA BANCÁRIO</small><h2>Minha Conta Bancária</h2><p>Dinheiro, contas, transferências, crédito e extratos registrados no Supabase.</p></div><button onClick={()=>void load()} disabled={loading}><RefreshCw size={16}/> Atualizar</button></header>
-  <nav className="cbank-tabs">{[["contas","Minhas contas"],["carteira","Carteira em dinheiro"],["abrir","Abrir conta"],["depositar","Depositar"],["sacar","Sacar"],["transferir","Transferir"],["impostos","Impostos"],["credito","Empréstimos"],...(canManageBanks?[["gestao","Gestão bancária"]]:[])].map(([id,label])=><button key={id} className={tab===id?"active":""} onClick={()=>setTab(id)}>{label}</button>)}</nav>
+  <nav className="cbank-tabs">{tabItems.map(([id,label])=><button key={id} className={tab===id?"active":""} onClick={()=>setTab(id)}>{label}</button>)}</nav>
   {loading?<p className="cbank-muted">Carregando dados bancários…</p>:<>
   {tab==="contas"&&<><div className="cbank-cards">{accounts.map(a=><article key={a.id} className="cbank-account"><span><Landmark size={19}/>{a.bank_name}</span><small>{a.account_type==="checking"?"Conta corrente":a.account_type==="savings"?"Conta poupança":a.account_type} · {a.account_number}</small><strong>{fmt(Number(a.balance),a.currency_code)}</strong><em>{a.currency_code} · {a.status==="active"?"Ativa":a.status}</em></article>)}</div>{accounts.length===0&&<div className="cbank-empty"><Wallet/><b>Você ainda não possui conta bancária.</b><p>Abra uma conta em um banco ativo do seu país.</p><button onClick={()=>setTab("abrir")}>Abrir minha primeira conta</button></div>}
   <section className="cbank-panel"><h3>Extrato bancário</h3><div className="cbank-table"><table><thead><tr><th>Data</th><th>Descrição</th><th>Tipo</th><th>Valor</th><th>Saldo após</th><th>Situação</th></tr></thead><tbody>{(data.transactions??[]).map(t=><tr key={t.id}><td>{date(t.created_at)}</td><td>{t.description}</td><td>{t.type}</td><td>{Number(t.amount).toLocaleString("pt-BR",{maximumFractionDigits:6})}</td><td>{Number(t.balance_after).toLocaleString("pt-BR",{maximumFractionDigits:6})}</td><td>{t.status}</td></tr>)}</tbody></table>{!data.transactions?.length&&<p className="cbank-muted">Nenhuma movimentação registrada.</p>}</div></section></>}
