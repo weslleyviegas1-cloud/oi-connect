@@ -79,7 +79,7 @@ export function EconomyPortal({ profile, notify }: Props) {
         gQuery, pQuery, trQuery, obQuery, leQuery, buQuery, alQuery, prQuery,
         selected ? supabase.from("national_treasuries").select("*").eq("country_id", selected).maybeSingle() : Promise.resolve({ data: null, error: null }),
         selected ? supabase.from("ministries").select("id,name").eq("country_id", selected).eq("status","active").order("name") : Promise.resolve({ data: [], error: null }),
-        collectionQuery,
+        collectionQuery, auditQuery,
       ]);
       if (dash.error) throw dash.error;
       setDashboard(dash.data);
