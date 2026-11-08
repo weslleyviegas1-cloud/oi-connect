@@ -564,7 +564,7 @@ begin
           from public.countries c where c.is_active
         ) country_index where country_index.inflation is not null),
         'countries',(select coalesce(jsonb_agg(jsonb_build_object('id',c.id,'name',c.name,'flag',c.flag,'continent',c.continent,'is_active',c.is_active,
-          'currency_code',t.currency_code,'currency_label',t.currency_label,
+          'currency_code',t.currency_code,'currency_label',t.currency_label,'operations_suspended',t.operations_suspended,
           'treasury_balance',case when (t.opening_balance=0 or t.opening_balance_currency_code_snapshot=coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))
             and not exists(select 1 from public.treasury_ledger_entries x where x.country_id=c.id
               and x.currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))
