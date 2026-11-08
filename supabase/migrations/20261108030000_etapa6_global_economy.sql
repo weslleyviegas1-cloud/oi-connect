@@ -47,7 +47,7 @@ drop policy if exists gdp_revision_history_read on public.economic_gdp_revision_
 create policy gdp_revision_history_read on public.economic_gdp_revision_history for select to authenticated
 using (exists(select 1 from public.economic_gdp_records r where r.id=gdp_record_id
   and (public.is_world_admin() or public.is_country_president(r.country_id)
-    or public.has_government_permission(r.country_id,'economy.read',null,null))));
+    or public.has_economy_permission(r.country_id,'economy.read'))));
 revoke all on public.economic_gdp_revision_history from public,anon,authenticated;
 grant select on public.economic_gdp_revision_history to authenticated;
 
@@ -251,13 +251,29 @@ create index if not exists treasury_ledger_country_date_idx on public.treasury_l
 create index if not exists budget_plans_country_period_idx on public.budget_plans(country_id,period_start,period_end);
 create index if not exists investments_country_status_idx on public.public_investment_projects(country_id,status,created_at desc);
 
+create or replace function public.has_economy_permission(p_country_id uuid,p_permission text)
+returns boolean language sql stable security definer set search_path=public,auth as $
+  select auth.uid() is not null and exists(
+    select 1 from public.government_members gm
+    join public.government_member_permissions gp on gp.member_id=gm.id and gp.country_id=gm.country_id
+    join public.profiles member_profile on member_profile.id=gm.profile_id
+      and coalesce(member_profile.account_status,'active')='active'
+      and member_profile.registration_status='active'
+    where gm.profile_id=auth.uid() and gm.country_id=p_country_id and gm.status='active'
+      and gp.permission_key in (p_permission,'economy.manage')
+      and (gp.scope_type='country'
+        or (gp.scope_type='ministry' and gp.scope_id=gm.ministry_id)
+        or (gp.scope_type='department' and gp.scope_id=gm.department_id))
+      and exists(select 1 from public.countries c where c.id=p_country_id and c.is_active)
+  );
+$;
+
 create or replace function public.can_manage_economy(p_country_id uuid,p_permission text)
 returns boolean language sql stable security definer set search_path=public,auth as $$
   select auth.uid() is not null and (
     public.is_world_admin()
     or public.is_country_president(p_country_id)
-    or public.has_government_permission(p_country_id,p_permission,null,null)
-    or public.has_government_permission(p_country_id,'economy.manage',null,null)
+    or public.has_economy_permission(p_country_id,p_permission)
   );
 $$;
 
@@ -313,7 +329,7 @@ alter table public.economic_audit_logs enable row level security;
 drop policy if exists treasury_read_scoped on public.national_treasuries;
 create policy treasury_read_scoped on public.national_treasuries for select to authenticated
 using (public.is_world_admin() or public.is_country_president(country_id)
-  or public.has_government_permission(country_id,'economy.read',null,null)
+  or public.has_economy_permission(country_id,'economy.read')
   or (public.is_government_country_citizen(country_id) and public_balance_visible));
 drop policy if exists gdp_read_scoped on public.economic_gdp_records;
 create policy gdp_read_scoped on public.economic_gdp_records for select to authenticated
@@ -339,7 +355,7 @@ using (public.is_world_admin() or public.is_country_president(country_id)
 drop policy if exists tax_rules_read_scoped on public.tax_rules;
 create policy tax_rules_read_scoped on public.tax_rules for select to authenticated
 using (public.is_world_admin() or public.is_country_president(country_id)
-  or public.has_government_permission(country_id,'tax.read',null,null)
+  or public.has_economy_permission(country_id,'tax.read')
   or (status='active' and public.is_government_country_citizen(country_id)));
 drop policy if exists tax_obligations_read_scoped on public.tax_obligations;
 create policy tax_obligations_read_scoped on public.tax_obligations for select to authenticated
@@ -353,7 +369,7 @@ using (public.is_world_admin() or public.is_country_president(country_id)
 drop policy if exists ledger_read_scoped on public.treasury_ledger_entries;
 create policy ledger_read_scoped on public.treasury_ledger_entries for select to authenticated
 using (public.is_world_admin() or public.is_country_president(country_id)
-  or public.has_government_permission(country_id,'treasury.read',null,null)
+  or public.has_economy_permission(country_id,'treasury.read')
   or (public.is_government_country_citizen(country_id) and exists(
     select 1 from public.national_treasuries t where t.country_id=treasury_ledger_entries.country_id and t.public_balance_visible)));
 drop policy if exists budget_read_scoped on public.budget_plans;
@@ -365,12 +381,12 @@ drop policy if exists allocation_read_scoped on public.budget_allocations;
 create policy allocation_read_scoped on public.budget_allocations for select to authenticated
 using (exists(select 1 from public.budget_plans b where b.id=budget_plan_id
   and (public.is_world_admin() or public.is_country_president(b.country_id)
-    or public.has_government_permission(b.country_id,'budget.read',null,null)
+    or public.has_economy_permission(b.country_id,'budget.read')
     or (b.status in ('approved','in_execution','closed') and public.is_government_country_citizen(b.country_id)))));
 drop policy if exists investment_read_scoped on public.public_investment_projects;
 create policy investment_read_scoped on public.public_investment_projects for select to authenticated
 using (public.is_world_admin() or public.is_country_president(country_id)
-  or public.has_government_permission(country_id,'investment.read',null,null)
+  or public.has_economy_permission(country_id,'investment.read')
   or (status in ('approved','in_progress','completed') and public.is_government_country_citizen(country_id)));
 drop policy if exists economic_audit_read_scoped on public.economic_audit_logs;
 create policy economic_audit_read_scoped on public.economic_audit_logs for select to authenticated
@@ -464,10 +480,10 @@ begin
     end if;
     if v_country is null or not (
       public.is_country_president(v_country)
-      or public.has_government_permission(v_country,'economy.read',null,null)
-      or public.has_government_permission(v_country,'economy.manage',null,null)
-      or public.has_government_permission(v_country,'treasury.read',null,null)
-      or public.has_government_permission(v_country,'tax.read',null,null)
+      or public.has_economy_permission(v_country,'economy.read')
+      or public.has_economy_permission(v_country,'economy.manage')
+      or public.has_economy_permission(v_country,'treasury.read')
+      or public.has_economy_permission(v_country,'tax.read')
       or public.is_government_country_citizen(v_country)
     ) then raise exception 'Sem permissão para consultar a economia deste país.'; end if;
   end if;
@@ -489,8 +505,8 @@ begin
       when x.entry_type='reversal' and exists(select 1 from public.treasury_ledger_entries original where original.id=x.reverses_entry_id and original.entry_type='expense') then -x.amount else 0 end),0)
       from public.treasury_ledger_entries x where x.country_id=c.id),
     'treasury_balance',case when public.is_world_admin() or public.is_country_president(c.id)
-      or public.has_government_permission(c.id,'treasury.read',null,null)
-      or public.has_government_permission(c.id,'economy.read',null,null)
+      or public.has_economy_permission(c.id,'treasury.read')
+      or public.has_economy_permission(c.id,'economy.read')
       or t.public_balance_visible then t.opening_balance+(select coalesce(sum(signed_amount),0) from public.treasury_ledger_entries where country_id=c.id) else null end,
     'tax_collected',(select coalesce(sum(amount),0) from public.tax_collections where country_id=c.id),
     'tax_open',(select coalesce(sum(greatest(o.amount_due-coalesce((select sum(col.amount) from public.tax_collections col where col.obligation_id=o.id),0),0)),0) from public.tax_obligations o where o.country_id=c.id and o.status in ('open','pending_confirmation','partially_paid','overdue')),
@@ -828,6 +844,8 @@ $$;
 
 -- Nenhuma tabela de dinheiro pessoal, banco comercial, câmbio ou Banco Central é criada nesta etapa.
 revoke all on function public.can_manage_economy(uuid,text) from public,anon;
+revoke all on function public.has_economy_permission(uuid,text) from public,anon;
+grant execute on function public.has_economy_permission(uuid,text) to authenticated;
 revoke all on function public.economy_audit(uuid,text,text,uuid,jsonb,jsonb) from public,anon,authenticated;
 revoke all on function public.get_economy_dashboard(uuid) from public,anon;
 revoke all on function public.save_gdp_record(uuid,date,date,jsonb,text) from public,anon;
