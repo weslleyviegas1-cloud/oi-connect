@@ -127,7 +127,7 @@ export function EconomyPortal({ profile, notify }: Props) {
   const hasPermission = (...keys: string[]) => isAdmin || (!operationsSuspended && (isPresident || keys.some(key => permissions.includes(key))));
   const hasCountryPermission = (...keys: string[]) => isAdmin || (!operationsSuspended && (isPresident || keys.some(key => countryPermissions.includes(key))));
   const canGDP = !!selectedCountryId && hasCountryPermission("economy.manage");
-  const canTax = !!selectedCountryId && hasCountryPermission("tax.manage");
+  const canTax = !!selectedCountryId && hasCountryPermission("tax.manage","economy.manage");
   const canCollect = !!selectedCountryId && hasCountryPermission("tax.collect", "economy.manage");
   const canTreasury = !!selectedCountryId && hasPermission("treasury.revenue", "treasury.expense", "economy.manage");
   const canBudget = !!selectedCountryId && hasPermission("budget.manage");
