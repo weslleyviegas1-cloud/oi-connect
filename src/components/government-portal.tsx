@@ -16,10 +16,11 @@ type GovernmentProfile = {
 // Supabase returns table-specific row shapes at runtime; this shared view model is intentionally dynamic.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Row = Record<string, any>;
-type Tab = "overview" | "ministries" | "departments" | "appointments" | "decisions" | "legislation" | "announcements" | "infrastructure" | "budget" | "notifications" | "audit";
+type Tab = "overview" | "citizens" | "ministries" | "departments" | "appointments" | "decisions" | "legislation" | "announcements" | "infrastructure" | "budget" | "notifications" | "audit";
 
 const tabs: { id: Tab; label: string; Icon: typeof Landmark }[] = [
   { id: "overview", label: "Visão geral", Icon: Activity },
+  { id: "citizens", label: "Cidadãos", Icon: Users },
   { id: "ministries", label: "Ministérios", Icon: Landmark },
   { id: "departments", label: "Departamentos", Icon: Building2 },
   { id: "appointments", label: "Nomeações", Icon: Users },
@@ -48,6 +49,8 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
   const [ministries, setMinistries] = useState<Row[]>([]);
   const [departments, setDepartments] = useState<Row[]>([]);
   const [members, setMembers] = useState<Row[]>([]);
+  const [citizens, setCitizens] = useState<Row[]>([]);
+  const [citizenSearch, setCitizenSearch] = useState("");
   const [memberPermissions, setMemberPermissions] = useState<Row[]>([]);
   const [appointments, setAppointments] = useState<Row[]>([]);
   const [pendingDecisions, setPendingDecisions] = useState<Row[]>([]);
@@ -131,6 +134,12 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
           const permissionResult = await supabase.from("government_member_permissions").select("permission_key,scope_type,scope_id").eq("member_id", ownMember.id);
           setMemberPermissions(permissionResult.data ?? []);
         } else setMemberPermissions([]);
+        const canReadCitizens = isAdmin || isPresident || (permissionResult.data ?? []).some((permission: Row) => permission.permission_key === "citizen.read");
+        if (canReadCitizens) {
+          const citizenResult = await supabase.rpc("get_country_citizens", { p_country_id: countryId, p_search: null });
+          if (citizenResult.error) throw citizenResult.error;
+          setCitizens(citizenResult.data ?? []);
+        } else setCitizens([]);
         setDecisions(decisionRes.data ?? []);
         setLegislation(lawRes.data ?? []);
         setAnnouncements(announcementRes.data ?? []);
@@ -428,11 +437,27 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
       <label>País sob administração<select value={selectedCountryId} onChange={event => setSelectedCountryId(event.target.value)}><option value="">Selecione um país</option>{adminCountries.map(item => <option key={item.id} value={item.id}>{item.name}{item.is_active ? "" : " — Inativo"}</option>)}</select></label>
       <div className="we-admin-notice">O Super Admin pode selecionar qualquer país para supervisionar seu governo. As aprovações pendentes continuam globais.</div>
     </div>}
-    <nav className="we-admin-tabs">{tabs.map(({ id, label, Icon }) => <button key={id} type="button" className={tab === id ? "active" : ""} onClick={() => setTab(id)}><Icon/><span>{label}</span></button>)}</nav>
+    <nav className="we-admin-tabs">{tabs.filter(item => item.id !== "citizens" || isAdmin || isPresident || hasAnyPermission("citizen.read")).map(({ id, label, Icon }) => <button key={id} type="button" className={tab === id ? "active" : ""} onClick={() => setTab(id)}><Icon/><span>{label}</span></button>)}</nav>
     <div className="we-admin-toolbar"><div><small>WORLD ECONOMY / GOVERNO NACIONAL</small><h2>{tabs.find(item => item.id === tab)?.label}</h2></div><button className="we-admin-refresh" type="button" onClick={() => void load()} disabled={loading}><RefreshCw/> Atualizar</button></div>
     {loading && <div className="we-empty">Carregando dados oficiais do governo...</div>}
     {!countryId && !isAdmin && <div className="we-note">Sua conta ainda não está vinculada a um país. As informações governamentais aparecerão após a definição do vínculo nacional.</div>}
     {country && <section className="we-panel"><header><h2><Flag/> <CountryMark value={country.flag} label={country.name}/> {country.name}</h2><span className="we-tag">{isPresident ? "Painel presidencial" : isAdmin ? "Super Admin" : ownMembership ? "Painel ministerial" : "Meu Governo"}</span></header><div className="we-admin-notice">{country.capital || "Capital não cadastrada"} • {country.continent || "Continente não cadastrado"} • {country.currency_name ? `${country.currency_name} (${country.currency_code ?? "código não informado"})` : "Moeda não cadastrada"}<br/>Presidente: {president?.username ?? "Nenhum presidente aprovado"} {president?.player_number ? `• #${president.player_number}` : ""}<br/>Situação administrativa: {country.is_active ? "Ativo" : "Suspenso"}{ownMembership && <><br/>Seu cargo: {ownMembership.position} • {getName(ownMembership.ministry_id)}</>}</div></section>}
+
+    {tab === "citizens" && (isAdmin || isPresident || hasAnyPermission("citizen.read")) && <>
+      <section className="we-panel"><header><h2><Users/> Cidadãos vinculados a {country?.name ?? "este país"} ({citizens.length})</h2></header>
+        <label className="we-search"><Search/><input placeholder="Pesquisar nickname ou ID permanente..." value={citizenSearch} onChange={event => setCitizenSearch(event.target.value)}/></label>
+        {citizens.filter(person => {
+          const q = citizenSearch.trim().toLowerCase();
+          return !q || String(person.username ?? "").toLowerCase().includes(q)
+            || String(person.minecraft_username ?? "").toLowerCase().includes(q)
+            || String(person.player_number ?? "").includes(q);
+        }).map(person => <article className="we-admin-row" key={person.profile_id}>
+          {person.avatar_url ? <img className="we-admin-avatar" src={person.avatar_url} alt=""/> : <span className="we-admin-avatar-fallback"><Users/></span>}
+          <div><b>{person.username} • {person.player_number ? "#" + person.player_number : "ID privado"}</b><small>{person.minecraft_username ? "Minecraft: " + person.minecraft_username + " • " : ""}{person.role === "president" ? "Presidente" : person.role === "citizen" ? "Cidadão" : "Integrante governamental"} • Desde {dateLabel(person.joined_at)}</small><small>Situação: {person.citizen_status === "active" ? "Ativo" : person.citizen_status}</small></div>
+        </article>)}
+        {!citizens.length && <div className="we-empty">Nenhum cidadão ativo foi encontrado para este país.</div>}
+      </section>
+    </>}
 
     {tab === "overview" && <>
       {countryId && <div className="we-admin-stat-grid">
