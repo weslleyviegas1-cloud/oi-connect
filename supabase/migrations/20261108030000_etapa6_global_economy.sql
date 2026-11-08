@@ -33,6 +33,23 @@ create table if not exists public.economic_gdp_records (
   check (period_start <= period_end),
   unique(country_id,period_start,period_end)
 );
+create table if not exists public.economic_gdp_revision_history (
+  id uuid primary key default gen_random_uuid(),
+  gdp_record_id uuid not null references public.economic_gdp_records(id) on delete restrict,
+  previous_record jsonb not null,
+  previous_components jsonb not null default '[]'::jsonb,
+  revised_by uuid not null references public.profiles(id),
+  revised_at timestamptz not null default now()
+);
+alter table public.economic_gdp_revision_history enable row level security;
+drop policy if exists gdp_revision_history_read on public.economic_gdp_revision_history;
+create policy gdp_revision_history_read on public.economic_gdp_revision_history for select to authenticated
+using (exists(select 1 from public.economic_gdp_records r where r.id=gdp_record_id
+  and (public.is_world_admin() or public.is_country_president(r.country_id)
+    or public.has_government_permission(r.country_id,'economy.read',null,null))));
+revoke all on public.economic_gdp_revision_history from public,anon,authenticated;
+grant select on public.economic_gdp_revision_history to authenticated;
+
 create table if not exists public.economic_gdp_components (
   id uuid primary key default gen_random_uuid(),
   gdp_record_id uuid not null references public.economic_gdp_records(id) on delete cascade,
@@ -85,7 +102,7 @@ create table if not exists public.tax_rules (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   check (effective_until is null or effective_until >= effective_from),
-  unique(country_id,identifier)
+  unique(country_id,identifier,effective_from)
 );
 
 create table if not exists public.tax_obligations (
@@ -123,8 +140,7 @@ create table if not exists public.treasury_ledger_entries (
   category text not null,
   description text not null,
   amount numeric(24,2) not null check (amount > 0),
-  signed_amount numeric(24,2) generated always as
-    (case when entry_type in ('revenue','adjustment') then amount else -amount end) stored,
+  signed_amount numeric(24,2) not null,
   source_type text not null,
   source_id uuid,
   budget_allocation_id uuid,
@@ -243,6 +259,24 @@ select c.id,c.currency_code,
     else 'Moeda configurada no cadastro nacional' end
 from public.countries c
 on conflict(country_id) do nothing;
+
+create or replace function public.ensure_national_treasury_for_country()
+returns trigger language plpgsql security definer set search_path=public as $
+begin
+  insert into public.national_treasuries(country_id,currency_code,currency_label)
+  values(new.id,new.currency_code,case when nullif(trim(new.currency_code),'') is null
+    then 'Unidade monetária provisória (não configurada)' else 'Moeda configurada no cadastro nacional' end)
+  on conflict(country_id) do update set currency_code=excluded.currency_code,
+    currency_label=case when national_treasuries.currency_code is null and excluded.currency_code is not null
+      then excluded.currency_label else national_treasuries.currency_label end,
+    updated_at=now();
+  return new;
+end;
+$;
+drop trigger if exists countries_ensure_national_treasury on public.countries;
+create trigger countries_ensure_national_treasury after insert or update of currency_code on public.countries
+for each row execute function public.ensure_national_treasury_for_country();
+revoke all on function public.ensure_national_treasury_for_country() from public,anon,authenticated;
 
 alter table public.national_treasuries enable row level security;
 alter table public.economic_gdp_records enable row level security;
@@ -428,7 +462,10 @@ begin
     insert into public.economic_gdp_records(country_id,period_start,period_end,total_value,source,source_description,status,created_by,updated_by)
     values(p_country_id,p_period_start,p_period_end,v_total,'manual',p_source_description,'confirmed',auth.uid(),auth.uid()) returning id into v_id;
   else
-    update public.economic_gdp_records set total_value=v_total,source='manual',source_description=p_source_description,status='revised',updated_by=auth.uid(),updated_at=now() where id=v_id;
+    insert into public.economic_gdp_revision_history(gdp_record_id,previous_record,previous_components,revised_by)
+    select v_id,to_jsonb(r),coalesce((select jsonb_agg(to_jsonb(c)) from public.economic_gdp_components c where c.gdp_record_id=v_id),'[]'::jsonb),auth.uid()
+    from public.economic_gdp_records r where r.id=v_id;
+    update public.economic_gdp_records set total_value=v_total,source='manual',source_description=p_source_description,status='confirmed',updated_by=auth.uid(),updated_at=now() where id=v_id;
     delete from public.economic_gdp_components where gdp_record_id=v_id;
   end if;
   insert into public.economic_gdp_components(gdp_record_id,sector,amount)
@@ -447,7 +484,7 @@ begin
   if length(trim(coalesce(p_name,'')))<2 or p_weight<=0 or p_price<=0 or p_reference_date is null then raise exception 'Dados de preço inválidos.'; end if;
   insert into public.economic_price_items(country_id,name,category,base_weight,created_by)
   values(p_country_id,trim(p_name),trim(p_category),p_weight,auth.uid())
-  on conflict(country_id,name) do update set category=excluded.category,base_weight=excluded.base_weight,updated_at=now()
+  on conflict(country_id,name) do update set category=excluded.category,updated_at=now()
   returning id into v_item;
   insert into public.economic_price_observations(item_id,country_id,reference_date,price,recorded_by)
   values(v_item,p_country_id,p_reference_date,p_price,auth.uid())
@@ -525,7 +562,7 @@ begin
   values(o.country_id,o.id,p_amount,trim(p_confirmation_reference),auth.uid()) returning id into v_col;
   insert into public.treasury_ledger_entries(country_id,entry_type,category,description,amount,source_type,source_id,
     idempotency_key,created_by)
-  values(o.country_id,'revenue','tax_collection','Arrecadação tributária — obrigação '||o.id,p_amount,
+  values(o.country_id,'revenue','tax_collection','Arrecadação tributária — obrigação '||o.id,p_amount,p_amount,
     'tax_collection',v_col,'tax-collection:'||v_col,auth.uid());
   v_paid:=v_paid+p_amount;
   update public.tax_obligations set status=case when v_paid>=amount_due then 'paid' else 'partially_paid' end,updated_at=now()
@@ -623,7 +660,7 @@ begin
     if not found then raise exception 'Alocação não encontrada neste país.'; end if;
     if not exists(select 1 from public.budget_plans b where b.id=a.budget_plan_id and b.status in ('approved','in_execution')) then
       raise exception 'O orçamento ainda não está aprovado.'; end if;
-    select coalesce(sum(amount),0) into v_spent from public.treasury_ledger_entries where budget_allocation_id=a.id and entry_type='expense';
+    select greatest(coalesce(sum(-signed_amount),0),0) into v_spent from public.treasury_ledger_entries where budget_allocation_id=a.id;
     if v_spent+p_amount>a.planned_amount then raise exception 'A despesa excede o limite orçamentário disponível.'; end if;
   end if;
   if p_investment_project_id is not null then
@@ -638,6 +675,7 @@ begin
   insert into public.treasury_ledger_entries(country_id,entry_type,category,description,amount,source_type,source_id,
     budget_allocation_id,investment_project_id,idempotency_key,created_by)
   values(p_country_id,p_entry_type,p_category,trim(p_description),p_amount,
+    case when p_entry_type='revenue' then p_amount else -p_amount end,
     case when p_investment_project_id is not null then 'investment_execution' else 'manual' end,
     case when p_investment_project_id is not null then gen_random_uuid() else null end,
     p_budget_allocation_id,p_investment_project_id,p_idempotency_key,auth.uid())
@@ -656,11 +694,18 @@ begin
   select * into e from public.treasury_ledger_entries where id=p_entry_id for update;
   if not found then raise exception 'Lançamento não encontrado.'; end if;
   if not public.is_world_admin() then raise exception 'Somente o Super Admin pode estornar lançamentos.'; end if;
+  if e.source_type='tax_collection' then raise exception 'Arrecadação tributária exige procedimento próprio de retificação; estorno genérico bloqueado.'; end if;
   if exists(select 1 from public.treasury_ledger_entries where reverses_entry_id=e.id) then raise exception 'Este lançamento já foi estornado.'; end if;
-  insert into public.treasury_ledger_entries(country_id,entry_type,category,description,amount,source_type,source_id,
-    reverses_entry_id,idempotency_key,created_by)
-  values(e.country_id,'reversal',e.category,'Estorno: '||trim(p_reason),e.amount,'reversal',e.id,e.id,p_idempotency_key,auth.uid())
+  insert into public.treasury_ledger_entries(country_id,entry_type,category,description,amount,signed_amount,source_type,source_id,
+    reverses_entry_id,budget_allocation_id,investment_project_id,idempotency_key,created_by)
+  values(e.country_id,'reversal',e.category,'Estorno: '||trim(p_reason),e.amount,-e.signed_amount,'reversal',e.id,
+    e.id,e.budget_allocation_id,e.investment_project_id,p_idempotency_key,auth.uid())
   returning id into v_id;
+  if e.investment_project_id is not null then
+    update public.public_investment_projects set executed_amount=greatest(0,executed_amount-e.amount),
+      status=case when status='completed' then 'in_progress' else status end,updated_at=now()
+    where id=e.investment_project_id;
+  end if;
   perform public.economy_audit(e.country_id,'reverse','treasury_entry',v_id,to_jsonb(e),jsonb_build_object('reverses_entry_id',e.id,'reason',p_reason));
   return v_id;
 end;
