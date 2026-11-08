@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import {
-  Bell, BookOpen, Check, Clipboard, FileBadge, FileText, Flag, Globe2, History,
-  IdCard, LockKeyhole, MapPin, RefreshCw, Save, ShieldCheck, UserRound, Wallet,
+  Bell, BookOpen, Clipboard, FileBadge, FileText, Flag, Globe2, History,
+  IdCard, LockKeyhole, RefreshCw, Save, ShieldCheck, UserRound, Wallet,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
