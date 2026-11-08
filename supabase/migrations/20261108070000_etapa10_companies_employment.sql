@@ -627,7 +627,7 @@ returns uuid language plpgsql security definer set search_path=public,auth as $f
 declare v_id uuid;
 begin
  if not public.is_company_member(p_company_id,'finance.manage') then raise exception 'Sem permissão para registrar receitas ou despesas.'; end if;
- if p_type not in ('revenue','expense') or p_status not in ('planned','paid','received','cancelled') or p_amount is null or p_amount<=0 or p_amount<>round(p_amount,6) or length(trim(coalesce(p_description,'')))<3 or not exists(select 1 from public.currencies where id=p_currency_id and status='active') then raise exception 'Registro financeiro inválido.'; end if;
+ if p_type not in ('revenue','expense') or p_status not in ('planned','cancelled') or p_amount is null or p_amount<=0 or p_amount<>round(p_amount,6) or length(trim(coalesce(p_description,'')))<3 or not exists(select 1 from public.currencies where id=p_currency_id and status='active') then raise exception 'Registro financeiro inválido.'; end if;
  insert into public.company_financial_records(company_id,record_type,category,description,amount,currency_id,record_status,reference_type,reference_id,responsible_profile_id)
  values(p_company_id,p_type,trim(p_category),trim(p_description),p_amount,p_currency_id,p_status,p_reference_type,p_reference_id,auth.uid()) returning id into v_id;
  perform public.company_audit(p_company_id,'financial_record_created','financial_record',v_id,jsonb_build_object('type',p_type,'amount',p_amount,'status',p_status)); return v_id;
