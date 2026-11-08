@@ -75,7 +75,7 @@ create table if not exists public.tax_rules (
   rate numeric(9,4) not null check (rate >= 0 and rate <= 100),
   calculation_base text not null default 'declared_value',
   status text not null default 'awaiting_approval'
-    check (status in ('draft','awaiting_approval','approved','active','suspended','revoked')),
+    check (status in ('draft','awaiting_approval','approved','active','rejected','suspended','revoked')),
   effective_from date not null,
   effective_until date,
   created_by uuid not null references public.profiles(id),
@@ -144,7 +144,7 @@ create table if not exists public.budget_plans (
   period_start date not null,
   period_end date not null,
   status text not null default 'draft'
-    check (status in ('draft','awaiting_approval','approved','in_execution','closed','cancelled')),
+    check (status in ('draft','awaiting_approval','approved','rejected','in_execution','closed','cancelled')),
   total_planned numeric(24,2) not null default 0 check (total_planned >= 0),
   created_by uuid not null references public.profiles(id),
   reviewed_by uuid references public.profiles(id),
@@ -343,8 +343,11 @@ begin
       select jsonb_build_object(
         'scope','global',
         'countries_active',(select count(*) from public.countries where is_active),
-        'gdp_total',(select sum(total_value) from public.economic_gdp_records where status='confirmed'
-          and period_end=(select max(period_end) from public.economic_gdp_records where status='confirmed')),
+        'gdp_total',(select sum(latest.total_value) from (
+          select distinct on (country_id) country_id,total_value
+          from public.economic_gdp_records where status in ('confirmed','revised')
+          order by country_id,period_end desc
+        ) latest),
         'treasury_total',(select sum(t.opening_balance + coalesce(l.total,0)) from public.national_treasuries t
           left join lateral (select sum(signed_amount) total from public.treasury_ledger_entries x where x.country_id=t.country_id) l on true),
         'tax_revenue_total',(select coalesce(sum(amount),0) from public.tax_collections),
