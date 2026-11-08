@@ -10,7 +10,7 @@ const dt=(v?:string)=>v?new Date(v).toLocaleString("pt-BR"):"—";
 const today=()=>new Date().toISOString().slice(0,10);
 export function CentralBankPortal({profile,notify}:Props){
  const admin=profile?.role==="super_admin";
- const [countryId,setCountryId]=useState(profile?.country_id??"");
+ const [countryId,setCountryId]=useState(profile?.role==="super_admin"?"":(profile?.country_id??""));
  const [countries,setCountries]=useState<Row[]>([]),[currencies,setCurrencies]=useState<Row[]>([]);
  const [data,setData]=useState<Data|null>(null),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[tab,setTab]=useState("Painel");
  const [bankForm,setBankForm]=useState({name:"",identifier:"",description:""});
