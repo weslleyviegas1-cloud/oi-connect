@@ -346,6 +346,11 @@ begin
   if s.max_issuance_total is not null and v_total+p_amount>s.max_issuance_total then raise exception 'A emissão excede o limite total configurado.'; end if;
   insert into public.monetary_issuances(central_bank_id,country_id,currency_id,amount,reason,requested_by)
   values(b.id,b.country_id,b.currency_id,p_amount,trim(p_reason),auth.uid()) returning id into v_id;
+  if not s.issuance_requires_approval then
+    insert into public.money_supply_records(central_bank_id,country_id,currency_id,operation_type,amount,source_request_id,reason,actor_id)
+    values(b.id,b.country_id,b.currency_id,'issuance',p_amount,v_id,trim(p_reason),auth.uid());
+    update public.monetary_issuances set status='approved',approved_by=auth.uid(),reviewed_at=now(),review_note='Aprovação automática conforme regra do Super Admin' where id=v_id;
+  end if;
   perform public.central_bank_audit(b.id,b.country_id,'issuance_requested','monetary_issuance',v_id,null,jsonb_build_object('amount',p_amount),p_reason);
   return v_id;
 end;
@@ -387,6 +392,11 @@ begin
   if p_amount>v_supply-v_pending then raise exception 'A retirada supera a oferta monetária disponível.'; end if;
   insert into public.monetary_withdrawals(central_bank_id,country_id,currency_id,amount,reason,requested_by)
   values(b.id,b.country_id,b.currency_id,p_amount,trim(p_reason),auth.uid()) returning id into v_id;
+  if not s.withdrawal_requires_approval then
+    insert into public.money_supply_records(central_bank_id,country_id,currency_id,operation_type,amount,source_request_id,reason,actor_id)
+    values(b.id,b.country_id,b.currency_id,'withdrawal',p_amount,v_id,trim(p_reason),auth.uid());
+    update public.monetary_withdrawals set status='approved',approved_by=auth.uid(),reviewed_at=now(),review_note='Aprovação automática conforme regra do Super Admin' where id=v_id;
+  end if;
   perform public.central_bank_audit(b.id,b.country_id,'withdrawal_requested','monetary_withdrawal',v_id,null,jsonb_build_object('amount',p_amount),p_reason);
   return v_id;
 end;
