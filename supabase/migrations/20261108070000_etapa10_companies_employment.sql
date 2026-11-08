@@ -641,4 +641,72 @@ begin
  loop execute format('revoke all on function %s from public,anon',f.signature); execute format('grant execute on function %s to authenticated',f.signature); end loop;
 end $$;
 
+
+-- Obrigações fiscais podem identificar empresa sem reutilizar identidade pessoal do cidadão.
+alter table public.tax_obligations add column if not exists taxpayer_company_id uuid references public.companies(id) on delete restrict;
+create index if not exists tax_obligations_company_idx on public.tax_obligations(taxpayer_company_id,status);
+
+create or replace function public.admin_validate_company_tax(p_tax_record_id uuid,p_tax_obligation_id uuid)
+returns void language plpgsql security definer set search_path=public,auth as $function$
+declare r public.company_tax_records%rowtype; o public.tax_obligations%rowtype; c public.companies%rowtype;
+begin
+ if not public.is_world_admin() then raise exception 'Somente Super Admin valida obrigações tributárias empresariais.'; end if;
+ select * into r from public.company_tax_records where id=p_tax_record_id for update;
+ if not found or r.status<>'pending_review' then raise exception 'Registro tributário indisponível.'; end if;
+ select * into c from public.companies where id=r.company_id;
+ select * into o from public.tax_obligations where id=p_tax_obligation_id and country_id=c.country_id;
+ if not found or o.taxpayer_company_id is distinct from c.id or o.amount_due<>r.amount_due or o.tax_rule_id is distinct from r.tax_rule_id or o.currency_code_snapshot<>(select internal_code from public.currencies where id=r.currency_id) then
+  raise exception 'Obrigação fiscal não identifica esta empresa ou diverge em valor, regra, país ou moeda.';
+ end if;
+ update public.company_tax_records set tax_obligation_id=o.id,status='validated',validated_by=auth.uid(),validated_at=now() where id=r.id;
+ perform public.company_audit(r.company_id,'tax_record_validated','company_tax_record',r.id,jsonb_build_object('tax_obligation_id',o.id));
+end;
+$function$;
+
+create or replace function public.company_pay_tax_obligation(p_company_id uuid,p_tax_record_id uuid,p_account_id uuid,p_idempotency_key text)
+returns uuid language plpgsql security definer set search_path=public,auth as $function$
+declare r public.company_tax_records%rowtype; o public.tax_obligations%rowtype; a public.bank_accounts%rowtype; t public.national_treasuries%rowtype;
+ v_paid numeric; v_remaining numeric; v_code text; v_tx uuid; v_collection uuid; v_after numeric; v_existing public.bank_transactions%rowtype;
+begin
+ if auth.uid() is null or length(trim(coalesce(p_idempotency_key,'')))<12 then raise exception 'Autenticação ou chave idempotente inválida.'; end if;
+ if not public.is_company_member(p_company_id,'tax.manage') then raise exception 'Sem permissão para quitar tributos empresariais.'; end if;
+ perform pg_advisory_xact_lock(hashtextextended(p_idempotency_key,0));
+ select * into v_existing from public.bank_transactions where idempotency_key=p_idempotency_key;
+ if found then if v_existing.transaction_type='tax_payment' and v_existing.actor_id=auth.uid() and exists(select 1 from public.tax_collections tc where tc.id=v_existing.reference_id and tc.obligation_id=(select tax_obligation_id from public.company_tax_records where id=p_tax_record_id) and tc.amount=v_existing.amount) then return v_existing.id; end if; raise exception 'Chave idempotente já utilizada com outros dados.'; end if;
+ select * into r from public.company_tax_records where id=p_tax_record_id and company_id=p_company_id for update;
+ if not found or r.status<>'validated' or r.tax_obligation_id is null then raise exception 'Registro fiscal não validado ou sem obrigação vinculada.'; end if;
+ select * into o from public.tax_obligations where id=r.tax_obligation_id and taxpayer_company_id=p_company_id for update;
+ if not found or o.status not in ('open','partially_paid','overdue','pending_confirmation') then raise exception 'Obrigação tributária da empresa indisponível.'; end if;
+ select * into a from public.bank_accounts where id=p_account_id and owner_company_id=p_company_id for update;
+ if not found or a.status<>'active' or a.country_id<>o.country_id or a.currency_id<>r.currency_id then raise exception 'Conta bancária empresarial inválida para esta obrigação.'; end if;
+ select internal_code into v_code from public.currencies where id=a.currency_id and status='active';
+ if v_code is null or v_code<>o.currency_code_snapshot then raise exception 'Moeda da conta diverge da obrigação tributária.'; end if;
+ if not exists(select 1 from public.commercial_banks b where b.id=a.bank_id and b.status='active') then raise exception 'Banco indisponível.'; end if;
+ select * into t from public.national_treasuries where country_id=o.country_id for update;
+ if not found or t.operations_suspended or t.currency_code is distinct from v_code then raise exception 'Tesouro Nacional indisponível ou com moeda divergente.'; end if;
+ if (t.opening_balance>0 and t.opening_balance_currency_code_snapshot<>v_code) or exists(select 1 from public.treasury_ledger_entries e where e.country_id=o.country_id and e.currency_code_snapshot<>v_code) then raise exception 'Tesouro requer conciliação monetária.'; end if;
+ select coalesce(sum(amount),0) into v_paid from public.tax_collections where obligation_id=o.id;
+ v_remaining:=o.amount_due-v_paid;
+ if v_remaining<=0 or r.amount_due>v_remaining then raise exception 'O valor fiscal registrado excede o saldo devido da obrigação.'; end if;
+ if a.balance<r.amount_due then raise exception 'Saldo empresarial insuficiente. Tributo não pago.'; end if;
+ update public.bank_accounts set balance=balance-r.amount_due where id=a.id returning balance into v_after;
+ insert into public.tax_collections(country_id,obligation_id,amount,currency_code_snapshot,confirmation_reference,confirmed_by)
+ values(o.country_id,o.id,r.amount_due,v_code,'company-bank:'||p_idempotency_key,auth.uid()) returning id into v_collection;
+ insert into public.treasury_ledger_entries(country_id,entry_type,category,description,amount,currency_code_snapshot,signed_amount,source_type,source_id,idempotency_key,created_by)
+ values(o.country_id,'revenue','company_tax','Tributo empresarial — '||r.description,r.amount_due,v_code,r.amount_due,'tax_collection',v_collection,'company-tax:'||p_idempotency_key,auth.uid());
+ insert into public.bank_transactions(account_id,transaction_type,amount,currency_id,balance_after,description,reference_id,idempotency_key,actor_id)
+ values(a.id,'tax_payment',r.amount_due,a.currency_id,v_after,'Pagamento de tributo empresarial ao Tesouro',v_collection,p_idempotency_key,auth.uid()) returning id into v_tx;
+ select coalesce(sum(amount),0) into v_paid from public.tax_collections where obligation_id=o.id;
+ update public.tax_obligations set status=case when v_paid>=amount_due then 'paid' else 'partially_paid' end,updated_at=now() where id=o.id;
+ update public.company_tax_records set status='paid' where id=r.id;
+ insert into public.company_financial_records(company_id,record_type,category,description,amount,currency_id,record_status,reference_type,reference_id,responsible_profile_id)
+ values(p_company_id,'expense','tax','Pagamento de tributo — '||r.description,r.amount_due,r.currency_id,'paid','bank_transaction',v_tx,auth.uid());
+ perform public.company_audit(p_company_id,'company_tax_paid','company_tax_record',r.id,jsonb_build_object('amount',r.amount_due,'treasury_collection_id',v_collection));
+ return v_tx;
+end;
+$function$;
+revoke all on function public.company_pay_tax_obligation(uuid,uuid,uuid,text) from public,anon;
+grant execute on function public.company_pay_tax_obligation(uuid,uuid,uuid,text) to authenticated;
+
+
 commit;
