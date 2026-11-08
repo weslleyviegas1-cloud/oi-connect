@@ -181,10 +181,39 @@ export function EconomyPortal({ profile, notify }: Props) {
 }
 
 function Overview({ dashboard, countries, gdp }: { dashboard: Row; countries: Row[]; gdp: Row[] }) {
-  if (dashboard.scope === "global") return <section className="eco-panel"><SectionTitle title="Panorama econômico global" subtitle="Consolidação dos últimos registros disponíveis por país; sem dados artificiais."/>
-    <div className="eco-metrics"><Metric title="Países ativos" value={String(dashboard.countries_active ?? 0)} icon={<Activity/>}/><Metric title="PIB registrado" value={money(dashboard.gdp_total)} icon={<BarChart3/>}/><Metric title="Tesouros consolidados" value={money(dashboard.treasury_total)} icon={<Landmark/>}/><Metric title="Arrecadação confirmada" value={money(dashboard.tax_revenue_total)} icon={<Coins/>}/></div>
-    <DataTable rows={countries} columns={[["name","País"],["gdp","PIB mais recente"],["treasury_balance","Saldo do Tesouro"],["currency_label","Unidade monetária"]]}/><p className="eco-muted">O total global é uma soma contábil de valores registrados. Não há conversão cambial entre países nesta etapa.</p>
-  </section>;
+  const [search, setSearch] = useState("");
+  const [continent, setContinent] = useState("all");
+  const [period, setPeriod] = useState("all");
+  const [status, setStatus] = useState("all");
+  const [indicator, setIndicator] = useState("both");
+  if (dashboard.scope === "global") {
+    const cutoff = period === "90" ? Date.now() - 90 * 86400000 : period === "365" ? Date.now() - 365 * 86400000 : null;
+    const periodRecords = gdp.filter(row => row.status === "confirmed" && (!cutoff || new Date(row.period_end).getTime() >= cutoff));
+    const latest = new Map<string, Row>();
+    for (const record of periodRecords) if (!latest.has(record.country_id)) latest.set(record.country_id, record);
+    const filtered = countries.map(country => ({...country,
+      gdp: cutoff ? latest.get(country.id)?.total_value ?? null : country.gdp,
+      gdp_period_end: cutoff ? latest.get(country.id)?.period_end ?? null : country.gdp_period_end,
+    })).filter(country =>
+      String(country.name ?? "").toLowerCase().includes(search.toLowerCase()) &&
+      (continent === "all" || country.continent === continent) &&
+      (status === "all" || (status === "active" && country.is_active) || (status === "inactive" && !country.is_active) ||
+        (status === "with-gdp" && country.gdp != null) || (status === "without-gdp" && country.gdp == null))
+    );
+    const columns: [string,string][] = [["name","País"]];
+    if (indicator !== "treasury") columns.push(["gdp","PIB no período"],["gdp_period_end","Data do PIB"]);
+    if (indicator !== "gdp") columns.push(["treasury_balance","Saldo do Tesouro"],["currency_label","Unidade monetária"]);
+    return <section className="eco-panel"><SectionTitle title="Panorama econômico global" subtitle="Consolidação dos registros disponíveis por país. Valores de moedas diferentes não são convertidos."/>
+      <div className="eco-metrics"><Metric title="Países ativos" value={String(dashboard.countries_active ?? 0)} icon={<Activity/>}/><Metric title="PIB registrado agregado" value={money(dashboard.gdp_total)} icon={<BarChart3/>}/><Metric title="Tesouros consolidados" value={money(dashboard.treasury_total)} icon={<Landmark/>}/><Metric title="Arrecadação confirmada" value={money(dashboard.tax_revenue_total)} icon={<Coins/>}/></div>
+      <div className="eco-filters"><input aria-label="Pesquisar país" placeholder="Pesquisar país..." value={search} onChange={e=>setSearch(e.target.value)}/>
+        <select aria-label="Continente" value={continent} onChange={e=>setContinent(e.target.value)}><option value="all">Todos os continentes</option>{[...new Set(countries.map(c=>c.continent).filter(Boolean))].sort().map(value=><option key={value} value={value}>{value}</option>)}</select>
+        <select aria-label="Período" value={period} onChange={e=>setPeriod(e.target.value)}><option value="all">Todo o histórico</option><option value="90">Últimos 90 dias</option><option value="365">Últimos 12 meses</option></select>
+        <select aria-label="Situação econômica" value={status} onChange={e=>setStatus(e.target.value)}><option value="all">Todas as situações</option><option value="active">Países ativos</option><option value="inactive">Países inativos</option><option value="with-gdp">Com PIB no período</option><option value="without-gdp">Sem PIB no período</option></select>
+        <select aria-label="Indicador" value={indicator} onChange={e=>setIndicator(e.target.value)}><option value="both">PIB e Tesouro</option><option value="gdp">Somente PIB</option><option value="treasury">Somente Tesouro</option></select>
+      </div>
+      <DataTable rows={filtered} columns={columns}/><p className="eco-muted">O total global é uma soma nominal de valores registrados. Não representa uma comparação de poder de compra e não há conversão cambial nesta etapa.</p>
+    </section>;
+  }
   const growth = dashboard.gdp_growth;
   const fiscal = Number(dashboard.revenue ?? 0) - Number(dashboard.expenses ?? 0);
   return <section className="eco-panel"><SectionTitle title={dashboard.country_name ?? "Economia Nacional"} subtitle="Indicadores calculados a partir dos registros confirmados deste país."/>
