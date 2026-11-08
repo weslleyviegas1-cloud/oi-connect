@@ -372,6 +372,12 @@ returns boolean language sql stable security definer set search_path=public,auth
   );
 $$;
 
+create or replace function public.has_economy_allocation_read_permission(p_country_id uuid,p_permission text,p_allocation_id uuid)
+returns boolean language sql stable security definer set search_path=public,auth as $$
+  select exists(select 1 from public.budget_allocations a where a.id=p_allocation_id and a.country_id=p_country_id
+    and public.has_economy_read_scope_permission(p_country_id,p_permission,a.ministry_id));
+$$;
+
 create or replace function public.can_manage_economy(p_country_id uuid,p_permission text)
 returns boolean language sql stable security definer set search_path=public,auth as $$
   select public.has_economy_scope_permission(p_country_id,p_permission,null);
@@ -513,8 +519,7 @@ using (public.is_world_admin() or public.is_country_president(country_id)
 drop policy if exists ledger_read_scoped on public.treasury_ledger_entries;
 create policy ledger_read_scoped on public.treasury_ledger_entries for select to authenticated
 using (public.is_world_admin() or public.is_country_president(country_id)
-  or (budget_allocation_id is not null and exists(select 1 from public.budget_allocations a
-    where a.id=budget_allocation_id and public.has_economy_read_scope_permission(country_id,'treasury.read',a.ministry_id)))
+  or (budget_allocation_id is not null and public.has_economy_allocation_read_permission(country_id,'treasury.read',budget_allocation_id))
   or (budget_allocation_id is null and public.has_economy_permission(country_id,'treasury.read'))
   or (public.is_government_country_citizen(country_id) and exists(
     select 1 from public.national_treasuries t where t.country_id=treasury_ledger_entries.country_id and t.public_balance_visible)));
@@ -1124,7 +1129,9 @@ $$;
 revoke all on function public.can_manage_economy(uuid,text) from public,anon;
 revoke all on function public.has_economy_scope_permission(uuid,text,uuid) from public,anon,authenticated;
 revoke all on function public.has_economy_read_scope_permission(uuid,text,uuid) from public,anon;
+revoke all on function public.has_economy_allocation_read_permission(uuid,text,uuid) from public,anon;
 grant execute on function public.has_economy_read_scope_permission(uuid,text,uuid) to authenticated;
+grant execute on function public.has_economy_allocation_read_permission(uuid,text,uuid) to authenticated;
 revoke all on function public.has_economy_permission(uuid,text) from public,anon;
 grant execute on function public.has_economy_permission(uuid,text) to authenticated;
 revoke all on function public.economy_audit(uuid,text,text,uuid,jsonb,jsonb) from public,anon,authenticated;
