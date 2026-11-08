@@ -14,9 +14,7 @@ returns boolean language sql stable security definer set search_path=public,auth
       and member_profile.registration_status='active'
     where gm.profile_id=auth.uid() and gm.country_id=p_country_id and gm.status='active'
       and gp.permission_key in (p_permission,'economy.manage')
-      and (gp.scope_type='country'
-        or (gp.scope_type='ministry' and gp.scope_id=gm.ministry_id)
-        or (gp.scope_type='department' and gp.scope_id=gm.department_id))
+      and gp.scope_type='country'
       and exists(select 1 from public.countries c where c.id=p_country_id and c.is_active)
   );
 $$;
@@ -347,6 +345,32 @@ returns boolean language sql stable security definer set search_path=public,auth
     )
   );
 $;
+
+create or replace function public.has_economy_read_scope_permission(p_country_id uuid,p_permission text,p_ministry_id uuid default null)
+returns boolean language sql stable security definer set search_path=public,auth as $$
+  select auth.uid() is not null and (
+    public.is_world_admin() or public.is_country_president(p_country_id)
+    or exists(
+      select 1 from public.government_members gm
+      join public.government_member_permissions gp on gp.member_id=gm.id and gp.country_id=gm.country_id
+      join public.profiles member_profile on member_profile.id=gm.profile_id
+        and coalesce(member_profile.account_status,'active')='active'
+        and member_profile.registration_status='active'
+      where gm.profile_id=auth.uid() and gm.country_id=p_country_id and gm.status='active'
+        and gp.permission_key in (p_permission,'economy.manage')
+        and (
+          (p_ministry_id is null and gp.scope_type='country')
+          or (p_ministry_id is not null and gp.scope_type='country')
+          or (p_ministry_id is not null and gp.scope_type='ministry'
+            and gm.ministry_id=p_ministry_id and gp.scope_id=gm.ministry_id)
+          or (p_ministry_id is not null and gp.scope_type='department'
+            and gp.scope_id=gm.department_id
+            and exists(select 1 from public.government_departments d
+              where d.id=gm.department_id and d.ministry_id=p_ministry_id and d.country_id=p_country_id))
+        )
+    )
+  );
+$$;
 
 create or replace function public.can_manage_economy(p_country_id uuid,p_permission text)
 returns boolean language sql stable security definer set search_path=public,auth as $$
