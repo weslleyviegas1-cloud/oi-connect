@@ -324,7 +324,7 @@ create index if not exists budget_plans_country_period_idx on public.budget_plan
 create index if not exists investments_country_status_idx on public.public_investment_projects(country_id,status,created_at desc);
 
 create or replace function public.has_economy_scope_permission(p_country_id uuid,p_permission text,p_ministry_id uuid default null)
-returns boolean language sql stable security definer set search_path=public,auth as $
+returns boolean language sql stable security definer set search_path=public,auth as $$
   select auth.uid() is not null and (
     public.is_world_admin()
     or (
@@ -360,7 +360,7 @@ returns boolean language sql stable security definer set search_path=public,auth
       )
     )
   );
-$;
+$$;
 
 create or replace function public.has_economy_read_scope_permission(p_country_id uuid,p_permission text,p_ministry_id uuid default null)
 returns boolean language sql stable security definer set search_path=public,auth as $$
