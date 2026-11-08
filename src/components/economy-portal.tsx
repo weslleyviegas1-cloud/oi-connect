@@ -27,6 +27,7 @@ export function EconomyPortal({ profile, notify }: Props) {
   const [prices, setPrices] = useState<Row[]>([]);
   const [taxRules, setTaxRules] = useState<Row[]>([]);
   const [obligations, setObligations] = useState<Row[]>([]);
+  const [collections, setCollections] = useState<Row[]>([]);
   const [ledger, setLedger] = useState<Row[]>([]);
   const [budgets, setBudgets] = useState<Row[]>([]);
   const [allocations, setAllocations] = useState<Row[]>([]);
@@ -60,26 +61,28 @@ export function EconomyPortal({ profile, notify }: Props) {
       let pQuery = supabase.from("economic_price_observations").select("*,economic_price_items(name,category,base_weight)").order("reference_date", { ascending: false }).limit(100);
       let trQuery = supabase.from("tax_rules").select("*").order("created_at", { ascending: false }).limit(100);
       let obQuery = supabase.from("tax_obligations").select("*").order("created_at", { ascending: false }).limit(100);
+      let collectionQuery = supabase.from("tax_collections").select("*,tax_obligations(taxpayer_label,reference_period)").order("confirmed_at", { ascending: false }).limit(100);
       let leQuery = supabase.from("treasury_ledger_entries").select("*").order("created_at", { ascending: false }).limit(100);
       let buQuery = supabase.from("budget_plans").select("*").order("created_at", { ascending: false }).limit(50);
       let alQuery = supabase.from("budget_allocations").select("*").limit(200);
       let prQuery = supabase.from("public_investment_projects").select("*").order("created_at", { ascending: false }).limit(100);
       if (selected) {
         gQuery = gQuery.eq("country_id", selected); pQuery = pQuery.eq("country_id", selected);
-        trQuery = trQuery.eq("country_id", selected); obQuery = obQuery.eq("country_id", selected);
+        trQuery = trQuery.eq("country_id", selected); obQuery = obQuery.eq("country_id", selected); collectionQuery = collectionQuery.eq("country_id", selected);
         leQuery = leQuery.eq("country_id", selected); buQuery = buQuery.eq("country_id", selected);
         alQuery = alQuery.eq("country_id", selected); prQuery = prQuery.eq("country_id", selected);
       }
-      const [dash, g, p, tr, ob, le, bu, al, pr, ts, mi] = await Promise.all([
+      const [dash, g, p, tr, ob, le, bu, al, pr, ts, mi, col] = await Promise.all([
         supabase.rpc("get_economy_dashboard", { p_country_id: selected }),
         gQuery, pQuery, trQuery, obQuery, leQuery, buQuery, alQuery, prQuery,
         selected ? supabase.from("national_treasuries").select("*").eq("country_id", selected).maybeSingle() : Promise.resolve({ data: null, error: null }),
         selected ? supabase.from("ministries").select("id,name").eq("country_id", selected).eq("status","active").order("name") : Promise.resolve({ data: [], error: null }),
+        collectionQuery,
       ]);
       if (dash.error) throw dash.error;
       setDashboard(dash.data);
       setGdp(g.data ?? []); setPrices(p.data ?? []); setTaxRules(tr.data ?? []);
-      setObligations(ob.data ?? []); setLedger(le.data ?? []); setBudgets(bu.data ?? []);
+      setObligations(ob.data ?? []); setCollections(col.data ?? []); setLedger(le.data ?? []); setBudgets(bu.data ?? []);
       setAllocations(al.data ?? []); setProjects(pr.data ?? []); setTreasury(ts.data); setMinistries(mi.data ?? []);
     } catch (error) {
       notify(error instanceof Error ? error.message : "Não foi possível carregar a economia.");
@@ -147,7 +150,7 @@ export function EconomyPortal({ profile, notify }: Props) {
           </form></>}
           <h3>Regras tributárias</h3><DataTable rows={taxRules} columns={[["name","Tributo"],["category","Categoria"],["rate","Alíquota %"],["status","Situação"],["effective_from","Vigência"]]}/>
           {isAdmin && <ReviewList rows={taxRules.filter(x=>x.status==="awaiting_approval")} onReview={(id,decision)=>void invoke("review_tax_rule",{p_rule_id:id,p_decision:decision,p_note:"Revisão do Super Admin"},"Regra tributária revisada.")}/>}
-          <h3>Obrigações tributárias</h3><DataTable rows={obligations} columns={[["taxpayer_label","Contribuinte"],["reference_period","Período"],["amount_due","Valor devido"],["status","Situação"],["due_date","Vencimento"]]}/>
+          <h3>Obrigações tributárias</h3><DataTable rows={obligations} columns={[["taxpayer_label","Contribuinte"],["reference_period","Período"],["amount_due","Valor devido"],["status","Situação"],["due_date","Vencimento"]]}/><h3>Arrecadações confirmadas</h3><DataTable rows={collections} columns={[["confirmed_at","Data"],["confirmation_reference","Referência"],["amount","Valor"],["confirmed_by","Responsável"]]}/>
           {canCollect && <form className="eco-form" onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void invoke("confirm_tax_collection",{p_obligation_id:f.get("obligation"),p_amount:Number(f.get("amount")),p_confirmation_reference:f.get("reference")},"Arrecadação confirmada e lançada no Tesouro.");e.currentTarget.reset();}}>
             <h3>Confirmar arrecadação manual</h3><label>Obrigação<select name="obligation" required><option value="">Selecione</option>{obligations.filter(x=>["open","partially_paid","overdue"].includes(x.status)).map(x=><option key={x.id} value={x.id}>{x.taxpayer_label || "Contribuinte"} — {money(x.amount_due)} ({x.status})</option>)}</select></label><div className="eco-grid-2"><Field label="Valor recebido" name="amount" type="number" min="0.01" step="0.01" required/><Field label="Referência única" name="reference" required/></div><button disabled={busy}>Confirmar recebimento</button>
           </form>}
