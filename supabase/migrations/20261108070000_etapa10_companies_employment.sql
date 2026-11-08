@@ -472,7 +472,7 @@ begin
  if a.status not in ('submitted','reviewing') or p_decision not in ('reviewing','accepted','rejected') then raise exception 'Candidatura já revisada ou decisão inválida.'; end if;
  update public.job_applications set status=p_decision,reviewed_by=auth.uid(),reviewed_at=now(),review_note=nullif(trim(p_note),''),updated_at=now() where id=a.id;
  if p_decision='accepted' then
-  if o.openings_count<=0 or o.status<>'open' then raise exception 'A vaga não possui posições disponíveis.'; end if;
+  if o.openings_count<=0 or o.status<>'open' or (o.application_deadline is not null and o.application_deadline<=now()) then raise exception 'A vaga não possui posições disponíveis ou o prazo expirou.'; end if;
   update public.job_openings set openings_count=openings_count-1,status=case when openings_count-1<=0 then 'filled' else status end where id=o.id;
   insert into public.employment_contracts(company_id,employee_profile_id,position_id,department_id,application_id,job_title,salary_amount,currency_id,pay_frequency,employment_type,starts_at,status,company_accepted_at,created_by)
   values(o.company_id,a.applicant_profile_id,o.position_id,(select department_id from public.job_positions where id=o.position_id),a.id,coalesce(nullif(trim(p_job_title),''),o.title),coalesce(p_salary,o.salary_amount),o.currency_id,
@@ -499,7 +499,7 @@ begin
   values(c.company_id,c.employee_profile_id,'employee',array['contracts.read'],auth.uid()) on conflict(company_id,profile_id) do nothing;
  else
   update public.employment_contracts set status='rejected',updated_at=now() where id=c.id;
-  if c.application_id is not null then update public.job_openings set openings_count=openings_count+1,status='open' where id=(select opening_id from public.job_applications where id=c.application_id) and status in ('filled','open'); end if;
+  if c.application_id is not null then update public.job_openings j set openings_count=j.openings_count+1,status=case when (j.application_deadline is null or j.application_deadline>now()) and exists(select 1 from public.companies co where co.id=j.company_id and co.status='active') then 'open' else 'closed' end where j.id=(select opening_id from public.job_applications where id=c.application_id) and j.status in ('filled','open'); end if;
   insert into public.employment_history(contract_id,company_id,employee_profile_id,event_type,previous_data,actor_id)
   values(c.id,c.company_id,c.employee_profile_id,'rejected',to_jsonb(c),auth.uid());
  end if;
