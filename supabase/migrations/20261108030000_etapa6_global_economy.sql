@@ -4,6 +4,24 @@ begin;
 
 create extension if not exists pgcrypto;
 
+create or replace function public.has_economy_permission(p_country_id uuid,p_permission text)
+returns boolean language sql stable security definer set search_path=public,auth as $
+  select auth.uid() is not null and exists(
+    select 1 from public.government_members gm
+    join public.government_member_permissions gp on gp.member_id=gm.id and gp.country_id=gm.country_id
+    join public.profiles member_profile on member_profile.id=gm.profile_id
+      and coalesce(member_profile.account_status,'active')='active'
+      and member_profile.registration_status='active'
+    where gm.profile_id=auth.uid() and gm.country_id=p_country_id and gm.status='active'
+      and gp.permission_key in (p_permission,'economy.manage')
+      and (gp.scope_type='country'
+        or (gp.scope_type='ministry' and gp.scope_id=gm.ministry_id)
+        or (gp.scope_type='department' and gp.scope_id=gm.department_id))
+      and exists(select 1 from public.countries c where c.id=p_country_id and c.is_active)
+  );
+$;
+
+
 create table if not exists public.national_treasuries (
   id uuid primary key default gen_random_uuid(),
   country_id uuid not null unique references public.countries(id) on delete restrict,
@@ -250,23 +268,6 @@ create index if not exists tax_collections_country_date_idx on public.tax_collec
 create index if not exists treasury_ledger_country_date_idx on public.treasury_ledger_entries(country_id,created_at desc);
 create index if not exists budget_plans_country_period_idx on public.budget_plans(country_id,period_start,period_end);
 create index if not exists investments_country_status_idx on public.public_investment_projects(country_id,status,created_at desc);
-
-create or replace function public.has_economy_permission(p_country_id uuid,p_permission text)
-returns boolean language sql stable security definer set search_path=public,auth as $$
-  select auth.uid() is not null and exists(
-    select 1 from public.government_members gm
-    join public.government_member_permissions gp on gp.member_id=gm.id and gp.country_id=gm.country_id
-    join public.profiles member_profile on member_profile.id=gm.profile_id
-      and coalesce(member_profile.account_status,'active')='active'
-      and member_profile.registration_status='active'
-    where gm.profile_id=auth.uid() and gm.country_id=p_country_id and gm.status='active'
-      and gp.permission_key in (p_permission,'economy.manage')
-      and (gp.scope_type='country'
-        or (gp.scope_type='ministry' and gp.scope_id=gm.ministry_id)
-        or (gp.scope_type='department' and gp.scope_id=gm.department_id))
-      and exists(select 1 from public.countries c where c.id=p_country_id and c.is_active)
-  );
-$$;
 
 create or replace function public.can_manage_economy(p_country_id uuid,p_permission text)
 returns boolean language sql stable security definer set search_path=public,auth as $$
