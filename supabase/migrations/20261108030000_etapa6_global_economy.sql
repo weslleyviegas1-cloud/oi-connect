@@ -560,7 +560,7 @@ begin
   if v_paid+p_amount>o.amount_due then raise exception 'A arrecadação excede o valor ainda devido.'; end if;
   insert into public.tax_collections(country_id,obligation_id,amount,confirmation_reference,confirmed_by)
   values(o.country_id,o.id,p_amount,trim(p_confirmation_reference),auth.uid()) returning id into v_col;
-  insert into public.treasury_ledger_entries(country_id,entry_type,category,description,amount,source_type,source_id,
+  insert into public.treasury_ledger_entries(country_id,entry_type,category,description,amount,signed_amount,source_type,source_id,
     idempotency_key,created_by)
   values(o.country_id,'revenue','tax_collection','Arrecadação tributária — obrigação '||o.id,p_amount,p_amount,
     'tax_collection',v_col,'tax-collection:'||v_col,auth.uid());
@@ -672,7 +672,7 @@ begin
       status=case when executed_amount+p_amount>=approved_amount then 'completed' else 'in_progress' end,updated_at=now()
     where id=p.id;
   end if;
-  insert into public.treasury_ledger_entries(country_id,entry_type,category,description,amount,source_type,source_id,
+  insert into public.treasury_ledger_entries(country_id,entry_type,category,description,amount,signed_amount,source_type,source_id,
     budget_allocation_id,investment_project_id,idempotency_key,created_by)
   values(p_country_id,p_entry_type,p_category,trim(p_description),p_amount,
     case when p_entry_type='revenue' then p_amount else -p_amount end,
