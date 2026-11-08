@@ -280,6 +280,7 @@ returns boolean language sql stable security definer set search_path=public,auth
  select auth.uid() is not null and exists(
   select 1 from public.company_members m join public.profiles p on p.id=m.profile_id
   where m.company_id=p_company_id and m.profile_id=auth.uid() and m.status='active'
+   and exists(select 1 from public.companies co where co.id=m.company_id and co.status='active')
    and coalesce(p.account_status,'active')='active' and p.registration_status='active'
    and (p_permission is null or p_permission=any(m.permissions) or m.member_role in ('owner','director') or 'company.manage'=any(m.permissions))
  );
@@ -324,7 +325,7 @@ create policy company_members_read on public.company_members for select to authe
 drop policy if exists job_positions_read on public.job_positions;
 create policy job_positions_read on public.job_positions for select to authenticated using(public.is_world_admin() or public.is_company_member(company_id) or exists(select 1 from public.companies c where c.id=company_id and c.status='active'));
 drop policy if exists job_openings_read on public.job_openings;
-create policy job_openings_read on public.job_openings for select to authenticated using(status='open' or public.is_world_admin() or public.is_company_member(company_id));
+create policy job_openings_read on public.job_openings for select to authenticated using((status='open' and exists(select 1 from public.companies c where c.id=company_id and c.status='active')) or public.is_world_admin() or public.is_company_member(company_id));
 drop policy if exists job_applications_read on public.job_applications;
 create policy job_applications_read on public.job_applications for select to authenticated using(applicant_profile_id=auth.uid() or public.is_world_admin() or public.is_company_member((select company_id from public.job_openings where id=opening_id),'hr.read'));
 drop policy if exists employment_contracts_read on public.employment_contracts;
@@ -453,7 +454,7 @@ declare o public.job_openings%rowtype; p public.profiles%rowtype; v_id uuid;
 begin
  if auth.uid() is null then raise exception 'Autenticação necessária.'; end if;
  select * into p from public.profiles where id=auth.uid(); if not found or p.registration_status<>'active' or coalesce(p.account_status,'active')<>'active' then raise exception 'Somente cidadão ativo pode candidatar-se.'; end if;
- select * into o from public.job_openings where id=p_opening_id and status='open' and (application_deadline is null or application_deadline>now()); if not found then raise exception 'Vaga encerrada ou prazo expirado.'; end if;
+ select * into o from public.job_openings where id=p_opening_id and status='open' and (application_deadline is null or application_deadline>now()) and exists(select 1 from public.companies c where c.id=company_id and c.status='active'); if not found then raise exception 'Vaga encerrada ou prazo expirado.'; end if;
  if p.country_id is distinct from o.country_id then raise exception 'A candidatura deve respeitar o país da vaga.'; end if;
  insert into public.job_applications(opening_id,applicant_profile_id,cover_letter) values(o.id,auth.uid(),nullif(trim(p_cover_letter),'')) returning id into v_id;
  perform public.company_audit(o.company_id,'application_submitted','job_application',v_id,jsonb_build_object('applicant',auth.uid())); return v_id;
@@ -487,7 +488,7 @@ returns void language plpgsql security definer set search_path=public,auth as $f
 declare c public.employment_contracts%rowtype;
 begin
  select * into c from public.employment_contracts where id=p_contract_id and employee_profile_id=auth.uid() for update;
- if not found or c.status<>'pending_employee' then raise exception 'Oferta inexistente ou não está aguardando sua resposta.'; end if;
+ if not found or c.status<>'pending_employee' or not exists(select 1 from public.companies co where co.id=c.company_id and co.status='active') then raise exception 'Oferta inexistente ou não está aguardando sua resposta.'; end if;
  if p_accept then
   update public.employment_contracts set status='active',employee_accepted_at=now(),updated_at=now() where id=c.id;
   insert into public.employment_history(contract_id,company_id,employee_profile_id,event_type,new_data,actor_id)
