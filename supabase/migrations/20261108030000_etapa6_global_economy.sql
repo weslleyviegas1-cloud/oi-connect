@@ -504,6 +504,7 @@ begin
       select jsonb_build_object(
         'scope','global',
         'countries_active',(select count(*) from public.countries where is_active),
+        'countries_suspended',(select count(*) from public.national_treasuries where operations_suspended),
         'countries_without_gdp',(select count(*) from public.countries c where c.is_active and not exists(
           select 1 from public.economic_gdp_records r where r.country_id=c.id and r.status in ('confirmed','revised'))),
         'countries_growth_positive',(select count(*) from (
