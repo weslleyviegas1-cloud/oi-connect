@@ -414,6 +414,19 @@ begin
           from public.treasury_ledger_entries x),
         'investment_total',(select coalesce(sum(approved_amount),0) from public.public_investment_projects where status in ('approved','in_progress','completed')),
         'tax_revenue_total',(select coalesce(sum(amount),0) from public.tax_collections),
+        'inflation_average',(select round(avg(country_index.inflation),2) from (
+          select c.id,(select case when old_ipc>0 then ((new_ipc-old_ipc)/old_ipc)*100 end from (
+            select reference_date,
+              sum((o.price/base.price)*i.base_weight)/nullif(sum(i.base_weight),0) as new_ipc,
+              lag(sum((o.price/base.price)*i.base_weight)/nullif(sum(i.base_weight),0)) over(order by reference_date) as old_ipc
+            from public.economic_price_observations o
+            join public.economic_price_items i on i.id=o.item_id and i.is_active
+            join lateral(select price from public.economic_price_observations b where b.item_id=i.id order by b.reference_date limit 1) base on true
+            where o.country_id=c.id group by reference_date
+            having count(distinct o.item_id)=(select count(*) from public.economic_price_items ai where ai.country_id=c.id and ai.is_active)
+          ) index_values order by reference_date desc limit 1) as inflation
+          from public.countries c where c.is_active
+        ) country_index where country_index.inflation is not null),
         'countries',(select coalesce(jsonb_agg(jsonb_build_object('id',c.id,'name',c.name,'flag',c.flag,'continent',c.continent,'is_active',c.is_active,
           'currency_code',t.currency_code,'currency_label',t.currency_label,
           'treasury_balance',t.opening_balance+coalesce(l.total,0),
