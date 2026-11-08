@@ -270,6 +270,9 @@ create index if not exists economic_prices_country_date_idx on public.economic_p
 create index if not exists tax_rules_country_status_idx on public.tax_rules(country_id,status,effective_from desc);
 create index if not exists tax_obligations_country_period_idx on public.tax_obligations(country_id,reference_period,status);
 create index if not exists tax_obligations_taxpayer_idx on public.tax_obligations(taxpayer_profile_id,created_at desc);
+create unique index if not exists tax_obligations_natural_key_uidx
+  on public.tax_obligations(country_id,tax_rule_id,reference_period,
+    (coalesce(taxpayer_profile_id::text,lower(coalesce(taxpayer_label,'')))));
 create index if not exists tax_collections_country_date_idx on public.tax_collections(country_id,confirmed_at desc);
 create index if not exists treasury_ledger_country_date_idx on public.treasury_ledger_entries(country_id,created_at desc);
 create index if not exists budget_plans_country_period_idx on public.budget_plans(country_id,period_start,period_end);
@@ -907,6 +910,8 @@ commit;
   if v_period_start<date_trunc('month',current_date)::date or v_period_start<r.effective_from then
     raise exception 'Cobranças retroativas não são permitidas por esta operação.';
   end if;
+  if p_taxpayer_profile_id is null and length(trim(coalesce(p_taxpayer_label,'')))<2 then
+    raise exception 'Informe o cidadão ou contribuinte desta obrigação.'; end if;
   if p_taxpayer_profile_id is not null and not exists(select 1 from public.profiles where id=p_taxpayer_profile_id and country_id=p_country_id) then
     raise exception 'O contribuinte informado não pertence a este país.'; end if;
   v_amount:=round(p_calculation_base*r.rate/100,2);
