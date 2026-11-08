@@ -163,12 +163,18 @@ revoke all on public.bank_cash_wallets,public.bank_cash_wallet_transactions from
 grant select on public.bank_cash_wallets,public.bank_cash_wallet_transactions to authenticated;
 
 create or replace function public.admin_allocate_issued_money_to_wallet(
- p_profile_id uuid,p_amount numeric,p_reason text
+ p_profile_id uuid,p_amount numeric,p_reason text,p_idempotency_key text
 ) returns uuid language plpgsql security definer set search_path=public,auth as $function$
-declare p public.profiles%rowtype; v_currency uuid; v_code text; v_wallet uuid; v_balance numeric; v_issued numeric; v_committed numeric; v_key text;
+declare p public.profiles%rowtype; v_currency uuid; v_code text; v_wallet uuid; v_balance numeric; v_issued numeric; v_committed numeric; v_key text; v_existing public.bank_cash_wallet_transactions%rowtype;
 begin
  if not public.is_world_admin() then raise exception 'Somente o Super Admin pode distribuir moeda emitida.'; end if;
- if p_amount is null or p_amount<=0 or p_amount<>round(p_amount,6) or length(trim(coalesce(p_reason,'')))<5 then raise exception 'Valor ou justificativa inválidos.'; end if;
+ if p_amount is null or p_amount<=0 or p_amount<>round(p_amount,6) or length(trim(coalesce(p_reason,'')))<5 or length(trim(coalesce(p_idempotency_key,'')))<12 then raise exception 'Valor, justificativa ou chave de idempotência inválidos.'; end if;
+ perform pg_advisory_xact_lock(hashtextextended(p_idempotency_key,0));
+ select t.* into v_existing from public.bank_cash_wallet_transactions t join public.bank_cash_wallets w on w.id=t.wallet_id where t.idempotency_key=p_idempotency_key;
+ if found then
+  if v_existing.transaction_type='issuance_allocation' and v_existing.amount=p_amount and exists(select 1 from public.bank_cash_wallets w where w.id=v_existing.wallet_id and w.profile_id=p_profile_id) then return v_existing.wallet_id; end if;
+  raise exception 'Chave de idempotência já utilizada por outra operação.';
+ end if;
  select * into p from public.profiles where id=p_profile_id for update;
  if not found or p.country_id is null or p.registration_status<>'active' or coalesce(p.account_status,'active')<>'active' then raise exception 'Cidadão inexistente, inativo ou sem país associado.'; end if;
  select c.id into v_currency from public.currencies c join public.country_currency_assignments a on a.currency_id=c.id
@@ -195,7 +201,7 @@ begin
  values(p.id,p.country_id,v_currency,p_amount)
  on conflict(profile_id,country_id,currency_id) do update set balance=bank_cash_wallets.balance+excluded.balance,updated_at=now()
  returning id,balance into v_wallet,v_balance;
- v_key:='issuance-wallet:'||gen_random_uuid()::text;
+ v_key:=p_idempotency_key;
  insert into public.bank_cash_wallet_transactions(wallet_id,transaction_type,amount,balance_after,idempotency_key,description,actor_id)
  values(v_wallet,'issuance_allocation',p_amount,v_balance,v_key,trim(p_reason),auth.uid());
  return v_wallet;
@@ -457,19 +463,22 @@ begin
 end;
 $function$;
 
-create or replace function public.capitalize_bank_liquidity(p_bank_id uuid,p_source_account uuid,p_amount numeric)
+create or replace function public.capitalize_bank_liquidity(p_bank_id uuid,p_source_account uuid,p_amount numeric,p_idempotency_key text)
 returns void language plpgsql security definer set search_path=public,auth as $function$
-declare a public.bank_accounts%rowtype; b public.commercial_banks%rowtype; v_balance numeric; v_key text;
+declare a public.bank_accounts%rowtype; b public.commercial_banks%rowtype; v_balance numeric; v_key text; v_existing public.bank_liquidity_transactions%rowtype;
 begin
  if auth.uid() is null then raise exception 'Autenticação necessária.'; end if;
- if p_amount is null or p_amount<=0 or p_amount<>round(p_amount,6) then raise exception 'Valor de capitalização inválido.'; end if;
+ if p_amount is null or p_amount<=0 or p_amount<>round(p_amount,6) or length(trim(coalesce(p_idempotency_key,'')))<12 then raise exception 'Valor ou chave de idempotência inválidos.'; end if;
+ perform pg_advisory_xact_lock(hashtextextended(p_idempotency_key,0));
+ select * into v_existing from public.bank_liquidity_transactions where idempotency_key=p_idempotency_key;
+ if found then if v_existing.bank_id=p_bank_id and v_existing.transaction_type='capitalization' and v_existing.amount=p_amount and v_existing.reference_id=p_source_account then return; end if; raise exception 'Chave de idempotência já utilizada por outra operação.'; end if;
  select * into b from public.commercial_banks where id=p_bank_id and status='active' for update;
  if not found or not (public.is_world_admin() or public.is_bank_member(p_bank_id,'bank.manage')) then raise exception 'Banco ou permissão inválidos.'; end if;
  select * into a from public.bank_accounts where id=p_source_account for update;
  if not found or (a.owner_profile_id<>auth.uid() and not public.is_world_admin()) then raise exception 'Conta de origem não autorizada.'; end if;
  if a.status<>'active' or a.country_id<>b.country_id or a.balance<p_amount then raise exception 'Conta sem saldo, país incompatível ou indisponível.'; end if;
  update public.bank_accounts set balance=balance-p_amount where id=a.id returning * into a;
- v_key:='bank-capital:'||gen_random_uuid()::text;
+ v_key:=p_idempotency_key;
  insert into public.bank_transactions(account_id,transaction_type,amount,currency_id,balance_after,description,idempotency_key,actor_id)
  values(a.id,'transfer_out',p_amount,a.currency_id,a.balance,'Capitalização de liquidez de banco comercial',v_key,auth.uid());
  insert into public.bank_liquidity(bank_id,currency_id,balance)
@@ -774,7 +783,7 @@ end;
 $function$;
 
 -- Privilégios: todas as mutações passam por RPCs SECURITY DEFINER validadas.
-revoke all on function public.admin_allocate_issued_money_to_wallet(uuid,numeric,text) from public,anon;
+revoke all on function public.admin_allocate_issued_money_to_wallet(uuid,numeric,text,text) from public,anon;
 revoke all on function public.bank_deposit(uuid,numeric,text) from public,anon;
 revoke all on function public.pay_tax_obligation_from_bank_account(uuid,uuid,numeric,text) from public,anon;
 revoke all on function public.bank_withdraw(uuid,numeric,text) from public,anon;
@@ -790,7 +799,7 @@ revoke all on function public.request_bank_loan(uuid,numeric,integer,numeric,tex
 revoke all on function public.admin_review_bank_loan(uuid,text) from public,anon;
 revoke all on function public.pay_bank_loan_installment(uuid,uuid,text) from public,anon;
 revoke all on function public.get_my_bank_dashboard() from public,anon;
-grant execute on function public.admin_allocate_issued_money_to_wallet(uuid,numeric,text) to authenticated;
+grant execute on function public.admin_allocate_issued_money_to_wallet(uuid,numeric,text,text) to authenticated;
 grant execute on function public.bank_deposit(uuid,numeric,text) to authenticated;
 grant execute on function public.pay_tax_obligation_from_bank_account(uuid,uuid,numeric,text) to authenticated;
 grant execute on function public.bank_withdraw(uuid,numeric,text) to authenticated;
@@ -802,8 +811,8 @@ grant execute on function public.bank_process_monthly_maintenance(uuid,date) to 
 grant execute on function public.bank_set_fee(uuid,text,numeric,uuid,boolean) to authenticated;
 grant execute on function public.bank_set_daily_limit(uuid,text,numeric,uuid) to authenticated;
 grant execute on function public.bank_set_credit_policy(uuid,numeric,integer,boolean) to authenticated;
-revoke all on function public.capitalize_bank_liquidity(uuid,uuid,numeric) from public,anon;
-grant execute on function public.capitalize_bank_liquidity(uuid,uuid,numeric) to authenticated;
+revoke all on function public.capitalize_bank_liquidity(uuid,uuid,numeric,text) from public,anon;
+grant execute on function public.capitalize_bank_liquidity(uuid,uuid,numeric,text) to authenticated;
 grant execute on function public.request_bank_loan(uuid,numeric,integer,numeric,text) to authenticated;
 grant execute on function public.admin_review_bank_loan(uuid,text) to authenticated;
 grant execute on function public.pay_bank_loan_installment(uuid,uuid,text) to authenticated;
