@@ -13,7 +13,7 @@ returns boolean language sql stable security definer set search_path=public,auth
       and coalesce(member_profile.account_status,'active')='active'
       and member_profile.registration_status='active'
     where gm.profile_id=auth.uid() and gm.country_id=p_country_id and gm.status='active'
-      and ((p_permission='tax.read' and gp.permission_key='tax.collect') or gp.permission_key in (p_permission,'economy.manage',
+      and ((p_permission='tax.read' and gp.permission_key='tax.collect') or (p_permission='treasury.read' and gp.permission_key='treasury.revenue') or gp.permission_key in (p_permission,'economy.manage',
               case p_permission
                 when 'tax.read' then 'tax.manage'
                 when 'budget.read' then 'budget.manage'
@@ -338,7 +338,7 @@ returns boolean language sql stable security definer set search_path=public,auth
             and coalesce(member_profile.account_status,'active')='active'
             and member_profile.registration_status='active'
           where gm.profile_id=auth.uid() and gm.country_id=p_country_id and gm.status='active'
-            and ((p_permission='tax.read' and gp.permission_key='tax.collect') or gp.permission_key in (p_permission,'economy.manage',
+            and ((p_permission='tax.read' and gp.permission_key='tax.collect') or (p_permission='treasury.read' and gp.permission_key='treasury.revenue') or gp.permission_key in (p_permission,'economy.manage',
               case p_permission
                 when 'tax.read' then 'tax.manage'
                 when 'budget.read' then 'budget.manage'
@@ -373,7 +373,7 @@ returns boolean language sql stable security definer set search_path=public,auth
         and coalesce(member_profile.account_status,'active')='active'
         and member_profile.registration_status='active'
       where gm.profile_id=auth.uid() and gm.country_id=p_country_id and gm.status='active'
-        and ((p_permission='tax.read' and gp.permission_key='tax.collect') or gp.permission_key in (p_permission,'economy.manage',
+        and ((p_permission='tax.read' and gp.permission_key='tax.collect') or (p_permission='treasury.read' and gp.permission_key='treasury.revenue') or gp.permission_key in (p_permission,'economy.manage',
               case p_permission
                 when 'tax.read' then 'tax.manage'
                 when 'budget.read' then 'budget.manage'
