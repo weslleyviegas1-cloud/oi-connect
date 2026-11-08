@@ -481,7 +481,7 @@ begin
           select c.id,(select case when old_ipc>0 then ((new_ipc-old_ipc)/old_ipc)*100 end from (
             select reference_date,
               sum((o.price/base.price)*w.weight)/nullif(sum(w.weight),0) as new_ipc,
-              lag(sum((o.price/base.price)*i.base_weight)/nullif(sum(i.base_weight),0)) over(order by reference_date) as old_ipc
+              lag(sum((o.price/base.price)*w.weight)/nullif(sum(w.weight),0)) over(order by reference_date) as old_ipc
             from public.economic_price_observations o
             join public.economic_price_items i on i.id=o.item_id and i.is_active
             join lateral(select price from public.economic_price_observations b where b.item_id=i.id order by b.reference_date limit 1) base on true
@@ -557,8 +557,8 @@ begin
     'investment_approved',(select coalesce(sum(approved_amount),0) from public.public_investment_projects where country_id=c.id and status in ('approved','in_progress','completed')),
     'inflation',(select case when old_ipc>0 then round(((new_ipc-old_ipc)/old_ipc)*100,2) end from (
       select reference_date,
-        sum((o.price/base.price)*i.base_weight)/nullif(sum(i.base_weight),0) as new_ipc,
-        lag(sum((o.price/base.price)*i.base_weight)/nullif(sum(i.base_weight),0)) over(order by reference_date) as old_ipc
+        sum((o.price/base.price)*w.weight)/nullif(sum(w.weight),0) as new_ipc,
+        lag(sum((o.price/base.price)*w.weight)/nullif(sum(w.weight),0)) over(order by reference_date) as old_ipc
       from public.economic_price_observations o
       join public.economic_price_items i on i.id=o.item_id and i.is_active
       join lateral(select weight from public.economic_price_item_weights wh where wh.item_id=i.id and wh.effective_from<=o.reference_date order by wh.effective_from desc limit 1) w on true
