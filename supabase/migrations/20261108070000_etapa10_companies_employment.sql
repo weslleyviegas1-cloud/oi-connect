@@ -624,7 +624,9 @@ begin
  select * into t from public.tax_rules where id=p_tax_rule_id and country_id=c.country_id and status='active' and current_date between effective_from and coalesce(effective_until,'infinity'::date);
  if not found then raise exception 'Regra tributária não está ativa para este país e período.'; end if;
  if p_base is null or p_base<0 or p_amount is null or p_amount<0 or p_base<>round(p_base,6) or p_amount<>round(p_amount,6) then raise exception 'Base ou tributo inválido.'; end if;
+ if t.calculation_base<>'declared_value' then raise exception 'A base de cálculo desta regra ainda não está automatizada; não será estimado um tributo.'; end if;
  v_rate:=t.rate;
+ if p_amount<>round(p_base*v_rate/100,2) then raise exception 'Valor tributário diverge da alíquota ativa (%). Valor esperado: %.',v_rate,round(p_base*v_rate/100,2); end if;
  insert into public.company_tax_records(company_id,tax_rule_id,description,reference_period,tax_base,applied_rate,amount_due,currency_id,status,created_by)
  values(c.id,t.id,trim(p_description),trim(p_period),p_base,v_rate,p_amount,c.currency_id,'pending_review',auth.uid()) returning id into v_id;
  perform public.company_audit(c.id,'tax_record_created','company_tax_record',v_id,jsonb_build_object('tax_rule',t.identifier,'rate',v_rate,'amount',p_amount)); return v_id;
@@ -763,8 +765,8 @@ begin
  returning id into v_id;
  if p_status='active' then
   insert into public.company_members(company_id,profile_id,member_role,permissions,appointed_by)
-  values(p_company_id,p_profile_id,'director',array['company.manage','staff.read','hr.read','contracts.read','payroll.read','finance.read','tax.read','department.manage','jobs.manage'],auth.uid())
-  on conflict(company_id,profile_id) do update set member_role='director',status='active',permissions=excluded.permissions;
+  values(p_company_id,p_profile_id,'employee',array['contracts.read'],auth.uid())
+  on conflict(company_id,profile_id) do update set status='active';
  else
   update public.company_members set status='removed' where company_id=p_company_id and profile_id=p_profile_id and member_role in ('owner','director');
  end if;
@@ -783,7 +785,8 @@ begin
  if p_department_id is not null and not exists(select 1 from public.company_departments where id=p_department_id and company_id=c.company_id and status='active') then raise exception 'Departamento não pertence à empresa.'; end if;
  if p_ends_at is not null and p_ends_at<c.starts_at then raise exception 'Data final anterior ao início do contrato.'; end if;
  v_old:=to_jsonb(c);
- update public.employment_contracts set job_title=trim(p_job_title),salary_amount=p_salary,department_id=p_department_id,ends_at=p_ends_at,conditions=p_conditions,updated_at=now() where id=c.id returning to_jsonb(employment_contracts.*) into v_new;
+ update public.employment_contracts set job_title=trim(p_job_title),salary_amount=p_salary,department_id=p_department_id,ends_at=p_ends_at,conditions=p_conditions,updated_at=now() where id=c.id returning * into c;
+ v_new:=to_jsonb(c);
  insert into public.employment_contract_revisions(contract_id,previous_data,new_data,revised_by) values(c.id,v_old,v_new,auth.uid());
  insert into public.employment_history(contract_id,company_id,employee_profile_id,event_type,previous_data,new_data,actor_id)
  values(c.id,c.company_id,c.employee_profile_id,p_event,v_old,v_new,auth.uid());
@@ -812,5 +815,19 @@ begin
 end;
 $function$;
 
+
+do $
+declare f record;
+begin
+ for f in select p.oid::regprocedure as signature from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+  where n.nspname='public' and p.proname in (
+   'request_company_registration','admin_review_company','company_upsert_department','company_upsert_position','company_manage_member',
+   'company_open_job','citizen_apply_job','company_review_application','respond_employment_offer','company_terminate_employment',
+   'company_create_payroll','company_approve_payroll','company_pay_salary','company_record_financial_event',
+   'company_create_tax_record','admin_validate_company_tax','open_company_bank_account','set_my_employment_payout_account',
+   'company_manage_owner','company_amend_employment_contract','company_pay_payroll_batch','company_pay_tax_obligation'
+  )
+ loop execute format('revoke all on function %s from public,anon',f.signature); execute format('grant execute on function %s to authenticated',f.signature); end loop;
+end $;
 
 commit;
