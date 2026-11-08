@@ -79,9 +79,6 @@ export function AdminGovernance({ notify }: { notify: (message: string) => void 
       supabase.from("world_spawn").select("*").eq("id", true).maybeSingle(),
       supabase.from("platform_settings").select("*").eq("id", true).maybeSingle(),
     ]);
-    const nationalityRes = await supabase.rpc("admin_list_nationality_change_requests");
-    if (nationalityRes.error) notify("Falha ao carregar solicitações de nacionalidade: " + nationalityRes.error.message);
-    else setNationalityRequests(nationalityRes.data ?? []);
     if (statsRes.error) notify("Falha ao carregar indicadores: " + statsRes.error.message); else setStats(statsRes.data as Stats);
     if (countryRes.error) notify("Falha ao carregar países: " + countryRes.error.message); else setCountries((countryRes.data ?? []) as Country[]);
     if (playerRes.error) notify("Falha ao carregar jogadores: " + playerRes.error.message); else setPlayers((playerRes.data ?? []) as Player[]);
@@ -100,6 +97,7 @@ export function AdminGovernance({ notify }: { notify: (message: string) => void 
   }, [notify]);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => { if (tab === "nationality") void loadNationalityRequests(); }, [tab]);
 
   const filteredCountries = useMemo(() => countries.filter(country => {
     const matchesName = country.name.toLowerCase().includes(countrySearch.toLowerCase());
@@ -184,6 +182,12 @@ export function AdminGovernance({ notify }: { notify: (message: string) => void 
     else { notify(decision === "approved" ? "Presidência aprovada." : "Solicitação recusada."); await load(); }
   };
 
+  const loadNationalityRequests = async () => {
+    const { data, error } = await supabase.rpc("admin_list_nationality_change_requests");
+    if (error) notify("Falha ao carregar solicitações de nacionalidade: " + error.message);
+    else setNationalityRequests(data ?? []);
+  };
+
   const reviewNationality = async (request: any, decision: "approved" | "rejected") => {
     const note = window.prompt(decision === "approved"
       ? "Observação administrativa (opcional):"
@@ -198,7 +202,7 @@ export function AdminGovernance({ notify }: { notify: (message: string) => void 
     });
     setBusy(false);
     if (error) notify("Não foi possível revisar a solicitação: " + error.message);
-    else { notify(decision === "approved" ? "Mudança de nacionalidade aprovada." : "Solicitação rejeitada."); await load(); }
+    else { notify(decision === "approved" ? "Mudança de nacionalidade aprovada." : "Solicitação rejeitada."); await Promise.all([load(), loadNationalityRequests()]); }
   };
 
   const setPlayerStatus = async (player: Player) => {
