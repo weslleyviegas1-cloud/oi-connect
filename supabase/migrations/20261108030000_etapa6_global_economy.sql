@@ -301,10 +301,7 @@ begin
   insert into public.national_treasuries(country_id,currency_code,currency_label)
   values(new.id,new.currency_code,case when nullif(trim(new.currency_code),'') is null
     then 'Unidade monetária provisória (não configurada)' else 'Moeda configurada no cadastro nacional' end)
-  on conflict(country_id) do update set currency_code=excluded.currency_code,
-    currency_label=case when national_treasuries.currency_code is null and excluded.currency_code is not null
-      then excluded.currency_label else national_treasuries.currency_label end,
-    updated_at=now();
+  on conflict(country_id) do nothing;
   return new;
 end;
 $$;
