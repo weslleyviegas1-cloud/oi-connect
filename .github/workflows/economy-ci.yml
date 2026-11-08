@@ -21,6 +21,8 @@ jobs:
           bun-version: latest
       - name: Install dependencies
         run: bun install --frozen-lockfile
+      - name: Type check
+        run: bunx tsc --noEmit
       - name: Build application
         run: bun run build
       - name: Run tests
