@@ -246,6 +246,12 @@ create table if not exists public.public_investment_projects (
   check(executed_amount <= approved_amount)
 );
 
+alter table public.treasury_ledger_entries
+  drop constraint if exists treasury_ledger_investment_project_fk;
+alter table public.treasury_ledger_entries
+  add constraint treasury_ledger_investment_project_fk
+  foreign key (investment_project_id) references public.public_investment_projects(id) on delete restrict;
+
 create table if not exists public.economic_audit_logs (
   id uuid primary key default gen_random_uuid(),
   country_id uuid references public.countries(id) on delete restrict,
@@ -644,8 +650,8 @@ create or replace function public.confirm_tax_collection(
 declare o public.tax_obligations%rowtype; v_col uuid; v_paid numeric;
 begin
   select * into o from public.tax_obligations where id=p_obligation_id for update;
-  if not found then raise exception 'Obrigação tributária não encontrada.'; end if;
-  if not public.can_manage_economy(o.country_id,'tax.collect') then raise exception 'Sem permissão para confirmar arrecadação.'; end if;
+  if not found then raise exception 'Obrigação não encontrada ou sem permissão.'; end if;
+  if not public.can_manage_economy(o.country_id,'tax.collect') then raise exception 'Obrigação não encontrada ou sem permissão.'; end if;
   if p_amount<=0 or length(trim(coalesce(p_confirmation_reference,'')))<3 then raise exception 'Valor ou referência inválidos.'; end if;
   if o.status not in ('open','partially_paid','overdue','pending_confirmation') then raise exception 'Esta obrigação não aceita novas arrecadações.'; end if;
   select coalesce(sum(amount),0) into v_paid from public.tax_collections where obligation_id=o.id;
@@ -791,9 +797,9 @@ create or replace function public.reverse_treasury_entry(p_entry_id uuid,p_reaso
 returns uuid language plpgsql security definer set search_path=public,auth as $$
 declare e public.treasury_ledger_entries%rowtype; v_id uuid;
 begin
+  if not public.is_world_admin() then raise exception 'Somente o Super Admin pode estornar lançamentos.'; end if;
   select * into e from public.treasury_ledger_entries where id=p_entry_id for update;
   if not found then raise exception 'Lançamento não encontrado.'; end if;
-  if not public.is_world_admin() then raise exception 'Somente o Super Admin pode estornar lançamentos.'; end if;
   if e.source_type='tax_collection' then raise exception 'Arrecadação tributária exige procedimento próprio de retificação; estorno genérico bloqueado.'; end if;
   if e.entry_type='reversal' then raise exception 'Um estorno não pode ser estornado por este procedimento.'; end if;
   if length(trim(coalesce(p_reason,'')))<3 or length(trim(coalesce(p_idempotency_key,'')))<8 then raise exception 'Informe o motivo e uma chave de estorno válida.'; end if;
