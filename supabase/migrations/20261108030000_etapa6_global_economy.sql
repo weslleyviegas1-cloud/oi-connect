@@ -510,7 +510,8 @@ create or replace function public.create_tax_rule(
 declare v_id uuid; v_status text;
 begin
   if not public.can_manage_economy(p_country_id,'tax.manage') then raise exception 'Sem permissão para propor tributos.'; end if;
-  if p_rate<0 or p_rate>100 or p_effective_from is null or length(trim(coalesce(p_name,'')))<2 then raise exception 'Regra tributária inválida.'; end if;
+  if p_rate<0 or p_rate>100 or p_effective_from is null or length(trim(coalesce(p_name,'')))<2
+    or length(trim(coalesce(p_identifier,'')))<2 or length(trim(coalesce(p_category,'')))<2 then raise exception 'Regra tributária inválida.'; end if;
   select case when require_global_tax_approval then 'awaiting_approval' else 'active' end into v_status from public.national_treasuries where country_id=p_country_id;
   insert into public.tax_rules(country_id,name,identifier,category,description,rate,calculation_base,status,effective_from,created_by)
   values(p_country_id,trim(p_name),lower(trim(p_identifier)),trim(p_category),p_description,p_rate,p_calculation_base,v_status,p_effective_from,auth.uid())
@@ -545,11 +546,13 @@ begin
     and effective_from<=current_date and (effective_until is null or effective_until>=current_date);
   if not found then raise exception 'Regra tributária não está vigente.'; end if;
   if p_calculation_base<0 or length(trim(coalesce(p_reference_period,'')))=0 then raise exception 'Base ou período inválido.'; end if;
+  if p_taxpayer_profile_id is not null and not exists(select 1 from public.profiles where id=p_taxpayer_profile_id and country_id=p_country_id) then
+    raise exception 'O contribuinte informado não pertence a este país.'; end if;
   v_amount:=round(p_calculation_base*r.rate/100,2);
   insert into public.tax_obligations(country_id,tax_rule_id,taxpayer_profile_id,taxpayer_label,reference_period,
-    calculation_base,applied_rate,amount_due,due_date,created_by)
+    calculation_base,applied_rate,amount_due,due_date,status,created_by)
   values(p_country_id,p_rule_id,p_taxpayer_profile_id,nullif(trim(p_taxpayer_label),''),p_reference_period,
-    p_calculation_base,r.rate,v_amount,p_due_date,auth.uid()) returning id into v_id;
+    p_calculation_base,r.rate,v_amount,p_due_date,case when p_due_date<current_date then 'overdue' else 'open' end,auth.uid()) returning id into v_id;
   perform public.economy_audit(p_country_id,'create','tax_obligation',v_id,null,jsonb_build_object('amount_due',v_amount,'rate',r.rate));
   return v_id;
 end;
@@ -564,6 +567,7 @@ begin
   if not found then raise exception 'Obrigação tributária não encontrada.'; end if;
   if not public.can_manage_economy(o.country_id,'tax.collect') then raise exception 'Sem permissão para confirmar arrecadação.'; end if;
   if p_amount<=0 or length(trim(coalesce(p_confirmation_reference,'')))<3 then raise exception 'Valor ou referência inválidos.'; end if;
+  if o.status not in ('open','partially_paid','overdue','pending_confirmation') then raise exception 'Esta obrigação não aceita novas arrecadações.'; end if;
   select coalesce(sum(amount),0) into v_paid from public.tax_collections where obligation_id=o.id;
   if v_paid+p_amount>o.amount_due then raise exception 'A arrecadação excede o valor ainda devido.'; end if;
   insert into public.tax_collections(country_id,obligation_id,amount,confirmation_reference,confirmed_by)
@@ -658,7 +662,8 @@ create or replace function public.post_treasury_entry(
 ) returns uuid language plpgsql security definer set search_path=public,auth as $$
 declare v_id uuid; a public.budget_allocations%rowtype; p public.public_investment_projects%rowtype; t public.national_treasuries%rowtype; v_spent numeric; v_balance numeric;
 begin
-  if p_entry_type not in ('revenue','expense') or p_amount<=0 or length(trim(coalesce(p_idempotency_key,'')))<8 then raise exception 'Lançamento inválido.'; end if;
+  if p_entry_type not in ('revenue','expense') or p_amount<=0 or length(trim(coalesce(p_idempotency_key,'')))<8
+    or length(trim(coalesce(p_category,'')))<2 or length(trim(coalesce(p_description,'')))<3 then raise exception 'Lançamento inválido.'; end if;
   select * into t from public.national_treasuries where country_id=p_country_id for update;
   if not found then raise exception 'Tesouro Nacional não encontrado.'; end if;
   select t.opening_balance+coalesce(sum(x.signed_amount),0) into v_balance from public.treasury_ledger_entries x where x.country_id=p_country_id;
@@ -708,7 +713,9 @@ begin
   if not public.is_world_admin() then raise exception 'Somente o Super Admin pode estornar lançamentos.'; end if;
   if e.source_type='tax_collection' then raise exception 'Arrecadação tributária exige procedimento próprio de retificação; estorno genérico bloqueado.'; end if;
   if e.entry_type='reversal' then raise exception 'Um estorno não pode ser estornado por este procedimento.'; end if;
-  if e.signed_amount>0 and (select t.opening_balance+coalesce(sum(x.signed_amount),0) from public.national_treasuries t left join public.treasury_ledger_entries x on x.country_id=t.country_id where t.country_id=e.country_id)<e.amount then
+  if length(trim(coalesce(p_reason,'')))<3 or length(trim(coalesce(p_idempotency_key,'')))<8 then raise exception 'Informe o motivo e uma chave de estorno válida.'; end if;
+  if e.signed_amount>0 and (select t.opening_balance+coalesce((select sum(x.signed_amount) from public.treasury_ledger_entries x where x.country_id=e.country_id),0)
+    from public.national_treasuries t where t.country_id=e.country_id)<e.amount then
     raise exception 'O estorno reduziria o saldo do Tesouro abaixo de zero.'; end if;
   if exists(select 1 from public.treasury_ledger_entries where reverses_entry_id=e.id) then raise exception 'Este lançamento já foi estornado.'; end if;
   insert into public.treasury_ledger_entries(country_id,entry_type,category,description,amount,signed_amount,source_type,source_id,
