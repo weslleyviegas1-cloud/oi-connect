@@ -378,6 +378,26 @@ begin
       select jsonb_build_object(
         'scope','global',
         'countries_active',(select count(*) from public.countries where is_active),
+        'countries_without_gdp',(select count(*) from public.countries c where c.is_active and not exists(
+          select 1 from public.economic_gdp_records r where r.country_id=c.id and r.status in ('confirmed','revised'))),
+        'countries_growth_positive',(select count(*) from (
+          select cur.country_id from (
+            select distinct on (country_id) country_id,total_value,period_start,period_end
+            from public.economic_gdp_records where status in ('confirmed','revised') order by country_id,period_end desc
+          ) cur join public.economic_gdp_records prev on prev.country_id=cur.country_id
+            and prev.status in ('confirmed','revised') and prev.period_end=cur.period_start-1
+            and (prev.period_end-prev.period_start)=(cur.period_end-cur.period_start)
+          where prev.total_value>0 and cur.total_value>prev.total_value
+        ) positive_growth),
+        'countries_growth_negative',(select count(*) from (
+          select cur.country_id from (
+            select distinct on (country_id) country_id,total_value,period_start,period_end
+            from public.economic_gdp_records where status in ('confirmed','revised') order by country_id,period_end desc
+          ) cur join public.economic_gdp_records prev on prev.country_id=cur.country_id
+            and prev.status in ('confirmed','revised') and prev.period_end=cur.period_start-1
+            and (prev.period_end-prev.period_start)=(cur.period_end-cur.period_start)
+          where prev.total_value>0 and cur.total_value<prev.total_value
+        ) negative_growth),
         'gdp_total',(select sum(latest.total_value) from (
           select distinct on (country_id) country_id,total_value
           from public.economic_gdp_records where status in ('confirmed','revised')
@@ -385,12 +405,23 @@ begin
         ) latest),
         'treasury_total',(select sum(t.opening_balance + coalesce(l.total,0)) from public.national_treasuries t
           left join lateral (select sum(signed_amount) total from public.treasury_ledger_entries x where x.country_id=t.country_id) l on true),
+        'revenue_total',(select coalesce(sum(case when x.entry_type='revenue' then x.amount
+          when x.entry_type='reversal' and exists(select 1 from public.treasury_ledger_entries original where original.id=x.reverses_entry_id and original.entry_type='revenue') then -x.amount else 0 end),0)
+          from public.treasury_ledger_entries x),
+        'expenses_total',(select coalesce(sum(case when x.entry_type='expense' then x.amount
+          when x.entry_type='reversal' and exists(select 1 from public.treasury_ledger_entries original where original.id=x.reverses_entry_id and original.entry_type='expense') then -x.amount else 0 end),0)
+          from public.treasury_ledger_entries x),
+        'investment_total',(select coalesce(sum(approved_amount),0) from public.public_investment_projects where status in ('approved','in_progress','completed')),
         'tax_revenue_total',(select coalesce(sum(amount),0) from public.tax_collections),
         'countries',(select coalesce(jsonb_agg(jsonb_build_object('id',c.id,'name',c.name,'flag',c.flag,'continent',c.continent,'is_active',c.is_active,
           'currency_code',t.currency_code,'currency_label',t.currency_label,
           'treasury_balance',t.opening_balance+coalesce(l.total,0),
-          'gdp',(select r.total_value from public.economic_gdp_records r where r.country_id=c.id and r.status='confirmed' order by r.period_end desc limit 1),
-          'gdp_period_end',(select r.period_end from public.economic_gdp_records r where r.country_id=c.id and r.status='confirmed' order by r.period_end desc limit 1)
+          'gdp',(select r.total_value from public.economic_gdp_records r where r.country_id=c.id and r.status in ('confirmed','revised') order by r.period_end desc limit 1),
+          'gdp_period_end',(select r.period_end from public.economic_gdp_records r where r.country_id=c.id and r.status in ('confirmed','revised') order by r.period_end desc limit 1),
+          'gdp_growth',(select case when prev.total_value>0 then round(((cur.total_value-prev.total_value)/prev.total_value)*100,2) end
+            from (select total_value,period_start,period_end from public.economic_gdp_records where country_id=c.id and status in ('confirmed','revised') order by period_end desc limit 1) cur
+            left join public.economic_gdp_records prev on prev.country_id=c.id and prev.status in ('confirmed','revised')
+              and prev.period_end=cur.period_start-1 and (prev.period_end-prev.period_start)=(cur.period_end-cur.period_start))
         ) order by c.name),'[]'::jsonb) from public.countries c
         left join public.national_treasuries t on t.country_id=c.id
         left join lateral(select sum(signed_amount) total from public.treasury_ledger_entries x where x.country_id=c.id) l on true)
