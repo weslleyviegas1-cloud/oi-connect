@@ -363,6 +363,7 @@ begin
   if not public.is_world_admin() then raise exception 'Somente o Super Admin pode aprovar emissões.'; end if;
   select * into r from public.monetary_issuances where id=p_request_id for update;
   if not found or r.status<>'pending' then raise exception 'Solicitação inexistente ou já revisada.'; end if;
+  perform 1 from public.central_banks where id=r.central_bank_id for update;
   select * into s from public.central_bank_settings where central_bank_id=r.central_bank_id;
   if p_approve then
     select coalesce(sum(amount),0) into v_total from public.money_supply_records where country_id=r.country_id and operation_type='issuance';
@@ -411,6 +412,7 @@ begin
   select * into r from public.monetary_withdrawals where id=p_request_id for update;
   if not found or r.status<>'pending' then raise exception 'Solicitação inexistente ou já revisada.'; end if;
   if p_approve then
+    perform 1 from public.central_banks where id=r.central_bank_id for update;
     select coalesce(sum(case when operation_type='issuance' then amount else -amount end),0) into v_supply from public.money_supply_records where country_id=r.country_id;
     select coalesce(sum(amount),0) into v_pending from public.monetary_withdrawals where country_id=r.country_id and status='pending' and id<>r.id;
     if r.amount>v_supply-v_pending then raise exception 'A oferta disponível mudou; a retirada não pode ser aprovada.'; end if;
