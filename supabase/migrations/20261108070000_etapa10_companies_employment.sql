@@ -953,7 +953,52 @@ grant execute on function public.get_company_market_indicators(uuid) to authenti
 do $etapa10$
 declare f record;
 begin
- for f in select p.oid::regprocedure as signature from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in ('admin_issue_company_tax_obligation','get_company_market_indicators')
+ for f in select p.oid::regprocedure as signature from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in ('admin_issue_company_tax_obligation','get_company_market_indicators','set_my_profession')
  loop execute format('revoke all on function %s from public,anon',f.signature); execute format('grant execute on function %s to authenticated',f.signature); end loop;
 end $etapa10$;
+
+create table if not exists public.profession_catalog (
+ id uuid primary key default gen_random_uuid(),
+ profession_code text not null unique,
+ profession_name text not null unique,
+ category text not null,
+ is_active boolean not null default true,
+ created_at timestamptz not null default now()
+);
+insert into public.profession_catalog(profession_code,profession_name,category) values
+ ('manager','Gerente','administration'),('director','Diretor','administration'),('administrator','Administrador','administration'),
+ ('engineer','Engenheiro','engineering'),('industrial_worker','Trabalhador industrial','industry'),('farmer','Agricultor','agriculture'),
+ ('miner','Minerador','mining'),('driver','Motorista','transport'),('salesperson','Vendedor','commerce'),
+ ('accountant','Contador','finance'),('teacher','Professor','education'),('doctor','Médico','health'),('technician','Técnico','services')
+on conflict(profession_code) do nothing;
+
+create table if not exists public.citizen_professions (
+ profile_id uuid primary key references public.profiles(id) on delete cascade,
+ profession_id uuid references public.profession_catalog(id) on delete set null,
+ professional_summary text,
+ updated_at timestamptz not null default now()
+);
+alter table public.profession_catalog enable row level security;
+alter table public.citizen_professions enable row level security;
+drop policy if exists profession_catalog_read on public.profession_catalog;
+create policy profession_catalog_read on public.profession_catalog for select to authenticated using(is_active);
+drop policy if exists citizen_professions_read on public.citizen_professions;
+create policy citizen_professions_read on public.citizen_professions for select to authenticated using(profile_id=auth.uid() or public.is_world_admin());
+revoke all on public.profession_catalog,public.citizen_professions from public,anon,authenticated;
+grant select on public.profession_catalog,public.citizen_professions to authenticated;
+
+create or replace function public.set_my_profession(p_profession_id uuid,p_summary text default null)
+returns void language plpgsql security definer set search_path=public,auth as $function$
+begin
+ if auth.uid() is null or not exists(select 1 from public.profiles where id=auth.uid() and registration_status='active' and coalesce(account_status,'active')='active') then raise exception 'Cidadão ativo necessário.'; end if;
+ if p_profession_id is not null and not exists(select 1 from public.profession_catalog where id=p_profession_id and is_active) then raise exception 'Profissão indisponível.'; end if;
+ if length(coalesce(p_summary,''))>1000 then raise exception 'Resumo profissional muito longo.'; end if;
+ insert into public.citizen_professions(profile_id,profession_id,professional_summary) values(auth.uid(),p_profession_id,nullif(trim(p_summary),''))
+ on conflict(profile_id) do update set profession_id=excluded.profession_id,professional_summary=excluded.professional_summary,updated_at=now();
+end;
+$function$;
+revoke all on function public.set_my_profession(uuid,text) from public,anon;
+grant execute on function public.set_my_profession(uuid,text) to authenticated;
+
+
 commit;
