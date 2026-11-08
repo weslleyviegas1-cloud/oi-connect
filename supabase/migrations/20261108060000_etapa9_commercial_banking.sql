@@ -465,4 +465,78 @@ grant execute on function public.request_bank_loan(uuid,numeric,integer,numeric,
 grant execute on function public.admin_review_bank_loan(uuid,text) to authenticated;
 grant execute on function public.pay_bank_loan_installment(uuid,uuid,text) to authenticated;
 
+
+-- Caixa próprio do banco: separado de depósitos de clientes e do Banco Central.
+create table if not exists public.bank_liquidity (
+ id uuid primary key default gen_random_uuid(),
+ bank_id uuid not null references public.commercial_banks(id) on delete restrict,
+ currency_id uuid not null references public.currencies(id) on delete restrict,
+ balance numeric(30,6) not null default 0 check(balance>=0),
+ updated_at timestamptz not null default now(),
+ unique(bank_id,currency_id)
+);
+alter table public.bank_liquidity enable row level security;
+drop policy if exists bank_liquidity_read on public.bank_liquidity;
+create policy bank_liquidity_read on public.bank_liquidity for select to authenticated
+using(public.is_world_admin() or public.is_bank_member(bank_id,'bank.manage'));
+revoke all on public.bank_liquidity from public,anon,authenticated;
+grant select on public.bank_liquidity to authenticated;
+
+create or replace function public.capitalize_bank_liquidity(p_bank_id uuid,p_source_account uuid,p_amount numeric)
+returns void language plpgsql security definer set search_path=public,auth as $function$
+declare a public.bank_accounts%rowtype; b public.commercial_banks%rowtype;
+begin
+ if auth.uid() is null then raise exception 'Autenticação necessária.'; end if;
+ if p_amount is null or p_amount<=0 then raise exception 'Valor de capitalização inválido.'; end if;
+ select * into b from public.commercial_banks where id=p_bank_id and status='active' for update;
+ if not found or not (public.is_world_admin() or public.is_bank_member(p_bank_id,'bank.manage')) then raise exception 'Banco ou permissão inválidos.'; end if;
+ select * into a from public.bank_accounts where id=p_source_account for update;
+ if not found or (a.owner_profile_id<>auth.uid() and not public.is_world_admin()) then raise exception 'Conta de origem não autorizada.'; end if;
+ if a.status<>'active' or a.balance<p_amount then raise exception 'Conta sem saldo ou indisponível.'; end if;
+ update public.bank_accounts set balance=balance-p_amount where id=a.id returning * into a;
+ insert into public.bank_transactions(account_id,transaction_type,amount,currency_id,balance_after,description,idempotency_key,actor_id)
+ values(a.id,'transfer_out',p_amount,a.currency_id,a.balance,'Capitalização de liquidez de banco comercial','bank-capital:'||gen_random_uuid(),auth.uid());
+ insert into public.bank_liquidity(bank_id,currency_id,balance)
+ values(p_bank_id,a.currency_id,p_amount)
+ on conflict(bank_id,currency_id) do update set balance=bank_liquidity.balance+excluded.balance,updated_at=now();
+ perform public.bank_audit(p_bank_id,'liquidity_capitalized','bank_liquidity',null,jsonb_build_object('amount',p_amount,'currency_id',a.currency_id,'source_account',a.id));
+end;
+$function$;
+
+create or replace function public.admin_review_bank_loan(p_application_id uuid,p_decision text)
+returns uuid language plpgsql security definer set search_path=public,auth as $function$
+declare x public.loan_applications%rowtype; a public.bank_accounts%rowtype; v_loan uuid; v_total numeric; v_monthly numeric; i integer; v_liquidity numeric;
+begin
+ select * into x from public.loan_applications where id=p_application_id for update;
+ if not found or not (public.is_world_admin() or public.is_bank_member(x.bank_id,'loan.review')) then raise exception 'Sem permissão ou solicitação inexistente.'; end if;
+ if x.status<>'pending' or p_decision not in ('approved','rejected') then raise exception 'Solicitação já revisada ou decisão inválida.'; end if;
+ if p_decision='rejected' then
+  update public.loan_applications set status='rejected',reviewed_by=auth.uid(),reviewed_at=now() where id=x.id;
+  return null;
+ end if;
+ perform 1 from public.commercial_banks where id=x.bank_id for update;
+ select * into a from public.bank_accounts where id=x.account_id for update;
+ if a.status<>'active' then raise exception 'Conta de destino indisponível.'; end if;
+ select balance into v_liquidity from public.bank_liquidity where bank_id=x.bank_id and currency_id=x.currency_id for update;
+ if coalesce(v_liquidity,0)<x.amount then raise exception 'Liquidez bancária insuficiente. Capitalize o banco com recursos existentes antes de aprovar.'; end if;
+ v_total:=round(x.amount*(1+(x.annual_interest_rate/100)*(x.term_months::numeric/12)),6);
+ v_monthly:=round(v_total/x.installments_count,6);
+ insert into public.bank_loans(application_id,bank_id,borrower_profile_id,account_id,principal,total_due,currency_id,annual_interest_rate,installments_count)
+ values(x.id,x.bank_id,x.applicant_profile_id,x.account_id,x.amount,v_total,x.currency_id,x.annual_interest_rate,x.installments_count) returning id into v_loan;
+ update public.bank_liquidity set balance=balance-x.amount,updated_at=now() where bank_id=x.bank_id and currency_id=x.currency_id;
+ update public.bank_accounts set balance=balance+x.amount where id=a.id returning * into a;
+ update public.loan_applications set status='approved',reviewed_by=auth.uid(),reviewed_at=now() where id=x.id;
+ insert into public.bank_transactions(account_id,transaction_type,amount,currency_id,balance_after,description,reference_id,idempotency_key,actor_id)
+ values(a.id,'loan_disbursement',x.amount,a.currency_id,a.balance,'Crédito de empréstimo aprovado',v_loan,'loan:'||v_loan,auth.uid());
+ for i in 1..x.installments_count loop
+  insert into public.loan_installments(loan_id,installment_number,due_date,amount_due)
+  values(v_loan,i,(current_date+(i||' month')::interval)::date,case when i=x.installments_count then v_total-v_monthly*(x.installments_count-1) else v_monthly end);
+ end loop;
+ perform public.bank_audit(x.bank_id,'loan_approved','bank_loan',v_loan,jsonb_build_object('principal',x.amount,'total_due',v_total));
+ return v_loan;
+end;
+$function$;
+revoke all on function public.capitalize_bank_liquidity(uuid,uuid,numeric) from public,anon;
+grant execute on function public.capitalize_bank_liquidity(uuid,uuid,numeric) to authenticated;
+
 commit;
