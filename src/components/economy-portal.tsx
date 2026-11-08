@@ -128,7 +128,7 @@ export function EconomyPortal({ profile, notify }: Props) {
     <div className="eco-tabs">{tabs.map(item => <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}>{item.label}</button>)}</div>
     {loading ? <div className="eco-empty">Carregando dados econômicos...</div> : !dashboard ? <div className="eco-empty">Não há país vinculado ou dados econômicos disponíveis para esta conta.</div> :
       <>
-        {tab === "overview" && <Overview dashboard={dashboard} countries={dashboard.countries ?? []} gdp={gdp}/>}
+        {tab === "overview" && <Overview dashboard={dashboard} countries={dashboard.countries ?? []} gdp={gdp} ledger={ledger}/>}
         {tab === "gdp" && <section className="eco-panel"><SectionTitle title="Produto Interno Bruto" subtitle="O PIB soma somente componentes de produção registrados. Tesouro e transferências não entram no cálculo." onExport={() => exportCsv(gdp,"world-economy-pib.csv")}/>
           {canGDP && <form className="eco-form" onSubmit={e => { e.preventDefault(); const f = new FormData(e.currentTarget); const sectors: [string,string][] = [["industrial","Produção industrial"],["mining","Produção mineral"],["agriculture","Produção agrícola"],["services","Serviços"],["commerce","Comércio"],["construction","Construção e infraestrutura"],["other","Outras atividades"]]; const components = sectors.map(([key,label]) => ({ sector: label, amount: Number(f.get(key) || 0) })).filter(x => x.amount > 0); void invoke("save_gdp_record",{p_country_id:selectedCountryId,p_period_start:f.get("start"),p_period_end:f.get("end"),p_components:components,p_source_description:f.get("source") || "Registro manual autorizado"},"Registro do PIB salvo."); e.currentTarget.reset(); }}>
             <h3>Novo registro manual</h3><div className="eco-grid-2"><Field label="Início do período" name="start" type="date" required/><Field label="Fim do período" name="end" type="date" required/></div>
@@ -187,7 +187,7 @@ export function EconomyPortal({ profile, notify }: Props) {
   </div>;
 }
 
-function Overview({ dashboard, countries, gdp }: { dashboard: Row; countries: Row[]; gdp: Row[] }) {
+function Overview({ dashboard, countries, gdp, ledger }: { dashboard: Row; countries: Row[]; gdp: Row[]; ledger: Row[] }) {
   const [search, setSearch] = useState("");
   const [continent, setContinent] = useState("all");
   const [period, setPeriod] = useState("all");
@@ -235,6 +235,14 @@ function Overview({ dashboard, countries, gdp }: { dashboard: Row; countries: Ro
     (period !== "custom" || ((!customStart || row.period_end >= customStart) && (!customEnd || row.period_end <= customEnd))));
   const growth = dashboard.gdp_growth;
   const fiscal = Number(dashboard.revenue ?? 0) - Number(dashboard.expenses ?? 0);
+  const treasurySeries = [...ledger.reduce((map, entry) => {
+    const month = String(entry.created_at ?? "").slice(0,7);
+    if (!month) return map;
+    const current = map.get(month) ?? { month, net: 0 };
+    current.net += Number(entry.signed_amount ?? 0);
+    map.set(month,current);
+    return map;
+  }, new Map<string,{month:string;net:number}>()).values()].sort((a,b)=>a.month.localeCompare(b.month));
   return <section className="eco-panel"><SectionTitle title={dashboard.country_name ?? "Economia Nacional"} subtitle="Indicadores calculados a partir dos registros confirmados deste país."/>
     <div className="eco-country-heading"><strong>{dashboard.country_flag ?? "🌐"} {dashboard.country_name}</strong><span>{dashboard.currency_code || dashboard.currency_label || "Unidade monetária provisória"}</span></div>
     <div className="eco-metrics">
@@ -246,6 +254,7 @@ function Overview({ dashboard, countries, gdp }: { dashboard: Row; countries: Ro
     </div>
     <p className="eco-muted">Resultado fiscal = receitas realizadas − despesas realizadas: <b>{money(fiscal)}</b>. Unidade: {dashboard.currency_code || "não configurada; unidade provisória"}. {dashboard.gdp == null ? "Dados insuficientes para calcular o PIB." : "Último período do PIB encerrado em "+date(dashboard.gdp_period_end)+"."}</p>
     <div className="eco-chart"><ResponsiveContainer width="100%" height={240}><LineChart data={[...nationalGdp].reverse()}><CartesianGrid strokeDasharray="3 3" opacity={.15}/><XAxis dataKey="period_end"/><YAxis/><Tooltip formatter={(v: any)=>money(v)}/><Line type="monotone" dataKey="total_value" stroke="#39a9ff" strokeWidth={2} dot={false}/></LineChart></ResponsiveContainer></div>
+    <div><h3>Movimentação líquida do Tesouro</h3><p className="eco-muted">Variação líquida por mês, incluindo estornos; não representa o saldo acumulado.</p><div className="eco-chart"><ResponsiveContainer width="100%" height={220}><LineChart data={treasurySeries}><CartesianGrid strokeDasharray="3 3" opacity={.15}/><XAxis dataKey="month"/><YAxis/><Tooltip formatter={(v: any)=>money(v)}/><Line type="monotone" dataKey="net" stroke="#d4a84d" strokeWidth={2} dot={false}/></LineChart></ResponsiveContainer></div></div>
   </section>;
 }
 function SectionTitle({title,subtitle,onExport}:{title:string;subtitle:string;onExport?:()=>void}){return <header className="eco-section-title"><div><h3>{title}</h3><p>{subtitle}</p></div>{onExport&&<button type="button" onClick={onExport}><FileSpreadsheet size={15}/> CSV</button>}</header>}
