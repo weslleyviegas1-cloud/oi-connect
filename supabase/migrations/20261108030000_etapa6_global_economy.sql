@@ -801,15 +801,18 @@ $$;
 create or replace function public.confirm_tax_collection(
   p_obligation_id uuid,p_amount numeric,p_confirmation_reference text
 ) returns uuid language plpgsql security definer set search_path=public,auth as $$
-declare o public.tax_obligations%rowtype; v_col uuid; v_paid numeric; v_currency text;
+declare o public.tax_obligations%rowtype; v_col uuid; v_paid numeric; v_currency text; v_opening_snapshot text; v_opening numeric;
 begin
   select * into o from public.tax_obligations where id=p_obligation_id for update;
   if not found then raise exception 'Obrigação não encontrada ou sem permissão.'; end if;
   if not public.can_manage_economy(o.country_id,'tax.collect') then raise exception 'Obrigação não encontrada ou sem permissão.'; end if;
   if p_amount<=0 or length(trim(coalesce(p_confirmation_reference,'')))<3 then raise exception 'Valor ou referência inválidos.'; end if;
-  select currency_code into v_currency from public.national_treasuries where country_id=o.country_id for update;
+  select currency_code,opening_balance_currency_code_snapshot,opening_balance
+    into v_currency,v_opening_snapshot,v_opening
+    from public.national_treasuries where country_id=o.country_id for update;
   if not found then raise exception 'Tesouro Nacional não encontrado.'; end if;
-  if exists(select 1 from public.treasury_ledger_entries x where x.country_id=o.country_id
+  if (v_opening>0 and v_opening_snapshot<>coalesce(nullif(v_currency,''),'UNCONFIGURED'))
+    or exists(select 1 from public.treasury_ledger_entries x where x.country_id=o.country_id
       and x.currency_code_snapshot<>coalesce(nullif(v_currency,''),'UNCONFIGURED')) then
     raise exception 'O Tesouro possui registros em outra unidade monetária; a conciliação deve ocorrer antes de arrecadar.'; end if;
   if o.currency_code_snapshot<>coalesce(nullif(v_currency,''),'UNCONFIGURED') then raise exception 'A unidade monetária da obrigação diverge da unidade atual do Tesouro.'; end if;
