@@ -712,13 +712,14 @@ create or replace function public.create_investment_project(
   p_country_id uuid,p_name text,p_description text,p_category text,p_budget_allocation_id uuid,
   p_planned_amount numeric,p_starts_on date,p_expected_end date
 ) returns uuid language plpgsql security definer set search_path=public,auth as $$
-declare v_id uuid;
+declare v_id uuid; v_allocation_limit numeric(24,2);
 begin
   if not public.can_manage_economy(p_country_id,'investment.manage') then raise exception 'Sem permissão para propor investimento.'; end if;
   if p_planned_amount<0 or length(trim(coalesce(p_name,'')))<2 then raise exception 'Projeto inválido.'; end if;
-  if p_budget_allocation_id is null or not exists(select 1 from public.budget_allocations a join public.budget_plans b on b.id=a.budget_plan_id
-    where a.id=p_budget_allocation_id and a.country_id=p_country_id and b.status in ('approved','in_execution')) then
-    raise exception 'O projeto precisa de uma alocação orçamentária aprovada neste país.'; end if;
+  select a.planned_amount into v_allocation_limit from public.budget_allocations a join public.budget_plans b on b.id=a.budget_plan_id
+    where a.id=p_budget_allocation_id and a.country_id=p_country_id and b.status in ('approved','in_execution');
+  if v_allocation_limit is null then raise exception 'O projeto precisa de uma alocação orçamentária aprovada neste país.'; end if;
+  if p_planned_amount>v_allocation_limit then raise exception 'O valor previsto excede a alocação orçamentária.'; end if;
   insert into public.public_investment_projects(country_id,name,description,category,budget_allocation_id,planned_amount,starts_on,expected_end,created_by)
   values(p_country_id,trim(p_name),p_description,trim(p_category),p_budget_allocation_id,p_planned_amount,p_starts_on,p_expected_end)
   returning id into v_id;
@@ -735,8 +736,9 @@ begin
   if p_decision not in ('approved','rejected','suspended','cancelled') then raise exception 'Decisão inválida.'; end if;
   select * into p from public.public_investment_projects where id=p_project_id for update;
   if not found then raise exception 'Projeto não encontrado.'; end if;
-  if p_decision='approved' and (p_approved_amount is null or p_approved_amount<0 or p_approved_amount>p.planned_amount) then
-    raise exception 'Valor aprovado inválido.'; end if;
+  if p_decision='approved' and (p_approved_amount is null or p_approved_amount<0 or p_approved_amount>p.planned_amount
+    or p_approved_amount>(select planned_amount from public.budget_allocations where id=p.budget_allocation_id)) then
+    raise exception 'Valor aprovado inválido ou superior à alocação orçamentária.'; end if;
   update public.public_investment_projects set status=case when p_decision='approved' then 'approved' else p_decision end,
     approved_amount=case when p_decision='approved' then p_approved_amount else approved_amount end,
     reviewed_by=auth.uid(),reviewed_at=now(),updated_at=now() where id=p.id;
