@@ -386,10 +386,11 @@ begin
         'treasury_total',(select sum(t.opening_balance + coalesce(l.total,0)) from public.national_treasuries t
           left join lateral (select sum(signed_amount) total from public.treasury_ledger_entries x where x.country_id=t.country_id) l on true),
         'tax_revenue_total',(select coalesce(sum(amount),0) from public.tax_collections),
-        'countries',(select coalesce(jsonb_agg(jsonb_build_object('id',c.id,'name',c.name,'flag',c.flag,
+        'countries',(select coalesce(jsonb_agg(jsonb_build_object('id',c.id,'name',c.name,'flag',c.flag,'continent',c.continent,'is_active',c.is_active,
           'currency_code',t.currency_code,'currency_label',t.currency_label,
           'treasury_balance',t.opening_balance+coalesce(l.total,0),
-          'gdp',(select r.total_value from public.economic_gdp_records r where r.country_id=c.id and r.status='confirmed' order by r.period_end desc limit 1)
+          'gdp',(select r.total_value from public.economic_gdp_records r where r.country_id=c.id and r.status='confirmed' order by r.period_end desc limit 1),
+          'gdp_period_end',(select r.period_end from public.economic_gdp_records r where r.country_id=c.id and r.status='confirmed' order by r.period_end desc limit 1)
         ) order by c.name),'[]'::jsonb) from public.countries c
         left join public.national_treasuries t on t.country_id=c.id
         left join lateral(select sum(signed_amount) total from public.treasury_ledger_entries x where x.country_id=c.id) l on true)
