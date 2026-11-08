@@ -64,9 +64,9 @@ begin
  end if;
  if p_proposed_governor_profile_id is not null and not exists(
    select 1 from public.profiles p where p.id=p_proposed_governor_profile_id
-    and p.country_id=p_country_id and p.registration_status='active'
+    and p.country_id=p_country_id and p.role<>'president' and p.registration_status='active'
     and coalesce(p.account_status,'active')='active'
- ) then raise exception 'O indicado para Governador precisa ser um cidadão ativo do país.'; end if;
+ ) then raise exception 'O indicado para Governador deve ser um cidadão ativo do país e não pode ser o Presidente em exercício.'; end if;
  insert into public.central_bank_creation_requests(country_id,requested_by,proposed_name,proposed_identifier,description,proposed_governor_profile_id)
  values(p_country_id,auth.uid(),trim(p_name),upper(trim(p_identifier)),nullif(trim(p_description),''),p_proposed_governor_profile_id)
  returning id into v_id;
@@ -89,6 +89,9 @@ begin
   end if;
   v_bank:=public.admin_create_central_bank(r.country_id,r.proposed_name,r.proposed_identifier,r.description,true);
   if r.proposed_governor_profile_id is not null then
+   if not exists(select 1 from public.profiles p where p.id=r.proposed_governor_profile_id and p.country_id=r.country_id and p.role<>'president' and p.registration_status='active' and coalesce(p.account_status,'active')='active') then
+    raise exception 'O indicado para Governador deixou de ser elegível; atualize a indicação antes de aprovar.';
+   end if;
    v_governor:=r.proposed_governor_profile_id;
    perform public.admin_set_central_bank_member(
     v_bank,v_governor,'Governador do Banco Central',
@@ -162,7 +165,7 @@ begin
  if not public.is_world_admin() then raise exception 'Somente o Super Admin pode distribuir moeda emitida.'; end if;
  if p_amount is null or p_amount<=0 or length(trim(coalesce(p_reason,'')))<5 then raise exception 'Valor ou justificativa inválidos.'; end if;
  select * into p from public.profiles where id=p_profile_id for update;
- if not found or p.country_id is null then raise exception 'Cidadão sem país associado.'; end if;
+ if not found or p.country_id is null or p.registration_status<>'active' or coalesce(p.account_status,'active')<>'active' then raise exception 'Cidadão inexistente, inativo ou sem país associado.'; end if;
  select c.id into v_currency from public.currencies c join public.country_currency_assignments a on a.currency_id=c.id
  where a.country_id=p.country_id and a.effective_until is null and c.status='active' order by a.effective_from desc limit 1;
  if v_currency is null then raise exception 'O país não possui moeda nacional ativa.'; end if;
@@ -370,6 +373,7 @@ create or replace function public.bank_set_daily_limit(
 begin
  if not (public.is_world_admin() or public.is_bank_member(p_bank_id,'bank.manage')) then raise exception 'Sem permissão para configurar limites.'; end if;
  if p_operation_type not in ('withdrawal','transfer') or p_daily_limit is null or p_daily_limit<=0 then raise exception 'Limite inválido.'; end if;
+ if not exists(select 1 from public.commercial_banks b join public.country_currency_assignments a on a.country_id=b.country_id and a.currency_id=p_currency_id and a.effective_until is null join public.currencies c on c.id=a.currency_id and c.status='active' where b.id=p_bank_id and b.status='active') then raise exception 'O limite deve usar a moeda nacional vigente do banco.'; end if;
  insert into public.bank_limits(bank_id,operation_type,daily_limit,currency_id,updated_by)
  values(p_bank_id,p_operation_type,p_daily_limit,p_currency_id,auth.uid())
  on conflict(bank_id,operation_type,currency_id) do update set daily_limit=excluded.daily_limit,updated_by=auth.uid(),updated_at=now();
@@ -419,6 +423,7 @@ create or replace function public.bank_set_credit_policy(
 begin
  if not (public.is_world_admin() or public.is_bank_member(p_bank_id,'bank.manage')) then raise exception 'Sem permissão para configurar crédito.'; end if;
  if p_annual_rate is null or p_annual_rate not between 0 and 10000 or p_max_term_months not between 1 and 360 then raise exception 'Política de crédito inválida.'; end if;
+ if not exists(select 1 from public.commercial_banks where id=p_bank_id and status='active') then raise exception 'Banco indisponível.'; end if;
  insert into public.bank_credit_policies(bank_id,annual_interest_rate,max_term_months,enabled,updated_by)
  values(p_bank_id,p_annual_rate,p_max_term_months,p_enabled,auth.uid())
  on conflict(bank_id) do update set annual_interest_rate=excluded.annual_interest_rate,max_term_months=excluded.max_term_months,enabled=excluded.enabled,updated_by=auth.uid(),updated_at=now();
@@ -432,7 +437,7 @@ declare a public.bank_accounts%rowtype; v_policy public.bank_credit_policies%row
 begin
  if auth.uid() is null then raise exception 'Autenticação necessária.'; end if;
  select * into a from public.bank_accounts where id=p_account_id and owner_profile_id=auth.uid() and status='active';
- if not found or not exists(select 1 from public.commercial_banks b where b.id=a.bank_id and b.status='active') then raise exception 'Conta de crédito inválida ou banco indisponível.'; end if;
+ if not found or not exists(select 1 from public.commercial_banks b where b.id=a.bank_id and b.status='active') or not exists(select 1 from public.profiles p where p.id=auth.uid() and p.registration_status='active' and coalesce(p.account_status,'active')='active') then raise exception 'Conta de crédito inválida, banco indisponível ou perfil inativo.'; end if;
  select * into v_policy from public.bank_credit_policies where bank_id=a.bank_id;
  if not found then v_policy.annual_interest_rate:=12; v_policy.max_term_months:=60; v_policy.enabled:=true; end if;
  if not v_policy.enabled then raise exception 'Este banco não está aceitando solicitações de crédito.'; end if;
@@ -750,6 +755,7 @@ begin
  if p_approve then
   perform 1 from public.central_banks where id=r.central_bank_id for update;
   select internal_code into v_code from public.currencies where id=r.currency_id;
+  if v_code is null then raise exception 'Moeda da solicitação não encontrada.'; end if;
   if exists(select 1 from public.national_treasuries t where t.country_id=r.country_id and t.opening_balance>0 and t.opening_balance_currency_code_snapshot<>v_code)
    or exists(select 1 from public.treasury_ledger_entries e where e.country_id=r.country_id and e.currency_code_snapshot<>v_code) then
    raise exception 'O Tesouro possui registros em unidade monetária divergente; concilie antes de retirar moeda.';
