@@ -75,7 +75,7 @@ export function EconomyPortal({ profile, notify }: Props) {
     } catch (error) {
       notify(error instanceof Error ? error.message : "Não foi possível carregar a economia.");
     } finally { setLoading(false); }
-  }, [countryId, isAdmin, profile?.country_id, notify]);
+  }, [countryId, isAdmin, isPresident, profile?.country_id, profile?.id, notify]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -143,6 +143,9 @@ export function EconomyPortal({ profile, notify }: Props) {
         </section>}
         {tab === "treasury" && <section className="eco-panel"><SectionTitle title="Tesouro Nacional" subtitle="Saldo derivado do saldo inicial e do livro-razão; não existe campo para editar o saldo diretamente." onExport={() => exportCsv(ledger,"world-economy-tesouro.csv")}/>
           <div className="eco-metrics"><Metric title="Saldo atual" value={money(dashboard.treasury_balance)} icon={<Wallet/>}/><Metric title="Receitas realizadas" value={money(dashboard.revenue)} icon={<TrendingUp/>}/><Metric title="Despesas realizadas" value={money(dashboard.expenses)} icon={<TrendingDown/>}/><Metric title="Arrecadação tributária" value={money(dashboard.tax_collected)} icon={<Coins/>}/></div>
+          {isAdmin && treasury && Number(treasury.opening_balance) === 0 && ledger.length === 0 && <form className="eco-form" onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void invoke("set_treasury_opening_balance",{p_country_id:selectedCountryId,p_amount:Number(f.get("opening"))},"Saldo inicial definido. Este procedimento não poderá ser repetido após o primeiro lançamento.");e.currentTarget.reset();}}>
+            <h3>Definir saldo inicial do Tesouro</h3><p className="eco-muted">Disponível uma única vez, antes do primeiro lançamento. O valor ficará registrado como saldo de abertura.</p><Field label="Saldo inicial" name="opening" type="number" min="0" step="0.01" defaultValue="0" required/><button disabled={busy}>Definir saldo inicial</button>
+          </form>}
           {canTreasury && <form className="eco-form" onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void invoke("post_treasury_entry",{p_country_id:selectedCountryId,p_entry_type:f.get("type"),p_category:f.get("category"),p_description:f.get("description"),p_amount:Number(f.get("amount")),p_idempotency_key:crypto.randomUUID(),p_budget_allocation_id:f.get("allocation") || null,p_investment_project_id:f.get("investment") || null},"Lançamento registrado no livro-razão.");e.currentTarget.reset();}}>
             <h3>Registrar receita ou despesa</h3><div className="eco-grid-2"><label>Tipo<select name="type"><option value="revenue">Receita não tributária</option><option value="expense">Despesa</option></select></label><Field label="Categoria" name="category" required/><Field label="Descrição e origem" name="description" required/><Field label="Valor" name="amount" type="number" min="0.01" step="0.01" required/><label>Alocação orçamentária (obrigatória para despesa)<select name="allocation"><option value="">Selecione se despesa</option>{allocations.map(a=><option key={a.id} value={a.id}>{a.category} — limite {money(a.planned_amount)}</option>)}</select></label><label>Projeto de investimento (opcional)<select name="investment"><option value="">Não vincular</option>{projects.filter(p=>["approved","in_progress"].includes(p.status)).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label></div><button disabled={busy}>Registrar no Tesouro</button>
           </form>}
