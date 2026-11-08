@@ -614,16 +614,13 @@ begin
   on conflict(country_id,name) do update set category=excluded.category,updated_at=now()
   returning id into v_item;
   select weight,effective_from into v_current_weight,v_weight_date
-    from public.economic_price_item_weights where item_id=v_item order by effective_from desc limit 1;
+    from public.economic_price_item_weights where item_id=v_item and effective_from<=p_reference_date
+    order by effective_from desc limit 1;
   if v_current_weight is null then
     insert into public.economic_price_item_weights(item_id,country_id,weight,effective_from,created_by)
     values(v_item,p_country_id,p_weight,p_reference_date,auth.uid());
   elsif v_current_weight<>p_weight then
-    if p_reference_date<=v_weight_date then raise exception 'A nova ponderação deve começar em uma data posterior à ponderação vigente.'; end if;
-    insert into public.economic_price_item_weights(item_id,country_id,weight,effective_from,created_by)
-    values(v_item,p_country_id,p_weight,p_reference_date,auth.uid());
-  elsif p_reference_date<v_weight_date and not exists(select 1 from public.economic_price_item_weights
-    where item_id=v_item and effective_from=p_reference_date) then
+    if p_reference_date<=v_weight_date then raise exception 'A nova ponderação deve começar após a ponderação vigente para esta data.'; end if;
     insert into public.economic_price_item_weights(item_id,country_id,weight,effective_from,created_by)
     values(v_item,p_country_id,p_weight,p_reference_date,auth.uid());
   end if;
