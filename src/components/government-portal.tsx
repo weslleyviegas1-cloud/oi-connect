@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   Activity, Bell, BookOpen, Building2, Check, ClipboardList, Flag, Landmark,
-  MapPin, Plus, RefreshCw, ShieldCheck, Users, Wallet, X,
+  MapPin, Plus, RefreshCw, Search, ShieldCheck, Users, Wallet, X,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
@@ -130,11 +130,13 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
           profile: (memberProfilesResult.data ?? []).find(person => person.id === member.profile_id),
         })));
         const ownMember = memberRows.find((member: Row) => member.profile_id === profile.id && member.status === "active");
+        let canReadCitizens = isAdmin || isPresident;
         if (ownMember) {
           const permissionResult = await supabase.from("government_member_permissions").select("permission_key,scope_type,scope_id").eq("member_id", ownMember.id);
+          if (permissionResult.error) throw permissionResult.error;
           setMemberPermissions(permissionResult.data ?? []);
+          canReadCitizens = canReadCitizens || (permissionResult.data ?? []).some((permission: Row) => permission.permission_key === "citizen.read");
         } else setMemberPermissions([]);
-        const canReadCitizens = isAdmin || isPresident || (permissionResult.data ?? []).some((permission: Row) => permission.permission_key === "citizen.read");
         if (canReadCitizens) {
           const citizenResult = await supabase.rpc("get_country_citizens", { p_country_id: countryId, p_search: null });
           if (citizenResult.error) throw citizenResult.error;
