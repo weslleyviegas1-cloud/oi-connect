@@ -320,3 +320,74 @@ body{margin:0;background:#050913;color:#f4f7ff}
 @media(max-width:700px){.we-admin-stat-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.we-admin-stat{padding:9px 7px;gap:7px}.we-admin-stat>span{width:29px;height:29px}.we-admin-stat small{font-size:8px}.we-admin-stat strong{font-size:18px}.we-admin-toolbar h2{font-size:18px}.we-admin-filters{align-items:stretch;flex-direction:column}.we-admin-filters select{width:100%}.we-admin-country-grid{grid-template-columns:1fr}.we-admin-row{align-items:flex-start;flex-wrap:wrap;padding:10px}.we-admin-row>div{flex-basis:calc(100% - 50px)}.we-admin-row button{font-size:9px}.we-admin-country-card{align-items:flex-start;flex-wrap:wrap}.we-admin-country-card button{margin-left:auto}.we-admin-form-title{align-items:flex-start}.we-admin .we-form{grid-template-columns:1fr}.we-admin-wide,.we-admin-subheading,.we-admin-checks,.we-admin-flag-upload{grid-column:1}.we-admin-tabs button{padding:8px;font-size:10px}}
 
 .we-admin-flag-emoji{display:grid;place-items:center;min-width:64px;min-height:54px;font-size:38px}
+
+
+/* Etapa 5 — área de cidadania, identidade e documentos */
+.we-citizen{margin-top:22px;min-width:0;color:#eef4ff}
+.we-citizen-nav{display:flex;gap:7px;overflow-x:auto;padding:8px 2px 13px;border-bottom:1px solid #293b56;scrollbar-width:thin}
+.we-citizen-nav button{display:flex;align-items:center;gap:8px;white-space:nowrap;padding:10px 12px;border:1px solid #263a58;border-radius:8px;background:#0c1728;color:#b9c9df;font-size:12px;cursor:pointer}
+.we-citizen-nav button svg{width:16px;height:16px}
+.we-citizen-nav button.active,.we-citizen-nav button:hover{background:linear-gradient(120deg,#123e78,#10294c);border-color:#348ee0;color:#fff}
+.we-citizen-nav button em{font-style:normal;min-width:18px;height:18px;padding:2px 5px;border-radius:20px;background:#b83b52;color:white;font-size:10px;text-align:center}
+.we-citizen-content{display:grid;gap:16px;padding-top:16px;min-width:0}
+.we-citizen-hero{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:22px;border:1px solid #315078;border-radius:12px;background:radial-gradient(circle at 80% 20%,#174b83aa,transparent 45%),linear-gradient(120deg,#0b1a30,#0a1020)}
+.we-citizen-hero small,.we-identity-top small{display:block;color:#8db8e8;font-size:10px;letter-spacing:1.4px}
+.we-citizen-hero h2{margin:8px 0;font-size:25px}
+.we-citizen-hero p{margin:0;color:#aebed3;font-size:13px}
+.we-citizen-id{display:grid;gap:4px;justify-items:center;padding:12px 18px;border:1px solid #3a78b8;border-radius:10px;background:#07162a;min-width:150px}
+.we-citizen-id svg{width:25px;height:25px;color:#75c5ff}
+.we-citizen-id span{font-size:9px;letter-spacing:1px;color:#9bb5d3}
+.we-citizen-id strong{font-size:22px;color:#fff}
+.we-citizen-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.we-citizen-grid>.we-panel{min-width:0}
+.we-citizen-country{display:flex;align-items:center;gap:13px;padding:8px 0}
+.we-citizen-country>b{font-size:29px}
+.we-citizen-country span,.we-citizen-profile-head div{display:grid;gap:4px}
+.we-citizen-country strong{font-size:16px}
+.we-citizen-country small,.we-citizen-muted{display:block;color:#9eafc5;font-size:11px;line-height:1.6}
+.we-citizen-content .we-panel>header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.we-citizen-content .we-panel>header h2{display:flex;align-items:center;gap:8px}
+.we-citizen-content .we-panel>header h2 svg{width:18px;color:#7fc6ff}
+.we-citizen-content .we-secondary{display:inline-flex;align-items:center;justify-content:center;gap:7px;margin-top:12px;padding:9px 12px;border:1px solid #36577c;border-radius:7px;background:#10213a;color:#dcecff;font-size:12px;cursor:pointer}
+.we-citizen-content .we-secondary svg{width:15px}
+.we-citizen-profile-head{display:flex;align-items:center;gap:14px;margin:5px 0 18px}
+.we-citizen-profile-head>img,.we-citizen-profile-head>span{width:62px;height:62px;object-fit:cover;border-radius:50%;display:grid;place-items:center;background:#142b49;border:1px solid #3c6b9e}
+.we-citizen-profile-head>span svg{width:27px}
+.we-citizen-profile-head strong{font-size:18px}
+.we-citizen-profile-head small{color:#9eafc5;font-size:11px}
+.we-identity-card{max-width:720px;margin:8px auto 18px;padding:20px;border:1px solid #987c46;border-radius:12px;background:linear-gradient(135deg,#13253e,#0b1424 58%,#18243a);box-shadow:0 14px 40px #0005}
+.we-identity-top{display:flex;justify-content:space-between;align-items:center;gap:12px;padding-bottom:14px;border-bottom:1px solid #9b854c66}
+.we-identity-top span{font-weight:900;letter-spacing:1.4px;color:#f2d68c}
+.we-identity-body{display:flex;align-items:flex-start;gap:20px;padding:18px 0}
+.we-identity-body>img,.we-identity-avatar{width:112px;height:132px;flex:0 0 112px;object-fit:cover;border:1px solid #7188a5;border-radius:7px;background:#182d49;display:grid;place-items:center}
+.we-identity-avatar svg{width:38px;height:38px;color:#a8c4e2}
+.we-identity-data{display:grid;gap:4px;min-width:0}
+.we-identity-data small{margin-top:7px;color:#a8bbd3;font-size:9px;letter-spacing:1px}
+.we-identity-data strong{font-size:15px;overflow-wrap:anywhere}
+.we-identity-data b{font-size:12px;overflow-wrap:anywhere}
+.we-identity-footer{display:flex;justify-content:space-between;gap:12px;align-items:center;padding-top:12px;border-top:1px solid #9b854c66;color:#c2cee0;font-size:10px}
+.we-identity-footer b{color:#f2d68c;overflow-wrap:anywhere}
+.we-citizen-event{display:flex;align-items:center;gap:12px;padding:13px 0;border-bottom:1px solid #26364e}
+.we-citizen-event:last-child{border-bottom:0}
+.we-citizen-event>svg{width:20px;flex:0 0 20px;color:#82c5ff}
+.we-citizen-event>div{display:grid;gap:4px;flex:1;min-width:0}
+.we-citizen-event b{font-size:13px}
+.we-citizen-event small,.we-citizen-event time{font-size:11px;color:#a7b7cd;line-height:1.5;overflow-wrap:anywhere}
+.we-citizen-event time{white-space:nowrap}
+.we-citizen-event .we-tag{white-space:nowrap}
+.we-citizen-future{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+.we-citizen-future span{padding:8px 11px;border:1px dashed #3b506c;border-radius:7px;color:#aabbd1;font-size:11px}
+.we-citizen-check{display:flex!important;align-items:center;gap:10px}
+.we-citizen-check input{width:17px;height:17px;accent-color:#2588e6}
+@media(max-width:720px){
+ .we-citizen-grid{grid-template-columns:1fr}
+ .we-citizen-hero{align-items:flex-start;flex-direction:column}
+ .we-citizen-id{width:100%;grid-template-columns:auto 1fr auto;justify-items:start;align-items:center}
+ .we-identity-card{padding:14px}
+ .we-identity-body{gap:12px}
+ .we-identity-body>img,.we-identity-avatar{width:86px;height:108px;flex-basis:86px}
+ .we-identity-footer{align-items:flex-start;flex-direction:column}
+ .we-citizen-event{align-items:flex-start;flex-wrap:wrap}
+ .we-citizen-event time{width:100%}
+ .we-citizen-nav button{padding:9px 10px}
+}
