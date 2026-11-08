@@ -1005,4 +1005,33 @@ revoke all on function public.set_my_profession(uuid,text) from public,anon;
 grant execute on function public.set_my_profession(uuid,text) to authenticated;
 
 
+
+create or replace function public.company_reconcile_financial_record(p_record_id uuid,p_bank_transaction_id uuid)
+returns void language plpgsql security definer set search_path=public,auth as $function$
+declare r public.company_financial_records%rowtype; t public.bank_transactions%rowtype; a public.bank_accounts%rowtype; v_status text;
+begin
+ select * into r from public.company_financial_records where id=p_record_id for update;
+ if not found or not public.is_company_member(r.company_id,'finance.manage') then raise exception 'Registro financeiro indisponível ou sem permissão.'; end if;
+ if r.record_status not in ('planned') then raise exception 'Somente registros planejados podem ser conciliados.'; end if;
+ select * into t from public.bank_transactions where id=p_bank_transaction_id;
+ if not found then raise exception 'Movimentação bancária não encontrada.'; end if;
+ select * into a from public.bank_accounts where id=t.account_id;
+ if not found or a.owner_company_id<>r.company_id or a.currency_id<>r.currency_id or t.amount<>r.amount then raise exception 'Movimentação não corresponde à conta, empresa, moeda e valor do registro.'; end if;
+ if r.record_type='revenue' and t.transaction_type not in ('transfer_in','deposit','loan_disbursement') then raise exception 'Movimentação não representa recebimento.'; end if;
+ if r.record_type='expense' and t.transaction_type not in ('transfer_out','withdrawal','fee','tax_payment','loan_payment') then raise exception 'Movimentação não representa despesa.'; end if;
+ v_status:=case when r.record_type='revenue' then 'received' else 'paid' end;
+ update public.company_financial_records set record_status=v_status,reference_type='bank_transaction',reference_id=t.id where id=r.id;
+ perform public.company_audit(r.company_id,'financial_record_reconciled','financial_record',r.id,jsonb_build_object('bank_transaction_id',t.id,'status',v_status));
+end;
+$function$;
+revoke all on function public.company_reconcile_financial_record(uuid,uuid) from public,anon;
+grant execute on function public.company_reconcile_financial_record(uuid,uuid) to authenticated;
+
+
+do $etapa10$
+declare f record;
+begin
+ for f in select p.oid::regprocedure as signature from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='company_reconcile_financial_record'
+ loop execute format('revoke all on function %s from public,anon',f.signature); execute format('grant execute on function %s to authenticated',f.signature); end loop;
+end $etapa10$;
 commit;
