@@ -100,6 +100,25 @@ create table if not exists public.economic_price_observations (
   created_at timestamptz not null default now(),
   unique(item_id,reference_date)
 );
+create table if not exists public.economic_price_item_weights (
+  id uuid primary key default gen_random_uuid(),
+  item_id uuid not null references public.economic_price_items(id) on delete restrict,
+  country_id uuid not null references public.countries(id) on delete restrict,
+  weight numeric(12,6) not null check (weight>0),
+  effective_from date not null,
+  created_by uuid not null references public.profiles(id),
+  created_at timestamptz not null default now(),
+  unique(item_id,effective_from)
+);
+alter table public.economic_price_item_weights enable row level security;
+drop policy if exists price_item_weights_read on public.economic_price_item_weights;
+create policy price_item_weights_read on public.economic_price_item_weights for select to authenticated
+using (public.is_world_admin() or public.is_country_president(country_id)
+  or public.has_economy_permission(country_id,'economy.read')
+  or public.is_government_country_citizen(country_id));
+revoke all on public.economic_price_item_weights from public,anon,authenticated;
+grant select on public.economic_price_item_weights to authenticated;
+create index if not exists price_item_weights_effective_idx on public.economic_price_item_weights(item_id,effective_from desc);
 create table if not exists public.economic_price_observation_history (
   id uuid primary key default gen_random_uuid(),
   observation_id uuid not null references public.economic_price_observations(id) on delete restrict,
@@ -461,7 +480,7 @@ begin
         'inflation_average',(select round(avg(country_index.inflation),2) from (
           select c.id,(select case when old_ipc>0 then ((new_ipc-old_ipc)/old_ipc)*100 end from (
             select reference_date,
-              sum((o.price/base.price)*i.base_weight)/nullif(sum(i.base_weight),0) as new_ipc,
+              sum((o.price/base.price)*w.weight)/nullif(sum(w.weight),0) as new_ipc,
               lag(sum((o.price/base.price)*i.base_weight)/nullif(sum(i.base_weight),0)) over(order by reference_date) as old_ipc
             from public.economic_price_observations o
             join public.economic_price_items i on i.id=o.item_id and i.is_active
@@ -542,6 +561,7 @@ begin
         lag(sum((o.price/base.price)*i.base_weight)/nullif(sum(i.base_weight),0)) over(order by reference_date) as old_ipc
       from public.economic_price_observations o
       join public.economic_price_items i on i.id=o.item_id and i.is_active
+      join lateral(select weight from public.economic_price_item_weights wh where wh.item_id=i.id and wh.effective_from<=o.reference_date order by wh.effective_from desc limit 1) w on true
       join lateral(select price from public.economic_price_observations b where b.item_id=i.id order by b.reference_date limit 1) base on true
       where o.country_id=c.id group by reference_date
       having count(distinct o.item_id)=(select count(*) from public.economic_price_items active_items where active_items.country_id=c.id and active_items.is_active)
@@ -585,17 +605,24 @@ $$;
 create or replace function public.save_price_item(
   p_country_id uuid,p_name text,p_category text,p_weight numeric,p_price numeric,p_reference_date date
 ) returns uuid language plpgsql security definer set search_path=public,auth as $$
-declare v_item uuid;
+declare v_item uuid; v_current_weight numeric(12,6); v_weight_date date;
 begin
   if not public.can_manage_economy(p_country_id,'economy.manage') then raise exception 'Sem permissão para atualizar preços.'; end if;
   if length(trim(coalesce(p_name,'')))<2 or p_weight<=0 or p_price<=0 or p_reference_date is null then raise exception 'Dados de preço inválidos.'; end if;
-  if exists(select 1 from public.economic_price_items where country_id=p_country_id and name=trim(p_name) and base_weight<>p_weight) then
-    raise exception 'O peso de um item existente não pode ser alterado retroativamente; mantenha o peso original.';
-  end if;
   insert into public.economic_price_items(country_id,name,category,base_weight,created_by)
   values(p_country_id,trim(p_name),trim(p_category),p_weight,auth.uid())
   on conflict(country_id,name) do update set category=excluded.category,updated_at=now()
   returning id into v_item;
+  select weight,effective_from into v_current_weight,v_weight_date
+    from public.economic_price_item_weights where item_id=v_item order by effective_from desc limit 1;
+  if v_current_weight is null then
+    insert into public.economic_price_item_weights(item_id,country_id,weight,effective_from,created_by)
+    values(v_item,p_country_id,p_weight,p_reference_date,auth.uid());
+  elsif v_current_weight<>p_weight then
+    if p_reference_date<=v_weight_date then raise exception 'A nova ponderação deve começar em uma data posterior à ponderação vigente.'; end if;
+    insert into public.economic_price_item_weights(item_id,country_id,weight,effective_from,created_by)
+    values(v_item,p_country_id,p_weight,p_reference_date,auth.uid());
+  end if;
   insert into public.economic_price_observation_history(observation_id,previous_price,previous_recorded_by,revised_by)
   select id,price,recorded_by,auth.uid() from public.economic_price_observations
   where item_id=v_item and reference_date=p_reference_date;
