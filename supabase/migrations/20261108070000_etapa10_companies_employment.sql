@@ -828,7 +828,7 @@ begin
    'company_manage_owner','company_amend_employment_contract','company_pay_payroll_batch','company_pay_tax_obligation'
   )
  loop execute format('revoke all on function %s from public,anon',f.signature); execute format('grant execute on function %s to authenticated',f.signature); end loop;
-end $;
+end $etapa10$;
 
 
 alter table public.company_tax_records add column if not exists payroll_id uuid references public.payroll_records(id) on delete restrict;
@@ -876,5 +876,5 @@ declare f record;
 begin
  for f in select p.oid::regprocedure as signature from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='company_review_payroll_tax'
  loop execute format('revoke all on function %s from public,anon',f.signature); execute format('grant execute on function %s to authenticated',f.signature); end loop;
-end $;
+end $etapa10$;
 commit;
