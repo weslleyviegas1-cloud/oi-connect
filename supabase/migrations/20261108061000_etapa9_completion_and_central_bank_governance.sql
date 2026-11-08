@@ -822,7 +822,91 @@ grant execute on function public.admin_review_bank_loan(uuid,text) to authentica
 grant execute on function public.pay_bank_loan_installment(uuid,uuid,text) to authenticated;
 grant execute on function public.get_my_bank_dashboard() to authenticated;
 
+create or replace function public.request_monetary_withdrawal(p_bank_id uuid,p_amount numeric,p_reason text)
+returns uuid language plpgsql security definer set search_path=public,auth as $function$
+declare b public.central_banks%rowtype; s public.central_bank_settings%rowtype; v_id uuid; v_supply numeric; v_pending numeric; v_committed numeric; v_code text;
+begin
+ if auth.uid() is null then raise exception 'Autenticação necessária.'; end if;
+ if p_amount is null or p_amount<=0 or p_amount<>round(p_amount,6) or length(trim(coalesce(p_reason,'')))<5 then raise exception 'Quantidade ou justificativa inválida.'; end if;
+ select * into b from public.central_banks where id=p_bank_id and status='active' for update;
+ if not found then raise exception 'Banco Central indisponível.'; end if;
+ if not public.has_central_bank_permission(b.country_id,'withdrawal.request') then raise exception 'Sem permissão para solicitar retirada.'; end if;
+ perform pg_advisory_xact_lock(hashtextextended(b.country_id::text||':'||b.currency_id::text,0));
+ select internal_code into v_code from public.currencies where id=b.currency_id and status='active';
+ if v_code is null then raise exception 'Moeda do Banco Central indisponível.'; end if;
+ if exists(select 1 from public.national_treasuries t where t.country_id=b.country_id and t.opening_balance>0 and t.opening_balance_currency_code_snapshot<>v_code)
+  or exists(select 1 from public.treasury_ledger_entries e where e.country_id=b.country_id and e.currency_code_snapshot<>v_code) then
+  raise exception 'O Tesouro possui registros em unidade monetária divergente; concilie antes de retirar moeda.';
+ end if;
+ select * into s from public.central_bank_settings where central_bank_id=b.id;
+ select coalesce(sum(case when operation_type='issuance' then amount else -amount end),0)
+ into v_supply from public.money_supply_records where country_id=b.country_id and currency_id=b.currency_id;
+ select coalesce(sum(amount),0) into v_pending from public.monetary_withdrawals
+ where country_id=b.country_id and currency_id=b.currency_id and status='pending';
+ select
+  coalesce((select sum(balance) from public.bank_accounts where country_id=b.country_id and currency_id=b.currency_id),0)
+ +coalesce((select sum(balance) from public.bank_cash_wallets where country_id=b.country_id and currency_id=b.currency_id),0)
+ +coalesce((select sum(l.balance) from public.bank_liquidity l join public.commercial_banks cb on cb.id=l.bank_id where cb.country_id=b.country_id and l.currency_id=b.currency_id),0)
+ +coalesce((select sum(t.opening_balance+coalesce((select sum(e.signed_amount) from public.treasury_ledger_entries e where e.country_id=t.country_id and e.currency_code_snapshot=v_code),0)) from public.national_treasuries t where t.country_id=b.country_id and t.currency_code=v_code),0)
+ into v_committed;
+ if v_supply-v_pending-p_amount<v_committed then
+  raise exception 'Retirada indisponível: a oferta monetária já está comprometida em contas, carteiras, liquidez bancária ou Tesouro.';
+ end if;
+ insert into public.monetary_withdrawals(central_bank_id,country_id,currency_id,amount,reason,requested_by)
+ values(b.id,b.country_id,b.currency_id,p_amount,trim(p_reason),auth.uid()) returning id into v_id;
+ if not s.withdrawal_requires_approval then
+  insert into public.money_supply_records(central_bank_id,country_id,currency_id,operation_type,amount,source_request_id,reason,actor_id)
+  values(b.id,b.country_id,b.currency_id,'withdrawal',p_amount,v_id,trim(p_reason),auth.uid());
+  update public.monetary_withdrawals set status='approved',approved_by=auth.uid(),reviewed_at=now(),review_note='Aprovação automática conforme regra do Super Admin' where id=v_id;
+ end if;
+ perform public.central_bank_audit(b.id,b.country_id,'withdrawal_requested','monetary_withdrawal',v_id,null,
+  jsonb_build_object('amount',p_amount,'approval_required',s.withdrawal_requires_approval),'Solicitação de retirada');
+ return v_id;
+end;
+$function$;
+
 create or replace function public.admin_review_monetary_withdrawal(p_request_id uuid,p_approve boolean,p_note text)
+returns void language plpgsql security definer set search_path=public,auth as $function$
+declare r public.monetary_withdrawals%rowtype; v_supply numeric; v_pending numeric; v_committed numeric; v_code text; v_cb_status text;
+begin
+ if not public.is_world_admin() then raise exception 'Somente o Super Admin pode aprovar retiradas.'; end if;
+ select * into r from public.monetary_withdrawals where id=p_request_id for update;
+ if not found or r.status<>'pending' then raise exception 'Solicitação inexistente ou já revisada.'; end if;
+ if p_approve then
+  select status into v_cb_status from public.central_banks where id=r.central_bank_id for update;
+  if v_cb_status is distinct from 'active' then raise exception 'Banco Central suspenso ou indisponível; retirada não pode ser aprovada.'; end if;
+  perform pg_advisory_xact_lock(hashtextextended(r.country_id::text||':'||r.currency_id::text,0));
+  select internal_code into v_code from public.currencies where id=r.currency_id;
+  if v_code is null then raise exception 'Moeda da solicitação não encontrada.'; end if;
+  if exists(select 1 from public.national_treasuries t where t.country_id=r.country_id and t.opening_balance>0 and t.opening_balance_currency_code_snapshot<>v_code)
+   or exists(select 1 from public.treasury_ledger_entries e where e.country_id=r.country_id and e.currency_code_snapshot<>v_code) then
+   raise exception 'O Tesouro possui registros em unidade monetária divergente; concilie antes de retirar moeda.';
+  end if;
+  select coalesce(sum(case when operation_type='issuance' then amount else -amount end),0)
+   into v_supply from public.money_supply_records where country_id=r.country_id and currency_id=r.currency_id;
+  select coalesce(sum(amount),0) into v_pending from public.monetary_withdrawals
+   where country_id=r.country_id and currency_id=r.currency_id and status='pending' and id<>r.id;
+  select
+   coalesce((select sum(balance) from public.bank_accounts where country_id=r.country_id and currency_id=r.currency_id),0)
+  +coalesce((select sum(w.balance) from public.bank_cash_wallets w where w.country_id=r.country_id and w.currency_id=r.currency_id),0)
+  +coalesce((select sum(l.balance) from public.bank_liquidity l join public.commercial_banks b on b.id=l.bank_id where b.country_id=r.country_id and l.currency_id=r.currency_id),0)
+  +coalesce((select sum(t.opening_balance+coalesce((select sum(e.signed_amount) from public.treasury_ledger_entries e where e.country_id=t.country_id and e.currency_code_snapshot=v_code),0)) from public.national_treasuries t where t.country_id=r.country_id and t.currency_code=v_code),0)
+  into v_committed;
+  if r.amount>v_supply-v_pending or v_supply-v_pending-r.amount<v_committed then
+   raise exception 'A retirada excederia a oferta monetária ainda disponível, considerando saldos em carteiras e bancos.';
+  end if;
+  insert into public.money_supply_records(central_bank_id,country_id,currency_id,operation_type,amount,source_request_id,reason,actor_id)
+  values(r.central_bank_id,r.country_id,r.currency_id,'withdrawal',r.amount,r.id,r.reason,auth.uid());
+  update public.monetary_withdrawals set status='approved',approved_by=auth.uid(),reviewed_at=now(),review_note=nullif(trim(p_note),'') where id=r.id;
+ else
+  update public.monetary_withdrawals set status='rejected',approved_by=auth.uid(),reviewed_at=now(),review_note=nullif(trim(p_note),'') where id=r.id;
+ end if;
+ perform public.central_bank_audit(r.central_bank_id,r.country_id,case when p_approve then 'withdrawal_approved' else 'withdrawal_rejected' end,
+  'monetary_withdrawal',r.id,to_jsonb(r),jsonb_build_object('status',case when p_approve then 'approved' else 'rejected' end,'note',p_note),p_note);
+end;
+$function$;
+
+commit;
 returns void language plpgsql security definer set search_path=public,auth as $function$
 declare r public.monetary_withdrawals%rowtype; v_supply numeric; v_pending numeric; v_committed numeric; v_code text;
 begin
