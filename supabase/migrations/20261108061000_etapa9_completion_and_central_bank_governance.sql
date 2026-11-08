@@ -216,6 +216,7 @@ begin
  if not found or a.owner_profile_id<>auth.uid() or a.status<>'active' then raise exception 'Conta de origem inválida.'; end if;
  if not exists(select 1 from public.commercial_banks b where b.id=a.bank_id and b.status='active') then raise exception 'Banco indisponível.'; end if;
  select coalesce(amount,0) into v_fee from public.bank_fees where bank_id=a.bank_id and fee_type='withdrawal' and active and (currency_id is null or currency_id=a.currency_id) order by currency_id nulls last limit 1;
+ v_fee:=coalesce(v_fee,0);
  select daily_limit into v_limit from public.bank_limits where bank_id=a.bank_id and operation_type='withdrawal' and currency_id=a.currency_id;
  if v_limit is not null and coalesce((select sum(amount) from public.bank_transactions where account_id=a.id and transaction_type='withdrawal' and created_at>=date_trunc('day',now())),0)+p_amount>v_limit then raise exception 'Limite diário de saque excedido.'; end if;
  if a.balance<p_amount+v_fee then raise exception 'Saldo insuficiente para saque e tarifa.'; end if;
@@ -267,6 +268,7 @@ begin
   if v_rate_id is null then raise exception 'Não existe cotação vigente para este par de moedas.'; end if;
  end if;
  select coalesce(amount,0) into v_fee from public.bank_fees where bank_id=a.bank_id and fee_type='transfer' and active and (currency_id is null or currency_id=a.currency_id) order by currency_id nulls last limit 1;
+ v_fee:=coalesce(v_fee,0);
  select daily_limit into v_limit from public.bank_limits where bank_id=a.bank_id and operation_type='transfer' and currency_id=a.currency_id;
  if v_limit is not null and coalesce((select sum(amount) from public.bank_transactions where account_id=a.id and transaction_type='transfer_out' and created_at>=date_trunc('day',now())),0)+p_amount>v_limit then raise exception 'Limite diário de transferências excedido.'; end if;
  if a.balance<p_amount+v_fee then raise exception 'Saldo insuficiente para transferência e tarifa.'; end if;
@@ -285,6 +287,22 @@ begin
    on conflict(bank_id,currency_id) do update set balance=bank_liquidity.balance+excluded.balance,updated_at=now();
  end if;
  perform public.bank_audit(a.bank_id,'transfer_sent','bank_transfer',v_id,jsonb_build_object('to_account',b.id,'amount',p_amount,'fee',v_fee));
+ return v_id;
+end;
+$function$;
+
+create or replace function public.bank_transfer_to_account(
+ p_from_account uuid,p_bank_identifier text,p_account_number text,p_amount numeric,p_idempotency_key text,p_description text default null
+) returns uuid language plpgsql security definer set search_path=public,auth as $function$
+declare v_to_account uuid; v_id uuid; v_country uuid;
+begin
+ select country_id into v_country from public.bank_accounts where id=p_from_account and owner_profile_id=auth.uid() and status='active';
+ if v_country is null then raise exception 'Conta de origem inválida.'; end if;
+ select a.id into v_to_account from public.bank_accounts a join public.commercial_banks b on b.id=a.bank_id
+ where b.bank_identifier=upper(trim(p_bank_identifier)) and a.account_number=trim(p_account_number)
+  and a.country_id=v_country and a.status='active' and b.status='active';
+ if v_to_account is null then raise exception 'Banco ou conta destinatária não encontrados neste país.'; end if;
+ v_id:=public.bank_transfer(p_from_account,v_to_account,p_amount,p_idempotency_key,p_description);
  return v_id;
 end;
 $function$;
@@ -496,6 +514,7 @@ revoke all on function public.admin_allocate_issued_money_to_wallet(uuid,numeric
 revoke all on function public.bank_deposit(uuid,numeric,text) from public,anon;
 revoke all on function public.bank_withdraw(uuid,numeric,text) from public,anon;
 revoke all on function public.bank_transfer(uuid,uuid,numeric,text,text) from public,anon;
+revoke all on function public.bank_transfer_to_account(uuid,text,text,numeric,text,text) from public,anon;
 revoke all on function public.bank_manage_branch(uuid,uuid,text,text,text,text,text) from public,anon;
 revoke all on function public.bank_set_fee(uuid,text,numeric,uuid,boolean) from public,anon;
 revoke all on function public.bank_set_daily_limit(uuid,text,numeric,uuid) from public,anon;
@@ -508,6 +527,7 @@ grant execute on function public.admin_allocate_issued_money_to_wallet(uuid,nume
 grant execute on function public.bank_deposit(uuid,numeric,text) to authenticated;
 grant execute on function public.bank_withdraw(uuid,numeric,text) to authenticated;
 grant execute on function public.bank_transfer(uuid,uuid,numeric,text,text) to authenticated;
+grant execute on function public.bank_transfer_to_account(uuid,text,text,numeric,text,text) to authenticated;
 grant execute on function public.bank_manage_branch(uuid,uuid,text,text,text,text,text) to authenticated;
 grant execute on function public.bank_set_fee(uuid,text,numeric,uuid,boolean) to authenticated;
 grant execute on function public.bank_set_daily_limit(uuid,text,numeric,uuid) to authenticated;
