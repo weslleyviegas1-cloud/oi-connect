@@ -838,7 +838,7 @@ end;
 $function$;
 
 
-do $etapa10
+do $etapa10$
 declare f record;
 begin
  for f in select p.oid::regprocedure as signature from pg_proc p join pg_namespace n on n.oid=p.pronamespace
@@ -894,7 +894,7 @@ revoke all on function public.company_review_payroll_tax(uuid,boolean) from publ
 grant execute on function public.company_review_payroll_tax(uuid,boolean) to authenticated;
 
 
-do $etapa10
+do $etapa10$
 declare f record;
 begin
  for f in select p.oid::regprocedure as signature from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='company_review_payroll_tax'
