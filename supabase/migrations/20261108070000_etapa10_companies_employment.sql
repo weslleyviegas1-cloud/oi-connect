@@ -814,6 +814,7 @@ returns integer language plpgsql security definer set search_path=public,auth as
 declare p record; v_count integer:=0; v_account uuid;
 begin
  if not public.is_company_member(p_company_id,'payroll.manage') then raise exception 'Sem permissão para processar folha.'; end if;
+ select count(*) into v_count from public.payroll_records where company_id=p_company_id and reference_period=trim(p_period) and status='paid';
  select id into v_account from public.bank_accounts where id=p_from_account and owner_company_id=p_company_id and status='active' for update;
  if v_account is null then raise exception 'Conta empresarial de pagamento inválida.'; end if;
  for p in select pr.id,pr.employee_profile_id,pa.account_id from public.payroll_records pr
@@ -874,7 +875,8 @@ begin
    and status='active' and category='payroll' and current_date between effective_from and coalesce(effective_until,'infinity'::date)
   loop
    insert into public.company_tax_records(company_id,tax_rule_id,payroll_id,description,reference_period,tax_base,applied_rate,amount_due,currency_id,status,created_by)
-   values(p.company_id,r.id,p.id,'Retenção de folha — '||r.name,p.reference_period,p.gross_amount,r.rate,round(p.gross_amount*r.rate/100,2),p.currency_id,'pending_review',auth.uid())
+   select p.company_id,r.id,p.id,'Retenção de folha — '||r.name,p.reference_period,p.gross_amount,r.rate,round(p.gross_amount*r.rate/100,2),p.currency_id,'pending_review',auth.uid()
+   where round(p.gross_amount*r.rate/100,2)>0
    on conflict(payroll_id,tax_rule_id) where payroll_id is not null do nothing;
   end loop;
  end if;
@@ -899,7 +901,7 @@ declare r public.company_tax_records%rowtype; c public.companies%rowtype; v_id u
 begin
  if not public.is_world_admin() then raise exception 'Somente Super Admin pode constituir obrigação fiscal empresarial.'; end if;
  select * into r from public.company_tax_records where id=p_tax_record_id for update;
- if not found or r.status<>'pending_review' or r.tax_obligation_id is not null then raise exception 'Registro fiscal já validado ou indisponível.'; end if;
+ if not found or r.status<>'pending_review' or r.tax_obligation_id is not null or r.amount_due<=0 then raise exception 'Registro fiscal já validado, sem valor devido ou indisponível.'; end if;
  select * into c from public.companies where id=r.company_id;
  select * into v_rule from public.tax_rules where id=r.tax_rule_id and country_id=c.country_id and status='active'
   and current_date between effective_from and coalesce(effective_until,'infinity'::date);
