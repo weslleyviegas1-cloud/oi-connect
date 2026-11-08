@@ -346,12 +346,12 @@ using (exists(select 1 from public.economic_gdp_records r where r.id=gdp_record_
 drop policy if exists price_items_read_scoped on public.economic_price_items;
 create policy price_items_read_scoped on public.economic_price_items for select to authenticated
 using (public.is_world_admin() or public.is_country_president(country_id)
-  or public.has_government_permission(country_id,'economy.read',null,null)
+  or public.has_economy_permission(country_id,'economy.read')
   or (is_active and public.is_government_country_citizen(country_id)));
 drop policy if exists price_observations_read_scoped on public.economic_price_observations;
 create policy price_observations_read_scoped on public.economic_price_observations for select to authenticated
 using (public.is_world_admin() or public.is_country_president(country_id)
-  or public.has_government_permission(country_id,'economy.read',null,null)
+  or public.has_economy_permission(country_id,'economy.read')
   or public.is_government_country_citizen(country_id));
 drop policy if exists tax_rules_read_scoped on public.tax_rules;
 create policy tax_rules_read_scoped on public.tax_rules for select to authenticated
@@ -366,7 +366,7 @@ using (public.is_world_admin() or public.is_country_president(country_id)
 drop policy if exists tax_collections_read_scoped on public.tax_collections;
 create policy tax_collections_read_scoped on public.tax_collections for select to authenticated
 using (public.is_world_admin() or public.is_country_president(country_id)
-  or public.has_government_permission(country_id,'tax.read',null,null));
+  or public.has_economy_permission(country_id,'tax.read'));
 drop policy if exists ledger_read_scoped on public.treasury_ledger_entries;
 create policy ledger_read_scoped on public.treasury_ledger_entries for select to authenticated
 using (public.is_world_admin() or public.is_country_president(country_id)
