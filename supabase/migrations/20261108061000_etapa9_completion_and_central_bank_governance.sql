@@ -519,7 +519,8 @@ begin
  select * into l from public.bank_loans where id=ins.loan_id for update;
  if l.borrower_profile_id<>auth.uid() or l.status<>'active' then raise exception 'Parcela não pertence ao usuário ou empréstimo inativo.'; end if;
  select * into a from public.bank_accounts where id=p_from_account and owner_profile_id=auth.uid() and status='active' for update;
- if not found or a.currency_id<>l.currency_id or a.balance<ins.amount_due-ins.amount_paid then raise exception 'Conta de pagamento inválida ou saldo insuficiente.'; end if;
+ if not found or a.currency_id<>l.currency_id or a.country_id<>(select country_id from public.commercial_banks where id=l.bank_id) or a.balance<ins.amount_due-ins.amount_paid then raise exception 'Conta de pagamento inválida para o país/moeda do empréstimo ou saldo insuficiente.'; end if;
+ if not exists(select 1 from public.commercial_banks b where b.id=a.bank_id and b.status='active') then raise exception 'Banco da conta de pagamento indisponível.'; end if;
  v_due:=ins.amount_due-ins.amount_paid;
  update public.bank_accounts set balance=balance-v_due where id=a.id returning * into a;
  update public.loan_installments set amount_paid=amount_due,paid_at=now(),status='paid' where id=ins.id;
@@ -554,7 +555,7 @@ begin
  if not exists(select 1 from public.commercial_banks b where b.id=a.bank_id and b.status='active') then raise exception 'Banco indisponível.'; end if;
  select * into t from public.national_treasuries where country_id=o.country_id for update;
  if not found or t.operations_suspended then raise exception 'Tesouro Nacional indisponível para arrecadação.'; end if;
- if t.currency_code<>v_currency_code then raise exception 'A moeda do Tesouro diverge da obrigação; conciliação necessária.'; end if;
+ if t.currency_code is distinct from v_currency_code then raise exception 'A moeda do Tesouro diverge da obrigação; conciliação necessária.'; end if;
  if (t.opening_balance>0 and t.opening_balance_currency_code_snapshot<>v_currency_code)
   or exists(select 1 from public.treasury_ledger_entries e where e.country_id=o.country_id and e.currency_code_snapshot<>v_currency_code) then
   raise exception 'O Tesouro possui registros em outra unidade monetária; conciliação necessária.';
@@ -601,13 +602,14 @@ begin
   'bank_liquidity_transactions',coalesce((select jsonb_agg(jsonb_build_object('id',t.id,'bank_id',t.bank_id,'currency_code',cu.internal_code,'type',t.transaction_type,'amount',t.amount,'balance_after',t.balance_after,'description',t.description,'created_at',t.created_at) order by t.created_at desc) from public.bank_liquidity_transactions t join public.currencies cu on cu.id=t.currency_id where public.is_world_admin() or public.is_bank_member(t.bank_id,'bank.manage')),'[]'::jsonb),
   'maintenance_charges',coalesce((select jsonb_agg(jsonb_build_object('id',m.id,'bank_id',m.bank_id,'account_id',m.account_id,'period_start',m.period_start,'amount',m.amount,'currency_code',cu.internal_code,'status',m.status,'processed_at',m.processed_at) order by m.period_start desc) from public.bank_maintenance_charges m join public.currencies cu on cu.id=m.currency_id where public.is_world_admin() or public.is_bank_member(m.bank_id,'bank.manage')),'[]'::jsonb),
   'tax_obligations',coalesce((select jsonb_agg(jsonb_build_object('id',o.id,'country_id',o.country_id,'tax_name',r.name,'reference_period',o.reference_period,'amount_due',o.amount_due,'paid_amount',(select coalesce(sum(tc.amount),0) from public.tax_collections tc where tc.obligation_id=o.id),'remaining_amount',o.amount_due-(select coalesce(sum(tc.amount),0) from public.tax_collections tc where tc.obligation_id=o.id),'currency_code',o.currency_code_snapshot,'due_date',o.due_date,'status',o.status) order by o.due_date nulls last,o.created_at desc) from public.tax_obligations o join public.tax_rules r on r.id=o.tax_rule_id where o.taxpayer_profile_id=auth.uid() and o.status in ('open','partially_paid','overdue','pending_confirmation')),'[]'::jsonb),
+  'managed_accounts',coalesce((select jsonb_agg(jsonb_build_object('id',a.id,'bank_id',a.bank_id,'bank_name',b.name,'account_number',a.account_number,'owner_profile_id',a.owner_profile_id,'country_id',a.country_id,'currency_code',cu.internal_code,'balance',a.balance,'status',a.status) order by b.name,a.account_number) from public.bank_accounts a join public.commercial_banks b on b.id=a.bank_id join public.currencies cu on cu.id=a.currency_id where public.is_world_admin() or public.is_bank_member(a.bank_id,'bank.manage')),'[]'::jsonb),
   'countries',coalesce((select jsonb_agg(jsonb_build_object('id',c.id,'name',c.name) order by c.name) from public.countries c where c.is_active and public.is_world_admin()),'[]'::jsonb),
   'transactions',coalesce((select jsonb_agg(jsonb_build_object('id',t.id,'account_id',t.account_id,'type',t.transaction_type,'amount',t.amount,'currency_id',t.currency_id,'balance_after',t.balance_after,'description',t.description,'created_at',t.created_at,'status',t.status) order by t.created_at desc)
    from public.bank_transactions t join public.bank_accounts a on a.id=t.account_id where a.owner_profile_id=auth.uid()),'[]'::jsonb),
   'loan_applications',coalesce((select jsonb_agg(jsonb_build_object('id',x.id,'bank_id',x.bank_id,'bank_name',b.name,'account_id',x.account_id,'amount',x.amount,'currency_id',x.currency_id,'currency_code',c.internal_code,'term_months',x.term_months,'annual_interest_rate',x.annual_interest_rate,'status',x.status,'purpose',x.purpose,'created_at',x.created_at,'can_review',(public.is_world_admin() or public.is_bank_member(x.bank_id,'loan.review'))) order by x.created_at desc)
    from public.loan_applications x join public.commercial_banks b on b.id=x.bank_id join public.currencies c on c.id=x.currency_id
    where x.applicant_profile_id=auth.uid() or public.is_world_admin() or public.is_bank_member(x.bank_id,'loan.review')),'[]'::jsonb),
-  'installments',coalesce((select jsonb_agg(jsonb_build_object('id',i.id,'loan_id',i.loan_id,'installment_number',i.installment_number,'due_date',i.due_date,'amount_due',i.amount_due,'amount_paid',i.amount_paid,'status',i.status,'bank_name',b.name,'currency_code',c.internal_code) order by i.due_date)
+  'installments',coalesce((select jsonb_agg(jsonb_build_object('id',i.id,'loan_id',i.loan_id,'installment_number',i.installment_number,'due_date',i.due_date,'amount_due',i.amount_due,'amount_paid',i.amount_paid,'status',i.status,'bank_name',b.name,'country_id',b.country_id,'currency_code',c.internal_code) order by i.due_date)
    from public.loan_installments i join public.bank_loans l on l.id=i.loan_id join public.commercial_banks b on b.id=l.bank_id join public.currencies c on c.id=l.currency_id
    where l.borrower_profile_id=auth.uid() or public.is_world_admin() or public.is_bank_member(l.bank_id,'loan.review')),'[]'::jsonb),
   'bank_overview',case when public.is_world_admin() then public.admin_get_banking_overview() else null end
