@@ -181,7 +181,7 @@ begin
  where a.country_id=p.country_id and a.effective_until is null and c.status='active' order by a.effective_from desc limit 1;
  if v_currency is null then raise exception 'O país não possui moeda nacional ativa.'; end if;
  select internal_code into v_code from public.currencies where id=v_currency;
- if exists(select 1 from public.national_treasuries t where t.country_id=p.country_id and t.opening_balance>0 and t.opening_balance_currency_code_snapshot<>v_code)
+ if exists(select 1 from public.national_treasuries t where t.country_id=p.country_id and t.opening_balance>0 and (t.opening_balance_currency_code_snapshot<>v_code or t.currency_code is distinct from v_code))
   or exists(select 1 from public.treasury_ledger_entries e where e.country_id=p.country_id and e.currency_code_snapshot<>v_code) then
   raise exception 'O Tesouro possui registros em unidade monetária divergente; concilie antes de distribuir dinheiro.';
  end if;
@@ -835,7 +835,7 @@ begin
  perform pg_advisory_xact_lock(hashtextextended(b.country_id::text||':'||b.currency_id::text,0));
  select internal_code into v_code from public.currencies where id=b.currency_id and status='active';
  if v_code is null then raise exception 'Moeda do Banco Central indisponível.'; end if;
- if exists(select 1 from public.national_treasuries t where t.country_id=b.country_id and t.opening_balance>0 and t.opening_balance_currency_code_snapshot<>v_code)
+ if exists(select 1 from public.national_treasuries t where t.country_id=b.country_id and t.opening_balance>0 and (t.opening_balance_currency_code_snapshot<>v_code or t.currency_code is distinct from v_code))
   or exists(select 1 from public.treasury_ledger_entries e where e.country_id=b.country_id and e.currency_code_snapshot<>v_code) then
   raise exception 'O Tesouro possui registros em unidade monetária divergente; concilie antes de retirar moeda.';
  end if;
@@ -866,20 +866,48 @@ begin
 end;
 $function$;
 
+create or replace function public.admin_review_monetary_issuance(p_request_id uuid,p_approve boolean,p_note text)
+returns void language plpgsql security definer set search_path=public,auth as $function$
+declare r public.monetary_issuances%rowtype; b public.central_banks%rowtype; s public.central_bank_settings%rowtype; v_total numeric;
+begin
+ if not public.is_world_admin() then raise exception 'Somente o Super Admin pode aprovar emissões.'; end if;
+ select * into r from public.monetary_issuances where id=p_request_id for update;
+ if not found or r.status<>'pending' then raise exception 'Solicitação inexistente ou já revisada.'; end if;
+ select * into b from public.central_banks where id=r.central_bank_id for update;
+ if not found or b.status<>'active' then raise exception 'Banco Central suspenso ou indisponível; emissão não pode ser aprovada.'; end if;
+ if b.country_id<>r.country_id or b.currency_id<>r.currency_id then raise exception 'A moeda nacional mudou desde a solicitação; emita um novo pedido na moeda vigente.'; end if;
+ select * into s from public.central_bank_settings where central_bank_id=r.central_bank_id;
+ if p_approve then
+  if s.max_issuance_per_operation is not null and r.amount>s.max_issuance_per_operation then raise exception 'O valor supera o limite por operação atualmente configurado.'; end if;
+  select coalesce(sum(amount),0) into v_total from public.money_supply_records where country_id=r.country_id and currency_id=r.currency_id and operation_type='issuance';
+  if s.max_issuance_total is not null and v_total+r.amount>s.max_issuance_total then raise exception 'O limite total de emissão foi atingido.'; end if;
+  insert into public.money_supply_records(central_bank_id,country_id,currency_id,operation_type,amount,source_request_id,reason,actor_id)
+  values(r.central_bank_id,r.country_id,r.currency_id,'issuance',r.amount,r.id,r.reason,auth.uid());
+  update public.monetary_issuances set status='approved',approved_by=auth.uid(),reviewed_at=now(),review_note=nullif(trim(p_note),'') where id=r.id;
+ else
+  update public.monetary_issuances set status='rejected',approved_by=auth.uid(),reviewed_at=now(),review_note=nullif(trim(p_note),'') where id=r.id;
+ end if;
+ perform public.central_bank_audit(r.central_bank_id,r.country_id,case when p_approve then 'issuance_approved' else 'issuance_rejected' end,
+  'monetary_issuance',r.id,to_jsonb(r),jsonb_build_object('status',case when p_approve then 'approved' else 'rejected' end,'note',p_note),p_note);
+end;
+$function$;
+
 create or replace function public.admin_review_monetary_withdrawal(p_request_id uuid,p_approve boolean,p_note text)
 returns void language plpgsql security definer set search_path=public,auth as $function$
-declare r public.monetary_withdrawals%rowtype; v_supply numeric; v_pending numeric; v_committed numeric; v_code text; v_cb_status text;
+declare r public.monetary_withdrawals%rowtype; v_supply numeric; v_pending numeric; v_committed numeric; v_code text; v_cb_status text; v_cb_currency uuid;
 begin
  if not public.is_world_admin() then raise exception 'Somente o Super Admin pode aprovar retiradas.'; end if;
  select * into r from public.monetary_withdrawals where id=p_request_id for update;
  if not found or r.status<>'pending' then raise exception 'Solicitação inexistente ou já revisada.'; end if;
  if p_approve then
-  select status into v_cb_status from public.central_banks where id=r.central_bank_id for update;
+  select status,currency_id into v_cb_status,v_cb_currency from public.central_banks where id=r.central_bank_id for update;
   if v_cb_status is distinct from 'active' then raise exception 'Banco Central suspenso ou indisponível; retirada não pode ser aprovada.'; end if;
+  if v_cb_currency is distinct from r.currency_id then raise exception 'A moeda nacional mudou desde a solicitação; revise a retirada na moeda vigente.'; end if;
+  perform pg_advisory_xact_lock(hashtextextended(r.country_id::text||':'||r.currency_id::text,0));
   perform pg_advisory_xact_lock(hashtextextended(r.country_id::text||':'||r.currency_id::text,0));
   select internal_code into v_code from public.currencies where id=r.currency_id;
   if v_code is null then raise exception 'Moeda da solicitação não encontrada.'; end if;
-  if exists(select 1 from public.national_treasuries t where t.country_id=r.country_id and t.opening_balance>0 and t.opening_balance_currency_code_snapshot<>v_code)
+  if exists(select 1 from public.national_treasuries t where t.country_id=r.country_id and t.opening_balance>0 and (t.opening_balance_currency_code_snapshot<>v_code or t.currency_code is distinct from v_code))
    or exists(select 1 from public.treasury_ledger_entries e where e.country_id=r.country_id and e.currency_code_snapshot<>v_code) then
    raise exception 'O Tesouro possui registros em unidade monetária divergente; concilie antes de retirar moeda.';
   end if;
