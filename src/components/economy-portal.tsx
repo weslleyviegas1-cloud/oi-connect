@@ -55,7 +55,7 @@ export function EconomyPortal({ profile, notify }: Props) {
         }
       }
       setPermissions(granted);
-      let gQuery = supabase.from("economic_gdp_records").select("*").order("period_end", { ascending: false }).limit(36);
+      let gQuery = supabase.from("economic_gdp_records").select("*").order("period_end", { ascending: false }).limit(selected ? 36 : 1000);
       let pQuery = supabase.from("economic_price_observations").select("*,economic_price_items(name,category,base_weight)").order("reference_date", { ascending: false }).limit(100);
       let trQuery = supabase.from("tax_rules").select("*").order("created_at", { ascending: false }).limit(100);
       let obQuery = supabase.from("tax_obligations").select("*").order("created_at", { ascending: false }).limit(100);
@@ -127,7 +127,7 @@ export function EconomyPortal({ profile, notify }: Props) {
             <h3>Novo registro manual</h3><div className="eco-grid-2"><Field label="Início do período" name="start" type="date" required/><Field label="Fim do período" name="end" type="date" required/></div>
             <div className="eco-grid-2">{[["industrial","Produção industrial"],["mining","Produção mineral"],["agriculture","Produção agrícola"],["services","Serviços"],["commerce","Comércio"],["construction","Construção e infraestrutura"],["other","Outras atividades"]].map(([name,label])=><Field key={name} label={label+" (unidades monetárias)"} name={name} type="number" min="0" step="0.01" defaultValue="0"/>)}</div><Field label="Fonte / observação" name="source" placeholder="Registro manual do governo"/><button disabled={busy}>Salvar PIB calculado</button>
           </form>}
-          <div className="eco-chart"><ResponsiveContainer width="100%" height={260}><LineChart data={[...gdp].reverse()}><CartesianGrid strokeDasharray="3 3" opacity={.15}/><XAxis dataKey="period_end"/><YAxis/><Tooltip formatter={(v: any) => money(v)}/><Line type="monotone" dataKey="total_value" stroke="#39a9ff" strokeWidth={2} dot={false}/></LineChart></ResponsiveContainer></div>
+          <div className="eco-chart"><ResponsiveContainer width="100%" height={260}><LineChart data={[...nationalGdp].reverse()}><CartesianGrid strokeDasharray="3 3" opacity={.15}/><XAxis dataKey="period_end"/><YAxis/><Tooltip formatter={(v: any) => money(v)}/><Line type="monotone" dataKey="total_value" stroke="#39a9ff" strokeWidth={2} dot={false}/></LineChart></ResponsiveContainer></div>
           <DataTable rows={gdp} columns={[["period_start","Início"],["period_end","Fim"],["total_value","PIB"],["source","Fonte"],["status","Situação"]]}/>
         </section>}
         {tab === "prices" && <section className="eco-panel"><SectionTitle title="Preços e inflação simulada" subtitle="IPC calculado a partir das observações de preços e pesos cadastrados; sem base suficiente, a inflação não é exibida."/>
@@ -184,11 +184,16 @@ function Overview({ dashboard, countries, gdp }: { dashboard: Row; countries: Ro
   const [search, setSearch] = useState("");
   const [continent, setContinent] = useState("all");
   const [period, setPeriod] = useState("all");
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
   const [status, setStatus] = useState("all");
   const [indicator, setIndicator] = useState("both");
   if (dashboard.scope === "global") {
-    const cutoff = period === "90" ? Date.now() - 90 * 86400000 : period === "365" ? Date.now() - 365 * 86400000 : null;
-    const periodRecords = gdp.filter(row => row.status === "confirmed" && (!cutoff || new Date(row.period_end).getTime() >= cutoff));
+    const days = Number(period);
+    const cutoff = Number.isFinite(days) && days > 0 ? Date.now() - days * 86400000 : null;
+    const periodRecords = gdp.filter(row => row.status === "confirmed" &&
+      (!cutoff || new Date(row.period_end).getTime() >= cutoff) &&
+      (period !== "custom" || ((!customStart || row.period_end >= customStart) && (!customEnd || row.period_end <= customEnd))));
     const latest = new Map<string, Row>();
     for (const record of periodRecords) if (!latest.has(record.country_id)) latest.set(record.country_id, record);
     const filtered = countries.map(country => ({...country,
@@ -207,13 +212,19 @@ function Overview({ dashboard, countries, gdp }: { dashboard: Row; countries: Ro
       <div className="eco-metrics"><Metric title="Países ativos" value={String(dashboard.countries_active ?? 0)} icon={<Activity/>}/><Metric title="PIB registrado agregado" value={money(dashboard.gdp_total)} icon={<BarChart3/>}/><Metric title="Tesouros consolidados" value={money(dashboard.treasury_total)} icon={<Landmark/>}/><Metric title="Arrecadação confirmada" value={money(dashboard.tax_revenue_total)} icon={<Coins/>}/></div>
       <div className="eco-filters"><input aria-label="Pesquisar país" placeholder="Pesquisar país..." value={search} onChange={e=>setSearch(e.target.value)}/>
         <select aria-label="Continente" value={continent} onChange={e=>setContinent(e.target.value)}><option value="all">Todos os continentes</option>{[...new Set(countries.map(c=>c.continent).filter(Boolean))].sort().map(value=><option key={value} value={value}>{value}</option>)}</select>
-        <select aria-label="Período" value={period} onChange={e=>setPeriod(e.target.value)}><option value="all">Todo o histórico</option><option value="90">Últimos 90 dias</option><option value="365">Últimos 12 meses</option></select>
+        <select aria-label="Período" value={period} onChange={e=>setPeriod(e.target.value)}><option value="all">Todo o histórico</option><option value="30">Mensal · 30 dias</option><option value="90">Trimestral · 90 dias</option><option value="180">Semestral · 180 dias</option><option value="365">Anual · 12 meses</option><option value="custom">Personalizado</option></select>
+        {period === "custom" && <><input aria-label="Data inicial" type="date" value={customStart} onChange={e=>setCustomStart(e.target.value)}/><input aria-label="Data final" type="date" value={customEnd} onChange={e=>setCustomEnd(e.target.value)}/></> }
         <select aria-label="Situação econômica" value={status} onChange={e=>setStatus(e.target.value)}><option value="all">Todas as situações</option><option value="active">Países ativos</option><option value="inactive">Países inativos</option><option value="with-gdp">Com PIB no período</option><option value="without-gdp">Sem PIB no período</option></select>
         <select aria-label="Indicador" value={indicator} onChange={e=>setIndicator(e.target.value)}><option value="both">PIB e Tesouro</option><option value="gdp">Somente PIB</option><option value="treasury">Somente Tesouro</option></select>
       </div>
       <DataTable rows={filtered} columns={columns}/><p className="eco-muted">O total global é uma soma nominal de valores registrados. Não representa uma comparação de poder de compra e não há conversão cambial nesta etapa.</p>
     </section>;
   }
+  const nationalDays = Number(period);
+  const nationalCutoff = Number.isFinite(nationalDays) && nationalDays > 0 ? Date.now() - nationalDays * 86400000 : null;
+  const nationalGdp = gdp.filter(row => row.status === "confirmed" &&
+    (!nationalCutoff || new Date(row.period_end).getTime() >= nationalCutoff) &&
+    (period !== "custom" || ((!customStart || row.period_end >= customStart) && (!customEnd || row.period_end <= customEnd))));
   const growth = dashboard.gdp_growth;
   const fiscal = Number(dashboard.revenue ?? 0) - Number(dashboard.expenses ?? 0);
   return <section className="eco-panel"><SectionTitle title={dashboard.country_name ?? "Economia Nacional"} subtitle="Indicadores calculados a partir dos registros confirmados deste país."/>
@@ -232,5 +243,5 @@ function Overview({ dashboard, countries, gdp }: { dashboard: Row; countries: Ro
 function SectionTitle({title,subtitle,onExport}:{title:string;subtitle:string;onExport?:()=>void}){return <header className="eco-section-title"><div><h3>{title}</h3><p>{subtitle}</p></div>{onExport&&<button type="button" onClick={onExport}><FileSpreadsheet size={15}/> CSV</button>}</header>}
 function Metric({title,value,icon}:{title:string;value:string;icon:ReactNode}){return <article className="eco-metric"><span>{icon}</span><small>{title}</small><strong>{value}</strong></article>}
 function Field(props: InputHTMLAttributes<HTMLInputElement> & {label:string}){const {label,...rest}=props;return <label>{label}<input {...rest}/></label>}
-function DataTable({rows,columns}:{rows:Row[];columns:[string,string][]}){return <div className="eco-table-wrap"><table className="eco-table"><thead><tr>{columns.map(([key,label])=><th key={key}>{label}</th>)}</tr></thead><tbody>{rows.length===0?<tr><td colSpan={columns.length}>Nenhum registro disponível.</td></tr>:rows.map((row,i)=><tr key={row.id??i}>{columns.map(([key])=><td key={key}>{["created_at","period_start","period_end","reference_date","due_date","effective_from"].includes(key)?date(String(row[key]??"")):key==="price"||key.includes("amount")||key==="total_value"||key==="treasury_balance"||key==="gdp"?money(row[key]):key==="name" && row.economic_price_items?.name?row.economic_price_items.name:String(row[key]??"—")}</td>)}</tr>)}</tbody></table></div>}
+function DataTable({rows,columns}:{rows:Row[];columns:[string,string][]}){return <div className="eco-table-wrap"><table className="eco-table"><thead><tr>{columns.map(([key,label])=><th key={key}>{label}</th>)}</tr></thead><tbody>{rows.length===0?<tr><td colSpan={columns.length}>Nenhum registro disponível.</td></tr>:rows.map((row,i)=><tr key={row.id??i}>{columns.map(([key])=><td key={key}>{["created_at","period_start","period_end","reference_date","due_date","effective_from","gdp_period_end"].includes(key)?date(String(row[key]??"")):key==="price"||key.includes("amount")||key==="total_value"||key==="treasury_balance"||key==="gdp"?money(row[key]):key==="name" && row.economic_price_items?.name?row.economic_price_items.name:String(row[key]??"—")}</td>)}</tr>)}</tbody></table></div>}
 function ReviewList({rows,onReview,reversal=false}:{rows:Row[];onReview:(id:string,decision:string)=>void;reversal?:boolean}){if(!rows.length)return null;return <div className="eco-review-list"><h3>{reversal?"Estornos administrativos":"Itens aguardando revisão"}</h3>{rows.map(row=><article key={row.id}><span>{row.name??row.description??row.id}</span>{reversal?<button onClick={()=>onReview(row.id,"reversal")}><XCircle size={15}/> Estornar</button>:<><button onClick={()=>onReview(row.id,"approved")}>Aprovar</button><button onClick={()=>onReview(row.id,"rejected")}>Rejeitar</button></>}</article>)}</div>}
