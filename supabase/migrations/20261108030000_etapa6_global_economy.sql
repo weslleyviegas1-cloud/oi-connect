@@ -27,6 +27,7 @@ create table if not exists public.national_treasuries (
   country_id uuid not null unique references public.countries(id) on delete restrict,
   opening_balance numeric(24,2) not null default 0 check (opening_balance >= 0),
   opening_balance_set_at timestamptz,
+  opening_balance_currency_code_snapshot text not null default 'UNCONFIGURED',
   currency_code text,
   currency_label text not null default 'Unidade monetária provisória (não configurada)',
   require_global_tax_approval boolean not null default true,
@@ -42,6 +43,7 @@ create table if not exists public.economic_gdp_records (
   period_start date not null,
   period_end date not null,
   total_value numeric(24,2) not null default 0 check (total_value >= 0),
+  currency_code_snapshot text not null default 'UNCONFIGURED',
   source text not null default 'manual',
   source_description text,
   status text not null default 'confirmed' check (status in ('draft','confirmed','revised','cancelled')),
@@ -74,6 +76,7 @@ create table if not exists public.economic_gdp_components (
   gdp_record_id uuid not null references public.economic_gdp_records(id) on delete cascade,
   sector text not null,
   amount numeric(24,2) not null check (amount >= 0),
+  currency_code_snapshot text not null default 'UNCONFIGURED',
   created_at timestamptz not null default now(),
   unique(gdp_record_id,sector)
 );
@@ -96,6 +99,7 @@ create table if not exists public.economic_price_observations (
   country_id uuid not null references public.countries(id) on delete restrict,
   reference_date date not null,
   price numeric(24,4) not null check (price > 0),
+  currency_code_snapshot text not null default 'UNCONFIGURED',
   recorded_by uuid not null references public.profiles(id),
   created_at timestamptz not null default now(),
   unique(item_id,reference_date)
@@ -123,6 +127,7 @@ create table if not exists public.economic_price_observation_history (
   id uuid primary key default gen_random_uuid(),
   observation_id uuid not null references public.economic_price_observations(id) on delete restrict,
   previous_price numeric(24,4) not null,
+  currency_code_snapshot text not null default 'UNCONFIGURED',
   previous_recorded_by uuid references public.profiles(id),
   revised_by uuid not null references public.profiles(id),
   revised_at timestamptz not null default now()
@@ -169,6 +174,7 @@ create table if not exists public.tax_obligations (
   calculation_base numeric(24,2) not null check (calculation_base >= 0),
   applied_rate numeric(9,4) not null check (applied_rate >= 0 and applied_rate <= 100),
   amount_due numeric(24,2) not null check (amount_due >= 0),
+  currency_code_snapshot text not null default 'UNCONFIGURED',
   due_date date,
   status text not null default 'open'
     check (status in ('open','pending_confirmation','paid','partially_paid','overdue','cancelled','contested')),
@@ -181,6 +187,7 @@ create table if not exists public.tax_collections (
   country_id uuid not null references public.countries(id) on delete restrict,
   obligation_id uuid not null references public.tax_obligations(id) on delete restrict,
   amount numeric(24,2) not null check (amount > 0),
+  currency_code_snapshot text not null default 'UNCONFIGURED',
   confirmation_reference text not null,
   confirmed_by uuid not null references public.profiles(id),
   confirmed_at timestamptz not null default now(),
@@ -194,6 +201,7 @@ create table if not exists public.treasury_ledger_entries (
   category text not null,
   description text not null,
   amount numeric(24,2) not null check (amount > 0),
+  currency_code_snapshot text not null default 'UNCONFIGURED',
   signed_amount numeric(24,2) not null,
   source_type text not null,
   source_id uuid,
@@ -216,6 +224,7 @@ create table if not exists public.budget_plans (
   status text not null default 'draft'
     check (status in ('draft','awaiting_approval','approved','rejected','in_execution','closed','cancelled')),
   total_planned numeric(24,2) not null default 0 check (total_planned >= 0),
+  currency_code_snapshot text not null default 'UNCONFIGURED',
   created_by uuid not null references public.profiles(id),
   reviewed_by uuid references public.profiles(id),
   reviewed_at timestamptz,
@@ -231,6 +240,7 @@ create table if not exists public.budget_allocations (
   category text not null,
   ministry_id uuid,
   planned_amount numeric(24,2) not null check (planned_amount >= 0),
+  currency_code_snapshot text not null default 'UNCONFIGURED',
   created_at timestamptz not null default now(),
   unique(budget_plan_id,category,ministry_id),
   foreign key (ministry_id,country_id) references public.ministries(id,country_id) on delete restrict
@@ -250,6 +260,7 @@ create table if not exists public.public_investment_projects (
   ministry_id uuid,
   budget_allocation_id uuid references public.budget_allocations(id) on delete restrict,
   planned_amount numeric(24,2) not null check (planned_amount >= 0),
+  currency_code_snapshot text not null default 'UNCONFIGURED',
   approved_amount numeric(24,2) not null default 0 check (approved_amount >= 0),
   executed_amount numeric(24,2) not null default 0 check (executed_amount >= 0),
   status text not null default 'proposed'
@@ -337,6 +348,43 @@ drop trigger if exists countries_ensure_national_treasury on public.countries;
 create trigger countries_ensure_national_treasury after insert or update of currency_code on public.countries
 for each row execute function public.ensure_national_treasury_for_country();
 revoke all on function public.ensure_national_treasury_for_country() from public,anon,authenticated;
+
+create or replace function public.stamp_economy_currency_snapshot()
+returns trigger language plpgsql security definer set search_path=public as $
+declare v_code text;
+begin
+  if tg_table_name='economic_gdp_components' then
+    select currency_code_snapshot into v_code from public.economic_gdp_records where id=new.gdp_record_id;
+  elsif tg_table_name='economic_price_observation_history' then
+    select currency_code_snapshot into v_code from public.economic_price_observations where id=new.observation_id;
+  elsif tg_table_name='tax_collections' then
+    select currency_code_snapshot into v_code from public.tax_obligations where id=new.obligation_id;
+  elsif tg_table_name='budget_allocations' then
+    select currency_code_snapshot into v_code from public.budget_plans where id=new.budget_plan_id;
+  elsif tg_table_name='treasury_ledger_entries' and new.entry_type='reversal' then
+    select currency_code_snapshot into v_code from public.treasury_ledger_entries where id=new.reverses_entry_id;
+  else
+    select coalesce(nullif(currency_code,''),'UNCONFIGURED') into v_code
+      from public.national_treasuries where country_id=new.country_id;
+  end if;
+  new.currency_code_snapshot:=coalesce(v_code,'UNCONFIGURED');
+  return new;
+end;
+$;
+
+do $
+declare t text;
+begin
+  foreach t in array array[
+    'economic_gdp_records','economic_gdp_components','economic_price_observations',
+    'economic_price_observation_history','tax_obligations','tax_collections',
+    'treasury_ledger_entries','budget_plans','budget_allocations','public_investment_projects'
+  ] loop
+    execute format('drop trigger if exists %I on public.%I',t||'_stamp_currency',t);
+    execute format('create trigger %I before insert on public.%I for each row execute function public.stamp_economy_currency_snapshot()',t||'_stamp_currency',t);
+  end loop;
+end $;
+revoke all on function public.stamp_economy_currency_snapshot() from public,anon,authenticated;
 
 alter table public.national_treasuries enable row level security;
 alter table public.economic_gdp_records enable row level security;
@@ -916,7 +964,8 @@ begin
   if t.opening_balance_set_at is not null or exists(select 1 from public.treasury_ledger_entries where country_id=p_country_id) then
     raise exception 'O saldo inicial só pode ser definido uma vez, antes do primeiro lançamento.';
   end if;
-  update public.national_treasuries set opening_balance=p_amount,opening_balance_set_at=now(),updated_at=now() where country_id=p_country_id;
+  update public.national_treasuries set opening_balance=p_amount,opening_balance_set_at=now(),
+    opening_balance_currency_code_snapshot=coalesce(nullif(currency_code,''),'UNCONFIGURED'),updated_at=now() where country_id=p_country_id;
   perform public.economy_audit(p_country_id,'initialize','national_treasury',t.id,to_jsonb(t),jsonb_build_object('opening_balance',p_amount));
 end;
 $$;
