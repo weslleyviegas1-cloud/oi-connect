@@ -1039,7 +1039,7 @@ end;
 $$;
 
 create or replace function public.set_economy_operations_suspended(p_country_id uuid,p_suspended boolean,p_reason text)
-returns void language plpgsql security definer set search_path=public,auth as $
+returns void language plpgsql security definer set search_path=public,auth as $$
 declare t public.national_treasuries%rowtype;
 begin
   if not public.is_world_admin() then raise exception 'Somente o Super Admin pode suspender operações econômicas.'; end if;
@@ -1053,7 +1053,7 @@ begin
   perform public.economy_audit(p_country_id,case when p_suspended then 'suspend' else 'reactivate' end,
     'economy_operations',t.id,to_jsonb(t),jsonb_build_object('suspended',p_suspended,'reason',nullif(trim(p_reason),'')));
 end;
-$;
+$$;
 
 create or replace function public.set_treasury_public_visibility(p_country_id uuid,p_visible boolean)
 returns void language plpgsql security definer set search_path=public,auth as $$
