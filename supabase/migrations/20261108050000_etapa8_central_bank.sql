@@ -568,7 +568,7 @@ begin
   end if;
   select * into v_bank from public.central_banks where country_id=v_country and is_primary order by created_at limit 1;
   if not found then return jsonb_build_object('bank',null,'country_id',v_country,'message','Este país ainda não possui Banco Central cadastrado.'); end if;
-  v_can_manage:=public.has_central_bank_permission(v_country,'dashboard.manage');
+  v_can_manage:=public.is_world_admin() or exists(select 1 from public.central_bank_members m join public.central_banks cb on cb.id=m.central_bank_id where cb.country_id=v_country and m.profile_id=auth.uid() and m.status='active');
   v_economy:=public.get_economy_dashboard(v_country);
   select reference_currency_id into v_ref_currency_id from public.currency_system_settings where singleton=true;
   if v_can_manage and v_ref_currency_id is not null then
