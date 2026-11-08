@@ -55,16 +55,23 @@ export function EconomyPortal({ profile, notify }: Props) {
         }
       }
       setPermissions(granted);
+      let gQuery = supabase.from("economic_gdp_records").select("*").order("period_end", { ascending: false }).limit(36);
+      let pQuery = supabase.from("economic_price_observations").select("*,economic_price_items(name,category,base_weight)").order("reference_date", { ascending: false }).limit(100);
+      let trQuery = supabase.from("tax_rules").select("*").order("created_at", { ascending: false }).limit(100);
+      let obQuery = supabase.from("tax_obligations").select("*").order("created_at", { ascending: false }).limit(100);
+      let leQuery = supabase.from("treasury_ledger_entries").select("*").order("created_at", { ascending: false }).limit(100);
+      let buQuery = supabase.from("budget_plans").select("*").order("created_at", { ascending: false }).limit(50);
+      let alQuery = supabase.from("budget_allocations").select("*").limit(200);
+      let prQuery = supabase.from("public_investment_projects").select("*").order("created_at", { ascending: false }).limit(100);
+      if (selected) {
+        gQuery = gQuery.eq("country_id", selected); pQuery = pQuery.eq("country_id", selected);
+        trQuery = trQuery.eq("country_id", selected); obQuery = obQuery.eq("country_id", selected);
+        leQuery = leQuery.eq("country_id", selected); buQuery = buQuery.eq("country_id", selected);
+        alQuery = alQuery.eq("country_id", selected); prQuery = prQuery.eq("country_id", selected);
+      }
       const [dash, g, p, tr, ob, le, bu, al, pr, ts] = await Promise.all([
         supabase.rpc("get_economy_dashboard", { p_country_id: selected }),
-        supabase.from("economic_gdp_records").select("*").order("period_end", { ascending: false }).limit(36),
-        supabase.from("economic_price_observations").select("*,economic_price_items(name,category,base_weight)").order("reference_date", { ascending: false }).limit(100),
-        supabase.from("tax_rules").select("*").order("created_at", { ascending: false }).limit(100),
-        supabase.from("tax_obligations").select("*").order("created_at", { ascending: false }).limit(100),
-        supabase.from("treasury_ledger_entries").select("*").order("created_at", { ascending: false }).limit(100),
-        supabase.from("budget_plans").select("*").order("created_at", { ascending: false }).limit(50),
-        supabase.from("budget_allocations").select("*").limit(200),
-        supabase.from("public_investment_projects").select("*").order("created_at", { ascending: false }).limit(100),
+        gQuery, pQuery, trQuery, obQuery, leQuery, buQuery, alQuery, prQuery,
         selected ? supabase.from("national_treasuries").select("*").eq("country_id", selected).maybeSingle() : Promise.resolve({ data: null, error: null }),
       ]);
       if (dash.error) throw dash.error;
