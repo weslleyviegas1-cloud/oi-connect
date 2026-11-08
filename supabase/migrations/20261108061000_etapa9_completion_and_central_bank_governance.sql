@@ -468,6 +468,7 @@ begin
 end;
 $function$;
 
+drop function if exists public.capitalize_bank_liquidity(uuid,uuid,numeric);
 create or replace function public.capitalize_bank_liquidity(p_bank_id uuid,p_source_account uuid,p_amount numeric,p_idempotency_key text)
 returns void language plpgsql security definer set search_path=public,auth as $function$
 declare a public.bank_accounts%rowtype; b public.commercial_banks%rowtype; v_balance numeric; v_key text; v_existing public.bank_liquidity_transactions%rowtype;
