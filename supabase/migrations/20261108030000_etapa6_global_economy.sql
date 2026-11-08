@@ -392,7 +392,8 @@ using (public.is_world_admin() or public.is_country_president(country_id)
 drop policy if exists tax_collections_read_scoped on public.tax_collections;
 create policy tax_collections_read_scoped on public.tax_collections for select to authenticated
 using (public.is_world_admin() or public.is_country_president(country_id)
-  or public.has_economy_permission(country_id,'tax.read'));
+  or public.has_economy_permission(country_id,'tax.read')
+  or exists(select 1 from public.tax_obligations o where o.id=obligation_id and o.taxpayer_profile_id=auth.uid()));
 drop policy if exists ledger_read_scoped on public.treasury_ledger_entries;
 create policy ledger_read_scoped on public.treasury_ledger_entries for select to authenticated
 using (public.is_world_admin() or public.is_country_president(country_id)
