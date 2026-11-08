@@ -169,8 +169,8 @@ create or replace function public.admin_assign_country_currency(
 declare c public.currencies%rowtype; v_old public.country_currency_assignments%rowtype; v_id uuid; v_country public.countries%rowtype;
 begin
   if not public.is_world_admin() then raise exception 'Somente o Super Admin pode definir a moeda nacional.'; end if;
-  if p_effective_from is null or p_effective_from>now()+interval '10 years'
-    or length(trim(coalesce(p_justification,'')))<5 then raise exception 'Data de vigência ou justificativa inválida.'; end if;
+  if p_effective_from is null or p_effective_from>now()+interval '1 minute'
+    or length(trim(coalesce(p_justification,'')))<5 then raise exception 'A vigência deve ser imediata ou passada, com justificativa válida.'; end if;
   select * into c from public.currencies where id=p_currency_id and status='active';
   if not found then raise exception 'A moeda precisa estar ativa.'; end if;
   select * into v_country from public.countries where id=p_country_id for update;
@@ -287,9 +287,8 @@ begin
   if not exists(select 1 from public.currencies where id=p_from_currency_id and status='active')
     or not exists(select 1 from public.currencies where id=p_to_currency_id and status='active') then raise exception 'Moeda inexistente ou indisponível.'; end if;
   if p_from_currency_id=p_to_currency_id then
-    select jsonb_build_object('amount',p_amount,'rate',1,'rate_id',null,'from_currency_id',p_from_currency_id,
-      'to_currency_id',p_to_currency_id,'as_of',coalesce(p_at,now()),'direction','same') into r;
-    return r;
+    return jsonb_build_object('amount',p_amount,'rate',1,'rate_id',null,'from_currency_id',p_from_currency_id,
+      'to_currency_id',p_to_currency_id,'as_of',coalesce(p_at,now()),'direction','same');
   end if;
   select * into r from public.exchange_rates x where x.from_currency_id=p_from_currency_id and x.to_currency_id=p_to_currency_id
     and x.status='active' and x.effective_from<=coalesce(p_at,now())
