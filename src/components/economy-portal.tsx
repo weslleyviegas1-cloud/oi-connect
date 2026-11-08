@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type InputHTMLAttributes, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type FormEvent, type InputHTMLAttributes, type ReactNode } from "react";
 import { Activity, BarChart3, Coins, FileSpreadsheet, Landmark, RefreshCw, ShieldCheck, TrendingDown, TrendingUp, Wallet, XCircle } from "lucide-react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { supabase } from "@/lib/supabase";
+import "./economy-portal.css";
 
 type Row = Record<string, any>;
 type Props = { profile: Row; notify: (message: string) => void };
@@ -34,7 +35,6 @@ export function EconomyPortal({ profile, notify }: Props) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const canManage = isAdmin || isPresident;
-  const activeCountry = useMemo(() => countries.find(c => c.id === countryId), [countries, countryId]);
 
   const load = useCallback(async () => {
     setLoading(true);
