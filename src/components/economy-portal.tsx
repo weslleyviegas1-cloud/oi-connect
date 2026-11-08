@@ -36,6 +36,7 @@ export function EconomyPortal({ profile, notify }: Props) {
   const [ministries, setMinistries] = useState<Row[]>([]);
   const [treasury, setTreasury] = useState<Row | null>(null);
   const [permissions, setPermissions] = useState<string[]>([]);
+  const [countryPermissions, setCountryPermissions] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const operationsSuspended = dashboard?.operations_suspended === true;
@@ -51,18 +52,21 @@ export function EconomyPortal({ profile, notify }: Props) {
       }
       const selected = isAdmin ? countryId || null : profile?.country_id ?? null;
       let granted: string[] = [];
+      let countryGranted: string[] = [];
       if (selected && profile?.id && !isAdmin && !isPresident) {
         const member = await supabase.from("government_members").select("id,ministry_id,department_id").eq("profile_id", profile.id).eq("country_id", selected).eq("status", "active").maybeSingle();
         if (member.data) {
           const perms = await supabase.from("government_member_permissions").select("permission_key,scope_type,scope_id").eq("member_id", member.data.id);
-          granted = (perms.data ?? []).filter(row =>
+          const allowed = (perms.data ?? []).filter(row =>
             row.scope_type === "country" ||
             (row.scope_type === "ministry" && row.scope_id === member.data.ministry_id) ||
             (row.scope_type === "department" && row.scope_id === member.data.department_id)
-          ).map(row => row.permission_key);
+          );
+          granted = allowed.map(row => row.permission_key);
+          countryGranted = allowed.filter(row => row.scope_type === "country").map(row => row.permission_key);
         }
       }
-      setPermissions(granted);
+      setPermissions(granted); setCountryPermissions(countryGranted);
       let gQuery = supabase.from("economic_gdp_records").select("*").order("period_end", { ascending: false }).limit(selected ? 36 : 1000);
       let pQuery = supabase.from("economic_price_observations").select("*,economic_price_items(name,category,base_weight)").order("reference_date", { ascending: false }).limit(100);
       let trQuery = supabase.from("tax_rules").select("*").order("created_at", { ascending: false }).limit(100);
@@ -121,9 +125,10 @@ export function EconomyPortal({ profile, notify }: Props) {
   };
   const selectedCountryId = isAdmin ? countryId : profile?.country_id ?? "";
   const hasPermission = (...keys: string[]) => isAdmin || (!operationsSuspended && (isPresident || keys.some(key => permissions.includes(key))));
-  const canGDP = !!selectedCountryId && hasPermission("economy.manage");
-  const canTax = !!selectedCountryId && hasPermission("tax.manage");
-  const canCollect = !!selectedCountryId && hasPermission("tax.collect", "economy.manage");
+  const hasCountryPermission = (...keys: string[]) => isAdmin || (!operationsSuspended && (isPresident || keys.some(key => countryPermissions.includes(key))));
+  const canGDP = !!selectedCountryId && hasCountryPermission("economy.manage");
+  const canTax = !!selectedCountryId && hasCountryPermission("tax.manage");
+  const canCollect = !!selectedCountryId && hasCountryPermission("tax.collect", "economy.manage");
   const canTreasury = !!selectedCountryId && hasPermission("treasury.revenue", "treasury.expense", "economy.manage");
   const canBudget = !!selectedCountryId && hasPermission("budget.manage");
   const canInvestment = !!selectedCountryId && hasPermission("investment.manage");
@@ -171,7 +176,7 @@ export function EconomyPortal({ profile, notify }: Props) {
             <h3>Definir saldo inicial do Tesouro</h3><p className="eco-muted">Disponível uma única vez, antes do primeiro lançamento. O valor ficará registrado como saldo de abertura.</p><Field label="Saldo inicial" name="opening" type="number" min="0" step="0.01" defaultValue="0" required/><button disabled={busy}>Definir saldo inicial</button>
           </form>}
           {canTreasury && <form className="eco-form" onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);void invoke("post_treasury_entry",{p_country_id:selectedCountryId,p_entry_type:f.get("type"),p_category:f.get("category"),p_description:f.get("description"),p_amount:Number(f.get("amount")),p_idempotency_key:crypto.randomUUID(),p_budget_allocation_id:f.get("allocation") || null,p_investment_project_id:f.get("investment") || null},"Lançamento registrado no livro-razão.");e.currentTarget.reset();}}>
-            <h3>Registrar receita ou despesa</h3><div className="eco-grid-2"><label>Tipo<select name="type"><option value="revenue">Receita não tributária</option><option value="expense">Despesa</option></select></label><Field label="Categoria" name="category" required/><Field label="Descrição e origem" name="description" required/><Field label="Valor" name="amount" type="number" min="0.01" step="0.01" required/><label>Alocação orçamentária (obrigatória para despesa)<select name="allocation"><option value="">Selecione se despesa</option>{allocations.map(a=><option key={a.id} value={a.id}>{a.category} — limite {money(a.planned_amount)}</option>)}</select></label><label>Projeto de investimento (opcional)<select name="investment"><option value="">Não vincular</option>{projects.filter(p=>["approved","in_progress"].includes(p.status)).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label></div><button disabled={busy}>Registrar no Tesouro</button>
+            <h3>Registrar receita ou despesa</h3><div className="eco-grid-2"><label>Tipo<select name="type"><option value="revenue" disabled={!hasCountryPermission("treasury.revenue","economy.manage")}>Receita não tributária</option><option value="expense" disabled={!hasPermission("treasury.expense","economy.manage")}>Despesa</option></select></label><Field label="Categoria" name="category" required/><Field label="Descrição e origem" name="description" required/><Field label="Valor" name="amount" type="number" min="0.01" step="0.01" required/><label>Alocação orçamentária (obrigatória para despesa)<select name="allocation"><option value="">Selecione se despesa</option>{allocations.map(a=><option key={a.id} value={a.id}>{a.category} — limite {money(a.planned_amount)}</option>)}</select></label><label>Projeto de investimento (opcional)<select name="investment"><option value="">Não vincular</option>{projects.filter(p=>["approved","in_progress"].includes(p.status)).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label></div><button disabled={busy}>Registrar no Tesouro</button>
           </form>}
           <DataTable rows={ledger} columns={[["created_at","Data"],["entry_type","Tipo"],["category","Categoria"],["description","Descrição"],["amount","Valor"],["currency_code_snapshot","Unidade"],["idempotency_key","Referência"]]}/>
           {isAdmin && <ReviewList rows={ledger.filter(x=>x.entry_type!=="reversal" && x.source_type!=="tax_collection")} onReview={(id)=>{if(confirm("Estornar este lançamento? O registro original será preservado."))void invoke("reverse_treasury_entry",{p_entry_id:id,p_reason:"Correção administrativa",p_idempotency_key:"reversal-"+crypto.randomUUID()},"Estorno registrado.");}} reversal/>}
