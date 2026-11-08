@@ -22,7 +22,7 @@ type Player = {
 };
 type Application = { id: string; player_id: string; country_id: string; status: string; requested_at: string; player?: Player; country?: Country };
 type Stats = { countries_total: number; countries_active: number; countries_suspended: number; presidencies_available: number; citizens_total: number; presidents_total: number; applications_pending: number; users_total: number };
-type Tab = "overview" | "countries" | "applications" | "players" | "coordinates" | "notifications" | "audit" | "settings";
+type Tab = "overview" | "countries" | "applications" | "players" | "nationality" | "coordinates" | "notifications" | "audit" | "settings";
 const blankCountry = {
   id: "", name: "", short_name: "", identifier: "", flag: "", description: "", capital: "", continent: "",
   currency_name: "", currency_code: "", coord_x: "", coord_y: "", coord_z: "",
@@ -34,6 +34,7 @@ const tabItems: { id: Tab; label: string; Icon: typeof Globe2 }[] = [
   { id: "countries", label: "Países", Icon: Flag },
   { id: "applications", label: "Solicitações presidenciais", Icon: ShieldCheck },
   { id: "players", label: "Cidadãos e jogadores", Icon: Users },
+  { id: "nationality", label: "Mudanças de nacionalidade", Icon: Flag },
   { id: "coordinates", label: "Coordenadas", Icon: MapPin },
   { id: "notifications", label: "Notificações", Icon: Bell },
   { id: "audit", label: "Auditoria", Icon: History },
@@ -49,6 +50,7 @@ export function AdminGovernance({ notify }: { notify: (message: string) => void 
   const [countries, setCountries] = useState<Country[]>([]);
   const [applications, setApplications] = useState<Application[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
+  const [nationalityRequests, setNationalityRequests] = useState<any[]>([]);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [audit, setAudit] = useState<any[]>([]);
   const [spawn, setSpawn] = useState<any>({ name: "Nascimento global", description: "", coord_x: 0, coord_y: 70, coord_z: 0, is_active: true });
@@ -60,6 +62,8 @@ export function AdminGovernance({ notify }: { notify: (message: string) => void 
   const [countryFilter, setCountryFilter] = useState("all");
   const [playerSearch, setPlayerSearch] = useState("");
   const [playerFilter, setPlayerFilter] = useState("all");
+  const [playerCountryFilter, setPlayerCountryFilter] = useState("all");
+  const [playerDateFilter, setPlayerDateFilter] = useState("all");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -93,6 +97,16 @@ export function AdminGovernance({ notify }: { notify: (message: string) => void 
   }, [notify]);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (tab !== "nationality") return;
+    let active = true;
+    void supabase.rpc("admin_list_nationality_change_requests").then(({ data, error }) => {
+      if (!active) return;
+      if (error) notify("Falha ao carregar solicitações de nacionalidade: " + error.message);
+      else setNationalityRequests(data ?? []);
+    });
+    return () => { active = false; };
+  }, [tab, notify]);
 
   const filteredCountries = useMemo(() => countries.filter(country => {
     const matchesName = country.name.toLowerCase().includes(countrySearch.toLowerCase());
@@ -117,8 +131,15 @@ export function AdminGovernance({ notify }: { notify: (message: string) => void 
       || (playerFilter === "president" && player.role === "president")
       || (playerFilter === "suspended" && player.account_status === "suspended")
       || (playerFilter === "pending" && player.registration_status === "pending_presidency");
-    return matches && roleMatches;
-  }), [players, playerSearch, playerFilter]);
+    const countryMatches = playerCountryFilter === "all" || player.country_id === playerCountryFilter;
+    const ageDays = (Date.now() - new Date(player.created_at).getTime()) / 86400000;
+    const dateMatches = playerDateFilter === "all"
+      || (playerDateFilter === "7" && ageDays <= 7)
+      || (playerDateFilter === "30" && ageDays <= 30)
+      || (playerDateFilter === "90" && ageDays <= 90)
+      || (playerDateFilter === "older" && ageDays > 90);
+    return matches && roleMatches && countryMatches && dateMatches;
+  }), [players, playerSearch, playerFilter, playerCountryFilter, playerDateFilter]);
 
   const editCountry = (country: Country) => {
     setCountryForm({
@@ -168,6 +189,29 @@ export function AdminGovernance({ notify }: { notify: (message: string) => void 
     setBusy(false);
     if (error) notify("Não foi possível revisar a solicitação: " + error.message);
     else { notify(decision === "approved" ? "Presidência aprovada." : "Solicitação recusada."); await load(); }
+  };
+
+  const loadNationalityRequests = async () => {
+    const { data, error } = await supabase.rpc("admin_list_nationality_change_requests");
+    if (error) notify("Falha ao carregar solicitações de nacionalidade: " + error.message);
+    else setNationalityRequests(data ?? []);
+  };
+
+  const reviewNationality = async (request: any, decision: "approved" | "rejected") => {
+    const note = window.prompt(decision === "approved"
+      ? "Observação administrativa (opcional):"
+      : "Motivo da rejeição:");
+    if (note === null) return;
+    if (!window.confirm(decision === "approved"
+      ? "Aprovar a mudança de nacionalidade deste cidadão? O sistema verificará vínculos presidenciais e ministeriais ativos."
+      : "Rejeitar esta solicitação de nacionalidade?")) return;
+    setBusy(true);
+    const { error } = await supabase.rpc("admin_review_nationality_change", {
+      p_request_id: request.id, p_decision: decision, p_note: note,
+    });
+    setBusy(false);
+    if (error) notify("Não foi possível revisar a solicitação: " + error.message);
+    else { notify(decision === "approved" ? "Mudança de nacionalidade aprovada." : "Solicitação rejeitada."); await Promise.all([load(), loadNationalityRequests()]); }
   };
 
   const setPlayerStatus = async (player: Player) => {
@@ -295,12 +339,17 @@ export function AdminGovernance({ notify }: { notify: (message: string) => void 
     </section>}
 
     {tab === "players" && <>
-      <div className="we-admin-filters"><label className="we-search"><Search/><input placeholder="Pesquisar nickname ou ID..." value={playerSearch} onChange={e => setPlayerSearch(e.target.value)}/></label><select value={playerFilter} onChange={e => setPlayerFilter(e.target.value)}><option value="all">Todos os jogadores</option><option value="citizen">Cidadãos</option><option value="president">Presidentes</option><option value="suspended">Contas suspensas</option><option value="pending">Contas pendentes</option></select></div>
+      <div className="we-admin-filters"><label className="we-search"><Search/><input placeholder="Pesquisar nickname ou ID..." value={playerSearch} onChange={e => setPlayerSearch(e.target.value)}/></label><select value={playerFilter} onChange={e => setPlayerFilter(e.target.value)}><option value="all">Todos os jogadores</option><option value="citizen">Cidadãos</option><option value="president">Presidentes</option><option value="suspended">Contas suspensas</option><option value="pending">Contas pendentes</option></select><select value={playerCountryFilter} onChange={e => setPlayerCountryFilter(e.target.value)}><option value="all">Todos os países</option>{countries.map(country => <option key={country.id} value={country.id}>{country.name}</option>)}</select><select value={playerDateFilter} onChange={e => setPlayerDateFilter(e.target.value)}><option value="all">Todas as datas</option><option value="7">Últimos 7 dias</option><option value="30">Últimos 30 dias</option><option value="90">Últimos 90 dias</option><option value="older">Mais de 90 dias</option></select></div>
       <section className="we-panel"><header><h2><Users/> Jogadores cadastrados ({filteredPlayers.length})</h2></header>
         {filteredPlayers.map(player => <article className="we-admin-row" key={player.id}>{player.avatar_url ? <img className="we-admin-avatar" src={player.avatar_url} alt=""/> : <span className="we-admin-avatar-fallback"><UserRound/></span>}<div><b>{player.username} • #{player.player_number ?? "—"}</b><small>{player.minecraft_username ? "Minecraft: "+player.minecraft_username+" • " : ""}{player.email} • {player.country_flag ?? ""} {player.country_name ?? "Sem país"}</small><small>{player.role} • {player.registration_status} • {player.account_status} • Cadastro: {dateTime(player.created_at)}</small></div><button type="button" disabled={busy || player.role === "super_admin"} onClick={() => void setPlayerStatus(player)}>{player.account_status === "suspended" ? "Reativar" : "Suspender"}</button></article>)}
         {!filteredPlayers.length && <div className="we-empty">Nenhum jogador encontrado.</div>}
       </section>
     </>}
+
+    {tab === "nationality" && <section className="we-panel"><header><h2><Flag/> Solicitações de mudança de nacionalidade</h2></header>
+      {nationalityRequests.map(request => <article className="we-admin-row" key={request.id}><div><b>{request.username} • #{request.player_number ?? "—"}</b><small>{request.minecraft_username ? "Minecraft: " + request.minecraft_username + " • " : ""}{request.from_country_name ?? "Sem país"} → {request.to_country_name} • {dateTime(request.requested_at)}</small></div><button type="button" disabled={busy} onClick={() => void reviewNationality(request,"approved")}><Check/> Aprovar</button><button type="button" className="we-danger" disabled={busy} onClick={() => void reviewNationality(request,"rejected")}><X/> Rejeitar</button></article>)}
+      {!nationalityRequests.length && <div className="we-empty">Não há solicitações pendentes de nacionalidade.</div>}
+    </section>}
 
     {tab === "coordinates" && <>
       <form className="we-form" onSubmit={saveSpawn}><div className="we-admin-form-title we-admin-wide"><div><small>CONFIGURAÇÃO GLOBAL</small><h3>Ponto global de nascimento</h3></div></div>
