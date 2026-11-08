@@ -864,13 +864,17 @@ create or replace function public.create_investment_project(
   p_country_id uuid,p_name text,p_description text,p_category text,p_budget_allocation_id uuid,
   p_planned_amount numeric,p_starts_on date,p_expected_end date
 ) returns uuid language plpgsql security definer set search_path=public,auth as $$
-declare v_id uuid; v_allocation_limit numeric(24,2);
+declare v_id uuid; v_allocation_limit numeric(24,2); v_allocation_currency text; v_treasury_currency text;
 begin
   if not public.can_manage_economy(p_country_id,'investment.manage') then raise exception 'Sem permissão para propor investimento.'; end if;
   if p_planned_amount<0 or length(trim(coalesce(p_name,'')))<2 then raise exception 'Projeto inválido.'; end if;
-  select a.planned_amount into v_allocation_limit from public.budget_allocations a join public.budget_plans b on b.id=a.budget_plan_id
+  select a.planned_amount,a.currency_code_snapshot into v_allocation_limit,v_allocation_currency
+    from public.budget_allocations a join public.budget_plans b on b.id=a.budget_plan_id
     where a.id=p_budget_allocation_id and a.country_id=p_country_id and b.status in ('approved','in_execution');
+  select currency_code into v_treasury_currency from public.national_treasuries where country_id=p_country_id;
   if v_allocation_limit is null then raise exception 'O projeto precisa de uma alocação orçamentária aprovada neste país.'; end if;
+  if v_allocation_currency<>coalesce(nullif(v_treasury_currency,''),'UNCONFIGURED') then
+    raise exception 'A unidade monetária do orçamento diverge da unidade atual do Tesouro.'; end if;
   if p_planned_amount>v_allocation_limit then raise exception 'O valor previsto excede a alocação orçamentária.'; end if;
   insert into public.public_investment_projects(country_id,name,description,category,budget_allocation_id,planned_amount,starts_on,expected_end,created_by)
   values(p_country_id,trim(p_name),p_description,trim(p_category),p_budget_allocation_id,p_planned_amount,p_starts_on,p_expected_end)
