@@ -13,6 +13,8 @@ create table if not exists public.citizen_profiles (
   bio text,
   public_profile_enabled boolean not null default true,
   show_player_number boolean not null default false,
+  show_residence_city boolean not null default false,
+  show_bio boolean not null default false,
   citizen_status text not null default 'active'
     check (citizen_status in ('active','pending','inactive','suspended','under_review')),
   country_joined_at timestamptz,
@@ -302,7 +304,9 @@ create or replace function public.update_my_citizen_profile(
   p_residence_city text default null,
   p_bio text default null,
   p_public_profile_enabled boolean default true,
-  p_show_player_number boolean default false
+  p_show_player_number boolean default false,
+  p_show_residence_city boolean default false,
+  p_show_bio boolean default false
 )
 returns void
 language plpgsql
@@ -326,6 +330,8 @@ begin
       bio=nullif(trim(p_bio),''),
       public_profile_enabled=coalesce(p_public_profile_enabled,true),
       show_player_number=coalesce(p_show_player_number,false),
+      show_residence_city=coalesce(p_show_residence_city,false),
+      show_bio=coalesce(p_show_bio,false),
       updated_at=now()
   where profile_id=auth.uid();
 
@@ -384,6 +390,8 @@ begin
     'bio',cp.bio,
     'public_profile_enabled',cp.public_profile_enabled,
     'show_player_number',cp.show_player_number,
+    'show_residence_city',cp.show_residence_city,
+    'show_bio',cp.show_bio,
     'citizen_status',cp.citizen_status,
     'country_joined_at',cp.country_joined_at
   ) into v_result
@@ -415,6 +423,8 @@ begin
     'player_number',case when cp.show_player_number then p.player_number else null end,
     'country_name',c.name,
     'country_flag',c.flag,
+    'residence_city',case when cp.show_residence_city then cp.residence_city else null end,
+    'bio',case when cp.show_bio then cp.bio else null end,
     'public_profile_enabled',cp.public_profile_enabled
   ) into v_result
   from public.profiles p
@@ -575,6 +585,60 @@ begin
     jsonb_build_object('status',v_old),jsonb_build_object('status',p_status,'note',p_note));
 end;
 $$;
+
+
+create or replace function public.admin_update_citizen_passport(
+  p_profile_id uuid,
+  p_status text,
+  p_validity_days integer default 365
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $
+declare v_profile public.profiles%rowtype; v_passport public.citizen_passports%rowtype;
+begin
+  if not public.is_world_admin() then raise exception 'Apenas o Super Admin pode administrar passaportes.'; end if;
+  if p_status not in ('pending','active','expired','suspended','cancelled') then raise exception 'Situação de passaporte inválida.'; end if;
+  if p_validity_days is null or p_validity_days < 1 or p_validity_days > 3650 then
+    raise exception 'A validade deve estar entre 1 e 3650 dias.';
+  end if;
+  select * into v_profile from public.profiles where id=p_profile_id for update;
+  if not found then raise exception 'Cidadão não encontrado.'; end if;
+  select * into v_passport from public.citizen_passports where profile_id=p_profile_id for update;
+  if not found then raise exception 'Registro inicial de passaporte não encontrado.'; end if;
+
+  update public.citizen_passports
+  set status=p_status,
+      issuing_country_id=v_profile.country_id,
+      issued_at=case when p_status='active' then coalesce(issued_at,now()) else issued_at end,
+      expires_at=case when p_status='active' then now() + make_interval(days=>p_validity_days) else expires_at end,
+      updated_at=now()
+  where profile_id=p_profile_id;
+
+  if p_status in ('active','expired','suspended','cancelled') then
+    insert into public.citizen_documents(profile_id,document_type,document_number,issuing_country_id,issued_at,expires_at,status)
+    values (p_profile_id,'passport',v_passport.passport_number,v_profile.country_id,now(),
+      case when p_status='active' then now() + make_interval(days=>p_validity_days) else null end,p_status)
+    on conflict (profile_id,document_type) do update
+      set issuing_country_id=excluded.issuing_country_id,
+          issued_at=coalesce(public.citizen_documents.issued_at,excluded.issued_at),
+          expires_at=excluded.expires_at,status=excluded.status,updated_at=now();
+  end if;
+
+  insert into public.citizen_history(profile_id,event_type,title,description,country_id,actor_id,metadata)
+  values (p_profile_id,'passport_status_changed','Passaporte atualizado',
+    'A situação do passaporte foi atualizada para ' || p_status || '.',v_profile.country_id,auth.uid(),
+    jsonb_build_object('status',p_status,'validity_days',p_validity_days));
+  insert into public.citizen_notifications(recipient_id,event_type,title,description,object_type,object_id)
+  values (p_profile_id,'passport_status_changed','Passaporte atualizado',
+    'A situação do seu passaporte foi atualizada para ' || p_status || '.','citizen_passport',v_passport.id);
+  insert into public.admin_audit_logs(actor_id,operation,object_type,object_id,description,new_values)
+  values (auth.uid(),'update','citizen_passport',v_passport.id::text,'Situação do passaporte atualizada.',
+    jsonb_build_object('status',p_status,'validity_days',p_validity_days));
+end;
+$;
 
 create or replace function public.admin_list_nationality_change_requests()
 returns table (
@@ -771,23 +835,25 @@ revoke all on function public.initialize_citizen_record() from public,anon,authe
 revoke all on function public.capture_citizen_country_change() from public,anon,authenticated;
 revoke all on function public.capture_citizen_government_membership() from public,anon,authenticated;
 revoke all on function public.notify_citizens_of_published_announcement() from public,anon,authenticated;
-revoke all on function public.update_my_citizen_profile(date,text,text,boolean,boolean) from public,anon;
+revoke all on function public.update_my_citizen_profile(date,text,text,boolean,boolean,boolean,boolean) from public,anon;
 revoke all on function public.update_my_minecraft_nickname(text) from public,anon;
 revoke all on function public.get_my_citizen_profile() from public,anon;
 revoke all on function public.get_public_citizen_profile(uuid) from public,anon;
 revoke all on function public.request_nationality_change(uuid) from public,anon;
 revoke all on function public.admin_review_nationality_change(uuid,text,text) from public,anon;
 revoke all on function public.admin_set_citizen_status(uuid,text,text) from public,anon;
+revoke all on function public.admin_update_citizen_passport(uuid,text,integer) from public,anon;
 revoke all on function public.admin_list_nationality_change_requests() from public,anon;
 revoke all on function public.get_country_citizens(uuid,text) from public,anon;
 
-grant execute on function public.update_my_citizen_profile(date,text,text,boolean,boolean) to authenticated;
+grant execute on function public.update_my_citizen_profile(date,text,text,boolean,boolean,boolean,boolean) to authenticated;
 grant execute on function public.update_my_minecraft_nickname(text) to authenticated;
 grant execute on function public.get_my_citizen_profile() to authenticated;
 grant execute on function public.get_public_citizen_profile(uuid) to authenticated;
 grant execute on function public.request_nationality_change(uuid) to authenticated;
 grant execute on function public.admin_review_nationality_change(uuid,text,text) to authenticated;
 grant execute on function public.admin_set_citizen_status(uuid,text,text) to authenticated;
+grant execute on function public.admin_update_citizen_passport(uuid,text,integer) to authenticated;
 grant execute on function public.admin_list_nationality_change_requests() to authenticated;
 grant execute on function public.get_country_citizens(uuid,text) to authenticated;
 
