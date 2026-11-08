@@ -729,7 +729,7 @@ begin
   update public.national_treasuries set opening_balance=p_amount,opening_balance_set_at=now(),updated_at=now() where country_id=p_country_id;
   perform public.economy_audit(p_country_id,'initialize','national_treasury',t.id,to_jsonb(t),jsonb_build_object('opening_balance',p_amount));
 end;
-$;
+$$;
 
 create or replace function public.set_treasury_public_visibility(p_country_id uuid,p_visible boolean)
 returns void language plpgsql security definer set search_path=public,auth as $$
