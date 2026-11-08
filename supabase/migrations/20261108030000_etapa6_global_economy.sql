@@ -647,7 +647,8 @@ begin
           select cur.country_id from (
             select distinct on (country_id) country_id,total_value,period_start,period_end
             from public.economic_gdp_records where status in ('confirmed','revised') order by country_id,period_end desc
-          ) cur join public.economic_gdp_records prev on prev.country_id=cur.country_id
+          ) cur join public.countries active_country on active_country.id=cur.country_id and active_country.is_active
+          join public.economic_gdp_records prev on prev.country_id=cur.country_id
             and prev.status in ('confirmed','revised') and prev.period_end=cur.period_start-1
             and (prev.period_end-prev.period_start)=(cur.period_end-cur.period_start)
           where prev.total_value>0 and cur.total_value<prev.total_value
@@ -656,11 +657,12 @@ begin
         'global_currency_code',case when public.is_global_currency_comparable()
           then (select min(t.currency_code) from public.national_treasuries t join public.countries c on c.id=t.country_id where c.is_active) else null end,
         'gdp_total',case when public.is_global_gdp_comparable() then (select sum(latest.total_value) from (
-          select distinct on (country_id) country_id,total_value
-          from public.economic_gdp_records where status in ('confirmed','revised')
-          order by country_id,period_end desc
+          select distinct on (r.country_id) r.country_id,r.total_value
+          from public.economic_gdp_records r join public.countries c on c.id=r.country_id and c.is_active
+          where r.status in ('confirmed','revised')
+          order by r.country_id,r.period_end desc
         ) latest) else null end,
-        'currency_mismatched_countries',(select count(*) from public.national_treasuries t
+        'currency_mismatched_countries',(select count(*) from public.national_treasuries t join public.countries c on c.id=t.country_id and c.is_active
           where (t.opening_balance>0 and t.opening_balance_currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))
             or exists(select 1 from public.treasury_ledger_entries x where x.country_id=t.country_id
               and x.currency_code_snapshot<>coalesce(nullif(t.currency_code,''),'UNCONFIGURED'))),
@@ -672,7 +674,7 @@ begin
           from public.treasury_ledger_entries x join public.countries c on c.id=x.country_id and c.is_active) else null end,
         'expenses_total',case when public.is_global_currency_comparable() then (select coalesce(sum(case when x.entry_type='expense' then x.amount
           when x.entry_type='reversal' and exists(select 1 from public.treasury_ledger_entries original where original.id=x.reverses_entry_id and original.entry_type='expense') then -x.amount else 0 end),0)
-          from public.treasury_ledger_entries x) else null end,
+          from public.treasury_ledger_entries x join public.countries c on c.id=x.country_id and c.is_active) else null end,
         'investment_total',case when public.is_global_currency_comparable() then (select coalesce(sum(approved_amount),0)
           from public.public_investment_projects p join public.countries c on c.id=p.country_id and c.is_active where p.status in ('approved','in_progress','completed')) else null end,
         'budget_approved_total',case when public.is_global_currency_comparable() then (select coalesce(sum(total_planned),0)
