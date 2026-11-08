@@ -4,7 +4,7 @@ import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YA
 import { supabase } from "@/lib/supabase";
 import "./economy-portal.css";
 
-type Row = Record<string, any>;
+type Row = any;
 type Props = { profile: Row; notify: (message: string) => void };
 type Tab = "overview" | "gdp" | "prices" | "tax" | "treasury" | "budget" | "investments" | "reports";
 const tabs: { id: Tab; label: string }[] = [
@@ -102,7 +102,9 @@ export function EconomyPortal({ profile, notify }: Props) {
 
   const exportCsv = (rows: Row[], filename: string) => {
     if (!rows.length) { notify("Não há registros para exportar."); return; }
-    const keys = Object.keys(rows[0]);
+    const first = rows[0];
+    if (!first) return;
+    const keys = Object.keys(first);
     const csv = [keys.join(";"), ...rows.map(row => keys.map(key => '"' + String(row[key] ?? "").replaceAll('"', '""') + '"').join(";"))].join("\n");
     const url = URL.createObjectURL(new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" }));
     const anchor = document.createElement("a"); anchor.href = url; anchor.download = filename; anchor.click(); URL.revokeObjectURL(url);
@@ -125,7 +127,7 @@ export function EconomyPortal({ profile, notify }: Props) {
       <>
         {tab === "overview" && <Overview dashboard={dashboard} countries={dashboard.countries ?? []} gdp={gdp}/>}
         {tab === "gdp" && <section className="eco-panel"><SectionTitle title="Produto Interno Bruto" subtitle="O PIB soma somente componentes de produção registrados. Tesouro e transferências não entram no cálculo." onExport={() => exportCsv(gdp,"world-economy-pib.csv")}/>
-          {canGDP && <form className="eco-form" onSubmit={e => { e.preventDefault(); const f = new FormData(e.currentTarget); const sectors = [["industrial","Produção industrial"],["mining","Produção mineral"],["agriculture","Produção agrícola"],["services","Serviços"],["commerce","Comércio"],["construction","Construção e infraestrutura"],["other","Outras atividades"]]; const components = sectors.map(([key,label]) => ({ sector: label, amount: Number(f.get(key) || 0) })).filter(x => x.amount > 0); void invoke("save_gdp_record",{p_country_id:selectedCountryId,p_period_start:f.get("start"),p_period_end:f.get("end"),p_components:components,p_source_description:f.get("source") || "Registro manual autorizado"},"Registro do PIB salvo."); e.currentTarget.reset(); }}>
+          {canGDP && <form className="eco-form" onSubmit={e => { e.preventDefault(); const f = new FormData(e.currentTarget); const sectors: [string,string][] = [["industrial","Produção industrial"],["mining","Produção mineral"],["agriculture","Produção agrícola"],["services","Serviços"],["commerce","Comércio"],["construction","Construção e infraestrutura"],["other","Outras atividades"]]; const components = sectors.map(([key,label]) => ({ sector: label, amount: Number(f.get(key) || 0) })).filter(x => x.amount > 0); void invoke("save_gdp_record",{p_country_id:selectedCountryId,p_period_start:f.get("start"),p_period_end:f.get("end"),p_components:components,p_source_description:f.get("source") || "Registro manual autorizado"},"Registro do PIB salvo."); e.currentTarget.reset(); }}>
             <h3>Novo registro manual</h3><div className="eco-grid-2"><Field label="Início do período" name="start" type="date" required/><Field label="Fim do período" name="end" type="date" required/></div>
             <div className="eco-grid-2">{[["industrial","Produção industrial"],["mining","Produção mineral"],["agriculture","Produção agrícola"],["services","Serviços"],["commerce","Comércio"],["construction","Construção e infraestrutura"],["other","Outras atividades"]].map(([name,label])=><Field key={name} label={label+" (unidades monetárias)"} name={name} type="number" min="0" step="0.01" defaultValue="0"/>)}</div><Field label="Fonte / observação" name="source" placeholder="Registro manual do governo"/><button disabled={busy}>Salvar PIB calculado</button>
           </form>}
