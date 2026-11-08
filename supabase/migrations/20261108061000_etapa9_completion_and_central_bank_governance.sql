@@ -64,7 +64,7 @@ begin
  if exists(select 1 from public.central_banks where country_id=p_country_id and is_primary) then
   raise exception 'Este país já possui um Banco Central principal.';
  end if;
- if exists(select 1 from public.central_banks where bank_identifier=upper(trim(p_identifier))) then
+ if exists(select 1 from public.central_banks where institutional_identifier=upper(trim(p_identifier))) then
   raise exception 'Este identificador já pertence a um Banco Central existente.';
  end if;
  if p_proposed_governor_profile_id is not null and not exists(
@@ -210,8 +210,9 @@ begin
  if auth.uid() is null then raise exception 'Autenticação necessária.'; end if;
  if p_amount is null or p_amount<=0 or p_amount<>round(p_amount,6) or length(trim(coalesce(p_idempotency_key,'')))<12 then raise exception 'Valor ou chave de idempotência inválidos.'; end if;
  perform pg_advisory_xact_lock(hashtextextended(p_idempotency_key,0));
- select id into v_id from public.bank_transactions where idempotency_key=p_idempotency_key;
+ select id into v_id from public.bank_transactions where idempotency_key=p_idempotency_key and transaction_type='deposit';
  if v_id is not null then return v_id; end if;
+ if exists(select 1 from public.bank_transactions where idempotency_key=p_idempotency_key) then raise exception 'Chave de idempotência já utilizada por outra operação.'; end if;
  select * into a from public.bank_accounts where id=p_account_id for update;
  if not found or a.owner_profile_id<>auth.uid() or a.status<>'active' then raise exception 'Conta de destino inválida.'; end if;
  if not exists(select 1 from public.commercial_banks b where b.id=a.bank_id and b.status='active') then raise exception 'Banco indisponível.'; end if;
@@ -236,8 +237,9 @@ begin
  if auth.uid() is null then raise exception 'Autenticação necessária.'; end if;
  if p_amount is null or p_amount<=0 or length(trim(coalesce(p_idempotency_key,'')))<12 then raise exception 'Valor ou chave de idempotência inválidos.'; end if;
  perform pg_advisory_xact_lock(hashtextextended(p_idempotency_key,0));
- select id into v_id from public.bank_transactions where idempotency_key=p_idempotency_key;
+ select id into v_id from public.bank_transactions where idempotency_key=p_idempotency_key and transaction_type='withdrawal';
  if v_id is not null then return v_id; end if;
+ if exists(select 1 from public.bank_transactions where idempotency_key=p_idempotency_key) then raise exception 'Chave de idempotência já utilizada por outra operação.'; end if;
  select * into a from public.bank_accounts where id=p_account_id for update;
  if not found or a.owner_profile_id<>auth.uid() or a.status<>'active' then raise exception 'Conta de origem inválida.'; end if;
  if not exists(select 1 from public.commercial_banks b where b.id=a.bank_id and b.status='active') then raise exception 'Banco indisponível.'; end if;
@@ -278,6 +280,7 @@ begin
  perform pg_advisory_xact_lock(hashtextextended(p_idempotency_key,0));
  select id into v_id from public.bank_transfers where idempotency_key=p_idempotency_key;
  if v_id is not null then return v_id; end if;
+ if exists(select 1 from public.bank_transactions where idempotency_key=p_idempotency_key) then raise exception 'Chave de idempotência já utilizada por outra operação.'; end if;
  if p_from_account=p_to_account then raise exception 'A origem e o destino devem ser contas diferentes.'; end if;
  perform 1 from public.bank_accounts where id in (p_from_account,p_to_account) order by id for update;
  select * into a from public.bank_accounts where id=p_from_account;
@@ -523,7 +526,8 @@ declare ins public.loan_installments%rowtype; l public.bank_loans%rowtype; a pub
 begin
  if auth.uid() is null or length(trim(coalesce(p_idempotency_key,'')))<12 then raise exception 'Autenticação ou chave de idempotência inválida.'; end if;
  perform pg_advisory_xact_lock(hashtextextended(p_idempotency_key,0));
- if exists(select 1 from public.bank_transactions where idempotency_key=p_idempotency_key) then return; end if;
+ if exists(select 1 from public.bank_transactions where idempotency_key=p_idempotency_key and transaction_type='loan_payment') then return; end if;
+ if exists(select 1 from public.bank_transactions where idempotency_key=p_idempotency_key) then raise exception 'Chave de idempotência já utilizada por outra operação.'; end if;
  select * into ins from public.loan_installments where id=p_installment_id for update;
  if not found then raise exception 'Parcela inexistente.'; end if;
  select * into l from public.bank_loans where id=ins.loan_id for update;
@@ -554,8 +558,9 @@ begin
  if auth.uid() is null or length(trim(coalesce(p_idempotency_key,'')))<12 then raise exception 'Autenticação ou chave de idempotência inválida.'; end if;
  if p_amount is null or p_amount<=0 or p_amount<>round(p_amount,2) then raise exception 'O valor do tributo deve ser positivo e compatível com duas casas decimais.'; end if;
  perform pg_advisory_xact_lock(hashtextextended(p_idempotency_key,0));
- select id into v_id from public.bank_transactions where idempotency_key=p_idempotency_key;
+ select id into v_id from public.bank_transactions where idempotency_key=p_idempotency_key and transaction_type='tax_payment';
  if v_id is not null then return v_id; end if;
+ if exists(select 1 from public.bank_transactions where idempotency_key=p_idempotency_key) then raise exception 'Chave de idempotência já utilizada por outra operação.'; end if;
  select * into o from public.tax_obligations where id=p_obligation_id and taxpayer_profile_id=auth.uid() for update;
  if not found or o.status not in ('open','partially_paid','overdue','pending_confirmation') then raise exception 'Obrigação tributária não encontrada ou indisponível.'; end if;
  select * into a from public.bank_accounts where id=p_account_id and owner_profile_id=auth.uid() for update;
