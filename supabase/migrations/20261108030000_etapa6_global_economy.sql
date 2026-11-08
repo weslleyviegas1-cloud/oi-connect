@@ -95,7 +95,7 @@ drop policy if exists price_observation_history_read on public.economic_price_ob
 create policy price_observation_history_read on public.economic_price_observation_history for select to authenticated
 using (exists(select 1 from public.economic_price_observations o where o.id=observation_id
   and (public.is_world_admin() or public.is_country_president(o.country_id)
-    or public.has_government_permission(o.country_id,'economy.read',null,null))));
+    or public.has_economy_permission(o.country_id,'economy.read'))));
 revoke all on public.economic_price_observation_history from public,anon,authenticated;
 grant select on public.economic_price_observation_history to authenticated;
 
@@ -330,17 +330,18 @@ drop policy if exists treasury_read_scoped on public.national_treasuries;
 create policy treasury_read_scoped on public.national_treasuries for select to authenticated
 using (public.is_world_admin() or public.is_country_president(country_id)
   or public.has_economy_permission(country_id,'economy.read')
+  or public.has_economy_permission(country_id,'treasury.read')
   or (public.is_government_country_citizen(country_id) and public_balance_visible));
 drop policy if exists gdp_read_scoped on public.economic_gdp_records;
 create policy gdp_read_scoped on public.economic_gdp_records for select to authenticated
 using (public.is_world_admin() or public.is_country_president(country_id)
-  or public.has_government_permission(country_id,'economy.read',null,null)
+  or public.has_economy_permission(country_id,'economy.read')
   or (status='confirmed' and public.is_government_country_citizen(country_id)));
 drop policy if exists gdp_components_read_scoped on public.economic_gdp_components;
 create policy gdp_components_read_scoped on public.economic_gdp_components for select to authenticated
 using (exists(select 1 from public.economic_gdp_records r where r.id=gdp_record_id
   and (public.is_world_admin() or public.is_country_president(r.country_id)
-    or public.has_government_permission(r.country_id,'economy.read',null,null)
+    or public.has_economy_permission(r.country_id,'economy.read')
     or (r.status='confirmed' and public.is_government_country_citizen(r.country_id)))));
 drop policy if exists price_items_read_scoped on public.economic_price_items;
 create policy price_items_read_scoped on public.economic_price_items for select to authenticated
@@ -360,7 +361,7 @@ using (public.is_world_admin() or public.is_country_president(country_id)
 drop policy if exists tax_obligations_read_scoped on public.tax_obligations;
 create policy tax_obligations_read_scoped on public.tax_obligations for select to authenticated
 using (public.is_world_admin() or public.is_country_president(country_id)
-  or public.has_government_permission(country_id,'tax.read',null,null)
+  or public.has_economy_permission(country_id,'tax.read')
   or taxpayer_profile_id=auth.uid());
 drop policy if exists tax_collections_read_scoped on public.tax_collections;
 create policy tax_collections_read_scoped on public.tax_collections for select to authenticated
@@ -375,7 +376,7 @@ using (public.is_world_admin() or public.is_country_president(country_id)
 drop policy if exists budget_read_scoped on public.budget_plans;
 create policy budget_read_scoped on public.budget_plans for select to authenticated
 using (public.is_world_admin() or public.is_country_president(country_id)
-  or public.has_government_permission(country_id,'budget.read',null,null)
+  or public.has_economy_permission(country_id,'budget.read')
   or (status in ('approved','in_execution','closed') and public.is_government_country_citizen(country_id)));
 drop policy if exists allocation_read_scoped on public.budget_allocations;
 create policy allocation_read_scoped on public.budget_allocations for select to authenticated
