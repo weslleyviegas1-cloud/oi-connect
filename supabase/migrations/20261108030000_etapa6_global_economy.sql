@@ -522,16 +522,14 @@ drop policy if exists budget_read_scoped on public.budget_plans;
 create policy budget_read_scoped on public.budget_plans for select to authenticated
 using (public.is_world_admin() or public.is_country_president(country_id)
   or public.has_economy_permission(country_id,'budget.read') or created_by=auth.uid()
-  or exists(select 1 from public.budget_allocations a where a.budget_plan_id=budget_plans.id
-    and public.has_economy_read_scope_permission(country_id,'budget.read',a.ministry_id))
   or (status in ('approved','in_execution','closed') and public.is_government_country_citizen(country_id)));
 drop policy if exists allocation_read_scoped on public.budget_allocations;
 create policy allocation_read_scoped on public.budget_allocations for select to authenticated
-using (exists(select 1 from public.budget_plans b where b.id=budget_plan_id
-  and (public.is_world_admin() or public.is_country_president(b.country_id)
-    or public.has_economy_permission(b.country_id,'budget.read')
-    or public.has_economy_read_scope_permission(b.country_id,'budget.read',budget_allocations.ministry_id)
-    or (b.status in ('approved','in_execution','closed') and public.is_government_country_citizen(b.country_id)))));
+using (public.is_world_admin() or public.is_country_president(country_id)
+  or public.has_economy_permission(country_id,'budget.read')
+  or public.has_economy_read_scope_permission(country_id,'budget.read',ministry_id)
+  or exists(select 1 from public.budget_plans b where b.id=budget_plan_id
+    and b.status in ('approved','in_execution','closed') and public.is_government_country_citizen(country_id)));
 drop policy if exists investment_read_scoped on public.public_investment_projects;
 create policy investment_read_scoped on public.public_investment_projects for select to authenticated
 using (public.is_world_admin() or public.is_country_president(country_id)
