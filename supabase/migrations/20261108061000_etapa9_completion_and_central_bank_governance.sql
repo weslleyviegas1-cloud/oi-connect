@@ -193,7 +193,7 @@ begin
   coalesce((select sum(balance) from public.bank_accounts where country_id=p.country_id and currency_id=v_currency),0)
  +coalesce((select sum(l.balance) from public.bank_liquidity l join public.commercial_banks b on b.id=l.bank_id where b.country_id=p.country_id and l.currency_id=v_currency),0)
  +coalesce((select sum(balance) from public.bank_cash_wallets where country_id=p.country_id and currency_id=v_currency),0)
- +coalesce((select sum(t.opening_balance+coalesce((select sum(e.signed_amount) from public.treasury_ledger_entries e where e.country_id=t.country_id and e.currency_code_snapshot=v_code),0)) from public.national_treasuries t where t.country_id=p.country_id and t.currency_code=v_code),0)
+ +coalesce((select greatest(sum(t.opening_balance+coalesce((select sum(e.signed_amount) from public.treasury_ledger_entries e where e.country_id=t.country_id and e.currency_code_snapshot=v_code),0)),0) from public.national_treasuries t where t.country_id=p.country_id and t.currency_code=v_code),0)
  into v_committed;
  if v_issued-v_pending-v_committed<p_amount then
   raise exception 'Oferta monetária disponível insuficiente após reservas de retiradas pendentes. Emissão líquida: %, retiradas pendentes: %, já distribuído ou depositado: %, solicitado: %.',v_issued,v_pending,v_committed,p_amount;
