@@ -56,6 +56,7 @@ export function TravelDocumentPortal({ profile, notify }: { profile: Profile; no
       const [c,d,p,allp,pr,vt,va,a,t,i,e,b,f,ac]=await Promise.all([
         supabase.from("countries").select("id,name,flag,currency_code").eq("is_active",true).order("name"),
         supabase.from("citizen_documents").select("*").eq("profile_id",profile.id).order("created_at",{ascending:false}),
+        supabase.from("citizen_passports").select("*").eq("profile_id",profile.id).maybeSingle(),
         supabase.from("citizen_passports").select("*").order("created_at",{ascending:false}),
         supabase.from("passport_requests").select("*").order("created_at",{ascending:false}),
         supabase.from("visa_types").select("*,countries(name,flag)").eq("is_active",true),
@@ -67,7 +68,7 @@ export function TravelDocumentPortal({ profile, notify }: { profile: Profile; no
         supabase.from("border_rules").select("*").order("effective_from",{ascending:false}),\n        supabase.from("travel_fee_records").select("*").order("created_at",{ascending:false}),\n        supabase.from("bank_accounts").select("id,account_number,balance,country_id,currency_id,bank_id,currencies(internal_code,symbol),commercial_banks(name)").eq("owner_profile_id",profile.id).eq("status","active")
       ]);
       for(const x of [c,d,p,allp,pr,vt,va,a,t,i,e,b,f,ac]) if(x.error) throw x.error;
-      setCountries(c.data??[]);setDocuments(d.data??[]);setAllPassports((allp.data??[]).filter((x:Row)=>x.profile_id===profile.id || profile.role==="super_admin" || x.country_id===profile.country_id));setPassport((allp.data??[]).find((x:Row)=>x.profile_id===profile.id)??null);setPassportRequests(pr.data??[]);
+      setCountries(c.data??[]);setDocuments(d.data??[]);setAllPassports((allp.data??[]).filter((x:Row)=>x.profile_id===profile.id || profile.role==="super_admin" || x.country_id===profile.country_id));setPassport(p.data??null);setPassportRequests(pr.data??[]);
       setVisaTypes(vt.data??[]);setVisaApplications((va.data??[]).filter((x:Row)=>x.profile_id===profile.id || profile.role==="super_admin" || x.destination_country_id===profile.country_id));setAirports(a.data??[]);
       setTravels((t.data??[]).filter((x:Row)=>x.profile_id===profile.id || profile.role==="super_admin" || x.origin_country_id===profile.country_id || x.destination_country_id===profile.country_id));
       setImmigration((i.data??[]).filter((x:Row)=>x.profile_id===profile.id || profile.role==="super_admin" || x.destination_country_id===profile.country_id));setEmigration((e.data??[]).filter((x:Row)=>x.profile_id===profile.id || profile.role==="super_admin" || x.origin_country_id===profile.country_id));setRules(b.data??[]);setFees(f.data??[]);setAccounts(ac.data??[]);
