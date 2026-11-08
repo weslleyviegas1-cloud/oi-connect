@@ -179,7 +179,8 @@ create table if not exists public.budget_allocations (
   ministry_id uuid,
   planned_amount numeric(24,2) not null check (planned_amount >= 0),
   created_at timestamptz not null default now(),
-  unique(budget_plan_id,category,ministry_id)
+  unique(budget_plan_id,category,ministry_id),
+  foreign key (ministry_id,country_id) references public.ministries(id,country_id) on delete restrict
 );
 alter table public.treasury_ledger_entries
   drop constraint if exists treasury_ledger_budget_allocation_fk;
@@ -623,16 +624,19 @@ declare v_id uuid; v_total numeric(24,2); v_status text;
 begin
   if not public.can_manage_economy(p_country_id,'budget.manage') then raise exception 'Sem permissão para elaborar orçamento.'; end if;
   if p_period_start>p_period_end or jsonb_typeof(p_allocations)<>'array' or jsonb_array_length(p_allocations)=0 then raise exception 'Período ou alocações inválidos.'; end if;
-  if exists(select 1 from jsonb_to_recordset(p_allocations) as x(category text,planned_amount numeric)
+  if exists(select 1 from jsonb_to_recordset(p_allocations) as x(category text,planned_amount numeric,ministry_id uuid)
     where nullif(trim(category),'') is null or planned_amount is null or planned_amount<0) then raise exception 'Alocação inválida.'; end if;
-  select sum(planned_amount) into v_total from jsonb_to_recordset(p_allocations) as x(category text,planned_amount numeric);
+  if exists(select 1 from jsonb_to_recordset(p_allocations) as x(category text,planned_amount numeric,ministry_id uuid)
+    where ministry_id is not null and not exists(select 1 from public.ministries m where m.id=x.ministry_id and m.country_id=p_country_id)) then
+    raise exception 'Uma alocação referencia ministério de outro país.'; end if;
+  select sum(planned_amount) into v_total from jsonb_to_recordset(p_allocations) as x(category text,planned_amount numeric,ministry_id uuid);
   select case when require_global_budget_approval then 'awaiting_approval' else 'approved' end into v_status
   from public.national_treasuries where country_id=p_country_id;
   insert into public.budget_plans(country_id,name,period_start,period_end,status,total_planned,created_by)
   values(p_country_id,trim(p_name),p_period_start,p_period_end,v_status,v_total,auth.uid()) returning id into v_id;
-  insert into public.budget_allocations(budget_plan_id,country_id,category,planned_amount)
-  select v_id,p_country_id,x.category,x.planned_amount
-  from jsonb_to_recordset(p_allocations) as x(category text,planned_amount numeric);
+  insert into public.budget_allocations(budget_plan_id,country_id,category,planned_amount,ministry_id)
+  select v_id,p_country_id,x.category,x.planned_amount,x.ministry_id
+  from jsonb_to_recordset(p_allocations) as x(category text,planned_amount numeric,ministry_id uuid);
   perform public.economy_audit(p_country_id,'create','budget_plan',v_id,null,jsonb_build_object('total_planned',v_total));
   return v_id;
 end;
