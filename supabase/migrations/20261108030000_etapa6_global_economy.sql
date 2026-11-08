@@ -450,6 +450,10 @@ begin
           when x.entry_type='reversal' and exists(select 1 from public.treasury_ledger_entries original where original.id=x.reverses_entry_id and original.entry_type='expense') then -x.amount else 0 end),0)
           from public.treasury_ledger_entries x),
         'investment_total',(select coalesce(sum(approved_amount),0) from public.public_investment_projects where status in ('approved','in_progress','completed')),
+        'budget_approved_total',(select coalesce(sum(total_planned),0) from public.budget_plans where status in ('approved','in_execution')),
+        'budget_executed_total',(select coalesce(sum(case when x.entry_type='expense' then x.amount
+          when x.entry_type='reversal' and exists(select 1 from public.treasury_ledger_entries original where original.id=x.reverses_entry_id and original.entry_type='expense') then -x.amount else 0 end),0)
+          from public.treasury_ledger_entries x where x.budget_allocation_id is not null),
         'tax_revenue_total',(select coalesce(sum(amount),0) from public.tax_collections),
         'inflation_average',(select round(avg(country_index.inflation),2) from (
           select c.id,(select case when old_ipc>0 then ((new_ipc-old_ipc)/old_ipc)*100 end from (
@@ -516,6 +520,18 @@ begin
     'tax_collected',(select coalesce(sum(amount),0) from public.tax_collections where country_id=c.id),
     'tax_open',(select coalesce(sum(greatest(o.amount_due-coalesce((select sum(col.amount) from public.tax_collections col where col.obligation_id=o.id),0),0)),0) from public.tax_obligations o where o.country_id=c.id and o.status in ('open','pending_confirmation','partially_paid','overdue')),
     'budget_approved',(select coalesce(sum(total_planned),0) from public.budget_plans where country_id=c.id and status in ('approved','in_execution')),
+    'budget_executed',(select coalesce(sum(case when x.entry_type='expense' then x.amount
+      when x.entry_type='reversal' and exists(select 1 from public.treasury_ledger_entries original where original.id=x.reverses_entry_id and original.entry_type='expense') then -x.amount else 0 end),0)
+      from public.treasury_ledger_entries x where x.country_id=c.id and x.budget_allocation_id is not null),
+    'budget_available',(select coalesce(sum(total_planned),0) from public.budget_plans where country_id=c.id and status in ('approved','in_execution'))
+      -(select coalesce(sum(case when x.entry_type='expense' then x.amount
+        when x.entry_type='reversal' and exists(select 1 from public.treasury_ledger_entries original where original.id=x.reverses_entry_id and original.entry_type='expense') then -x.amount else 0 end),0)
+        from public.treasury_ledger_entries x where x.country_id=c.id and x.budget_allocation_id is not null),
+    'budget_execution_pct',(select case when sum(total_planned)>0 then round((
+      (select coalesce(sum(case when x.entry_type='expense' then x.amount
+        when x.entry_type='reversal' and exists(select 1 from public.treasury_ledger_entries original where original.id=x.reverses_entry_id and original.entry_type='expense') then -x.amount else 0 end),0)
+       from public.treasury_ledger_entries x where x.country_id=c.id and x.budget_allocation_id is not null)
+      /sum(total_planned))*100,2) end from public.budget_plans where country_id=c.id and status in ('approved','in_execution')),
     'investment_approved',(select coalesce(sum(approved_amount),0) from public.public_investment_projects where country_id=c.id and status in ('approved','in_progress','completed')),
     'inflation',(select case when old_ipc>0 then round(((new_ipc-old_ipc)/old_ipc)*100,2) end from (
       select reference_date,
