@@ -909,7 +909,7 @@ begin
  select internal_code into v_code from public.currencies where id=r.currency_id and status='active';
  if v_code is null or v_code<>(select currency_code from public.countries where id=c.country_id) then raise exception 'Moeda nacional mudou; concilie antes de constituir obrigação.'; end if;
  insert into public.tax_obligations(country_id,tax_rule_id,taxpayer_company_id,taxpayer_label,reference_period,calculation_base,applied_rate,amount_due,currency_code_snapshot,due_date,status,created_by)
- values(c.country_id,v_rule.id,c.trade_name, r.reference_period,r.tax_base,r.applied_rate,r.amount_due,v_code,p_due_date,'open',auth.uid())
+ values(c.country_id,v_rule.id,c.id,c.trade_name,r.reference_period,r.tax_base,r.applied_rate,r.amount_due,v_code,p_due_date,'open',auth.uid())
  returning id into v_id;
  update public.company_tax_records set tax_obligation_id=v_id,status='validated',validated_by=auth.uid(),validated_at=now() where id=r.id;
  perform public.company_audit(c.id,'company_tax_obligation_issued','company_tax_record',r.id,jsonb_build_object('tax_obligation_id',v_id,'amount',r.amount_due));
