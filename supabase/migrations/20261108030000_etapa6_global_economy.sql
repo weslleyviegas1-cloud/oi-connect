@@ -262,7 +262,7 @@ from public.countries c
 on conflict(country_id) do nothing;
 
 create or replace function public.ensure_national_treasury_for_country()
-returns trigger language plpgsql security definer set search_path=public as $
+returns trigger language plpgsql security definer set search_path=public as $$
 begin
   insert into public.national_treasuries(country_id,currency_code,currency_label)
   values(new.id,new.currency_code,case when nullif(trim(new.currency_code),'') is null
@@ -273,7 +273,7 @@ begin
     updated_at=now();
   return new;
 end;
-$;
+$$;
 drop trigger if exists countries_ensure_national_treasury on public.countries;
 create trigger countries_ensure_national_treasury after insert or update of currency_code on public.countries
 for each row execute function public.ensure_national_treasury_for_country();
@@ -716,7 +716,7 @@ end;
 $$;
 
 create or replace function public.set_treasury_opening_balance(p_country_id uuid,p_amount numeric)
-returns void language plpgsql security definer set search_path=public,auth as $
+returns void language plpgsql security definer set search_path=public,auth as $$
 declare t public.national_treasuries%rowtype;
 begin
   if not public.is_world_admin() then raise exception 'Somente o Super Admin pode definir o saldo inicial.'; end if;
