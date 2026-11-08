@@ -509,10 +509,10 @@ declare c public.employment_contracts%rowtype; v_id uuid;
 begin
  if not public.is_company_member(p_company_id,'payroll.manage') then raise exception 'Sem permissão para preparar folha salarial.'; end if;
  select * into c from public.employment_contracts where id=p_contract_id and company_id=p_company_id and status='active';
- if not found or p_gross is null or p_gross<0 or p_gross<>round(p_gross,6) or p_deductions is null or p_deductions<0 or p_deductions>p_gross or p_deductions<>round(p_deductions,6) or length(trim(coalesce(p_period,'')))<4 or p_tax_status not in ('not_configured','reviewed','exempt','pending') then raise exception 'Dados de folha inválidos.'; end if;
+ if not found or p_gross is null or p_gross<0 or p_gross<>round(p_gross,6) or p_deductions is null or p_deductions<0 or p_deductions>p_gross or p_deductions<>round(p_deductions,6) or length(trim(coalesce(p_period,'')))<4 or p_tax_status<>'not_configured' then raise exception 'Dados de folha inválidos.'; end if;
  if p_gross<>c.salary_amount then raise exception 'O valor bruto deve corresponder ao salário vigente no contrato. Atualize o contrato formalmente antes de gerar a folha.'; end if;
  insert into public.payroll_records(company_id,contract_id,employee_profile_id,reference_period,gross_amount,deductions_amount,currency_id,tax_calculation_status,created_by)
- values(p_company_id,c.id,c.employee_profile_id,trim(p_period),p_gross,p_deductions,c.currency_id,p_tax_status,auth.uid()) returning id into v_id;
+ values(p_company_id,c.id,c.employee_profile_id,trim(p_period),p_gross,p_deductions,c.currency_id,'not_configured',auth.uid()) returning id into v_id;
  perform public.company_audit(p_company_id,'payroll_created','payroll',v_id,jsonb_build_object('period',p_period,'gross',p_gross,'deductions',p_deductions)); return v_id;
 end;
 $function$;
@@ -852,6 +852,7 @@ begin
  else
   if p_exempt then raise exception 'Há regra tributária de folha ativa; não é permitido marcar isenção.'; end if;
   v_deduction:=round(p.gross_amount*v_total_rate/100,2);
+  if v_total_rate>100 then raise exception 'As alíquotas ativas de folha excedem 100%.'; end if;
   if v_deduction>p.gross_amount then raise exception 'As alíquotas de folha excedem o salário bruto.'; end if;
   update public.payroll_records set deductions_amount=v_deduction,tax_calculation_status='reviewed' where id=p.id;
   for r in select * from public.tax_rules where country_id=(select country_id from public.companies where id=p.company_id)
