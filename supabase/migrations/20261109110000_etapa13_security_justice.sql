@@ -175,7 +175,7 @@ returns boolean language sql stable security definer set search_path=public,auth
 $$;
 create or replace function public.is_fine_police_member(p_fine uuid)
 returns boolean language sql stable security definer set search_path=public,auth as $$
- select exists(select 1 from public.administrative_fines f join public.police_members m on m.department_id=f.issuing_department_id where f.id=p_fine and m.profile_id=auth.uid() and m.status='active' and 'police.fine'=any(m.permissions))
+ select exists(select 1 from public.administrative_fines f join public.police_members m on m.department_id=f.issuing_department_id join public.security_departments d on d.id=m.department_id where f.id=p_fine and m.profile_id=auth.uid() and m.status='active' and d.status='active' and 'police.fine'=any(m.permissions))
 $$;
 revoke all on function public.is_police_member_in_department(uuid),public.is_fine_police_member(uuid) from public,anon;
 grant execute on function public.is_police_member_in_department(uuid),public.is_fine_police_member(uuid) to authenticated;
@@ -429,7 +429,7 @@ declare v public.vehicles%rowtype; d uuid; x uuid; n text;
 begin
  select * into v from public.vehicles where id=p_vehicle;
  if not found or not exists(select 1 from public.police_members m where m.profile_id=auth.uid() and m.country_id=v.country_id and m.status='active' and 'police.traffic'=any(m.permissions)) then raise exception 'Consulta ou fiscalização não autorizada.'; end if;
- select m.department_id into d from public.police_members m join public.security_departments s on s.id=m.department_id where m.profile_id=auth.uid() and m.country_id=v.country_id and m.status='active' and s.status='active' limit 1;
+ select m.department_id into d from public.police_members m join public.security_departments s on s.id=m.department_id where m.profile_id=auth.uid() and m.country_id=v.country_id and m.status='active' and s.status='active' and 'police.traffic'=any(m.permissions) limit 1;
  n:='TR-'||upper(substr(replace(gen_random_uuid()::text,'-',''),1,12));
  insert into public.traffic_violations(violation_number,country_id,vehicle_id,responsible_profile_id,responsible_company_id,category,description,officer_profile_id,department_id)
  values(n,v.country_id,v.id,v.owner_profile_id,v.owner_company_id,trim(p_category),trim(p_description),auth.uid(),d) returning id into x;
