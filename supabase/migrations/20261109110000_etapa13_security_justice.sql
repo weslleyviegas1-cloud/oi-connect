@@ -28,11 +28,16 @@ create table if not exists public.police_occurrences(
 create table if not exists public.citizen_reports(
  id uuid primary key default gen_random_uuid(), protocol text not null unique, country_id uuid not null references public.countries(id),
  category text not null, location text, description text not null, involved_profile_ids uuid[] not null default '{}',
- is_anonymous boolean not null default false, reporter_profile_id uuid references public.profiles(id), submitted_by uuid references public.profiles(id),
+ is_anonymous boolean not null default false, reporter_profile_id uuid references public.profiles(id),
  assigned_department_id uuid references public.security_departments(id), status text not null default 'submitted'
  check(status in ('submitted','triaged','investigating','referred','dismissed','closed')),
  resolution_note text, created_at timestamptz not null default now(), updated_at timestamptz not null default now()
 );
+create table if not exists public.citizen_report_owners(
+ report_id uuid primary key references public.citizen_reports(id) on delete restrict, submitted_by uuid not null references public.profiles(id), created_at timestamptz not null default now()
+);
+alter table public.citizen_report_owners enable row level security;
+create policy citizen_report_owners_read on public.citizen_report_owners for select to authenticated using(submitted_by=auth.uid());
 create table if not exists public.investigations(
  id uuid primary key default gen_random_uuid(), investigation_number text not null unique, country_id uuid not null references public.countries(id),
  occurrence_id uuid references public.police_occurrences(id), report_id uuid references public.citizen_reports(id),
@@ -187,7 +192,7 @@ grant execute on function public.has_police_department_permission(uuid,text) to 
 create policy security_departments_read on public.security_departments for select to authenticated using(status='active' or public.is_world_admin() or public.is_country_president(country_id));
 create policy police_members_read on public.police_members for select to authenticated using(profile_id=auth.uid() or public.is_world_admin() or public.is_country_president(country_id) or public.is_police_member(country_id));
 create policy police_occurrences_read on public.police_occurrences for select to authenticated using(public.is_world_admin() or public.is_country_president(country_id) or public.has_police_department_permission(department_id,'police.read') or responsible_profile_id=auth.uid() or auth.uid()=any(involved_profile_ids));
-create policy citizen_reports_read on public.citizen_reports for select to authenticated using(submitted_by=auth.uid() or public.is_world_admin() or public.is_country_president(country_id) or (assigned_department_id is not null and public.has_police_department_permission(assigned_department_id,'police.investigate')));
+create policy citizen_reports_read on public.citizen_reports for select to authenticated using((not is_anonymous and reporter_profile_id=auth.uid()) or public.is_world_admin() or public.is_country_president(country_id) or (assigned_department_id is not null and public.has_police_department_permission(assigned_department_id,'police.investigate')));
 create policy investigations_read on public.investigations for select to authenticated using(public.is_world_admin() or public.is_country_president(country_id) or public.has_police_department_permission(department_id,'police.investigate'));
 create policy traffic_violations_read on public.traffic_violations for select to authenticated using(responsible_profile_id=auth.uid() or public.is_world_admin() or public.is_country_president(country_id) or public.has_police_department_permission(department_id,'police.traffic'));
 
@@ -311,6 +316,14 @@ begin
  else array['police.read','police.occurrence.create','police.traffic'] end,'active',auth.uid()) returning id into v;
  perform public.justice_audit(d.country_id,'police_member_appointed','police_member',v,jsonb_build_object('profile_id',p_profile,'badge',p_badge)); return v;
 end; $$;
+
+create or replace function public.citizen_get_my_reports()
+returns setof public.citizen_reports language sql stable security definer set search_path=public,auth as $
+ select r.* from public.citizen_reports r join public.citizen_report_owners o on o.report_id=r.id where o.submitted_by=auth.uid() order by r.created_at desc
+$;
+revoke all on function public.citizen_get_my_reports() from public,anon;
+grant execute on function public.citizen_get_my_reports() to authenticated;
+
 create or replace function public.police_register_occurrence(p_department uuid,p_category text,p_location text,p_description text,p_involved uuid[] default '{}',p_vehicle uuid default null,p_occurred timestamptz default now())
 returns uuid language plpgsql security definer set search_path=public,auth as $$
 declare d public.security_departments%rowtype; v uuid; n text;
@@ -333,8 +346,9 @@ begin
  if not found or p.country_id is distinct from p_country then raise exception 'Somente cidadão ativo do país pode enviar denúncia.'; end if;
  if length(trim(coalesce(p_description,'')))<15 then raise exception 'Descreva a situação com pelo menos 15 caracteres.'; end if;
  n:='DEN-'||upper(substr(replace(gen_random_uuid()::text,'-',''),1,12));
- insert into public.citizen_reports(protocol,country_id,category,location,description,is_anonymous,reporter_profile_id,submitted_by)
- values(n,p_country,trim(p_category),nullif(trim(p_location),''),trim(p_description),p_anonymous,case when p_anonymous then null else auth.uid() end,auth.uid()) returning id into v;
+ insert into public.citizen_reports(protocol,country_id,category,location,description,is_anonymous,reporter_profile_id)
+ values(n,p_country,trim(p_category),nullif(trim(p_location),''),trim(p_description),p_anonymous,case when p_anonymous then null else auth.uid() end) returning id into v;
+ insert into public.citizen_report_owners(report_id,submitted_by) values(v,auth.uid());
  perform public.justice_audit(p_country,'citizen_report_submitted','citizen_report',v,jsonb_build_object('anonymous',p_anonymous)); return v;
 end; $$;
 
@@ -582,6 +596,7 @@ begin
  perform public.justice_audit(f.country_id,'correctional_recorded','correctional_record',v,jsonb_build_object('type',p_type)); return v; end; $$;
 
 -- Exposição controlada: sem escrita direta nas tabelas de justiça.
+revoke all on public.citizen_report_owners from anon,authenticated;
 revoke all on public.security_departments,public.police_members,public.police_occurrences,public.citizen_reports,public.investigations,public.traffic_violations,public.administrative_fines,public.fine_appeals,public.judicial_institutions,public.judicial_members,public.court_cases,public.court_case_parties,public.court_hearings,public.court_decisions,public.court_appeals,public.correctional_facilities,public.correctional_records,public.justice_audit_logs from anon,authenticated;
 grant select on public.security_departments,public.police_members,public.police_occurrences,public.citizen_reports,public.investigations,public.traffic_violations,public.administrative_fines,public.fine_appeals,public.judicial_institutions,public.judicial_members,public.court_cases,public.court_case_parties,public.court_hearings,public.court_decisions,public.court_appeals,public.correctional_facilities,public.correctional_records,public.justice_audit_logs to authenticated;
 revoke all on function public.is_police_member(uuid,text),public.is_judicial_member(uuid,text[]),public.is_court_case_party(uuid),public.is_police_member_in_department(uuid),public.is_fine_police_member(uuid),public.has_police_department_permission(uuid,text),
@@ -595,7 +610,7 @@ revoke all on function public.is_police_member(uuid,text),public.is_judicial_mem
  public.police_update_member(uuid,text,text,text),public.police_add_investigation_note(uuid,text,text,text),public.judicial_review_fine_appeal(uuid,boolean,text),
  public.police_lookup_vehicle(text) from public,anon;
 
-grant execute on function public.police_update_member(uuid,text,text,text),public.police_add_investigation_note(uuid,text,text,text),public.judicial_review_fine_appeal(uuid,boolean,text),public.is_police_member(uuid,text),public.is_judicial_member(uuid,text[]),public.is_court_case_party(uuid),public.is_police_member_in_department(uuid),public.is_fine_police_member(uuid),public.is_fine_judicial_member(uuid),public.has_police_department_permission(uuid,text),
+grant execute on function public.police_update_member(uuid,text,text,text),public.police_add_investigation_note(uuid,text,text,text),public.judicial_review_fine_appeal(uuid,boolean,text),public.is_police_member(uuid,text),public.is_judicial_member(uuid,text[]),public.is_court_case_party(uuid),public.is_police_member_in_department(uuid),public.is_fine_police_member(uuid),public.is_fine_judicial_member(uuid),public.has_police_department_permission(uuid,text),public.citizen_get_my_reports(),
  public.judicial_create_facility(uuid,text,text,integer),public.security_create_department(uuid,text,text,text),public.security_appoint_officer(uuid,uuid,text,text,integer),
  public.police_lookup_vehicle(text),public.police_register_occurrence(uuid,text,text,text,uuid[],uuid,timestamptz),public.citizen_submit_report(uuid,text,text,text,boolean),
  public.police_open_investigation(uuid,text,text,uuid[]),public.police_investigate_report(uuid,text,text,uuid[]),public.police_refer_investigation(uuid,text),public.police_close_investigation(uuid,text),public.traffic_record_violation(uuid,text,text),public.traffic_issue_fine(uuid,numeric,date,text),
