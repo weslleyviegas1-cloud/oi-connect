@@ -203,7 +203,7 @@ create policy court_cases_read on public.court_cases for select to authenticated
 create policy court_parties_read on public.court_case_parties for select to authenticated using(profile_id=auth.uid() or exists(select 1 from public.court_cases c where c.id=case_id and (public.is_world_admin() or public.is_country_president(c.country_id) or public.is_judicial_member(c.country_id))));
 create policy court_hearings_read on public.court_hearings for select to authenticated using(exists(select 1 from public.court_cases c where c.id=case_id and (public.is_world_admin() or public.is_country_president(c.country_id) or public.is_judicial_member(c.country_id) or public.is_court_case_party(c.id))));
 create policy court_decisions_read on public.court_decisions for select to authenticated using(exists(select 1 from public.court_cases c where c.id=case_id and (public.is_world_admin() or public.is_country_president(c.country_id) or public.is_judicial_member(c.country_id) or exists(select 1 from public.court_case_parties p where p.case_id=c.id and p.profile_id=auth.uid()))));
-create policy court_appeals_read on public.court_appeals for select to authenticated using(appellant_profile_id=auth.uid() or exists(select 1 from public.court_cases c where c.id=case_id and (public.is_world_admin() or public.is_country_president(c.country_id) or public.is_judicial_member(c.country_id))));
+create policy court_appeals_read on public.court_appeals for select to authenticated using(appellant_profile_id=auth.uid() or public.is_court_case_party(case_id) or exists(select 1 from public.court_cases c where c.id=case_id and (public.is_world_admin() or public.is_country_president(c.country_id) or public.is_judicial_member(c.country_id))));
 create policy correctional_facilities_read on public.correctional_facilities for select to authenticated using(status='active' or public.is_world_admin() or public.is_country_president(country_id) or public.is_judicial_member(country_id,array['judge','administrator']));
 create policy correctional_records_read on public.correctional_records for select to authenticated using(profile_id=auth.uid() or public.is_world_admin() or public.is_country_president(country_id) or public.is_judicial_member(country_id,array['judge','administrator']));
 create policy justice_audit_read on public.justice_audit_logs for select to authenticated using(public.is_world_admin() or (country_id is not null and public.is_country_president(country_id)));
@@ -322,6 +322,22 @@ begin
  values(n,p_country,trim(p_category),nullif(trim(p_location),''),trim(p_description),p_anonymous,case when p_anonymous then null else auth.uid() end,auth.uid()) returning id into v;
  perform public.justice_audit(p_country,'citizen_report_submitted','citizen_report',v,jsonb_build_object('anonymous',p_anonymous)); return v;
 end; $$;
+
+create or replace function public.police_investigate_report(p_report uuid,p_title text,p_summary text,p_subjects uuid[] default '{}')
+returns uuid language plpgsql security definer set search_path=public,auth as $
+declare r public.citizen_reports%rowtype; v uuid; n text;
+begin
+ select * into r from public.citizen_reports where id=p_report for update;
+ if not found or r.assigned_department_id is null or not (public.is_world_admin() or public.is_country_president(r.country_id) or public.is_police_member_in_department(r.assigned_department_id)) then raise exception 'Denúncia não atribuída ou acesso não autorizado.'; end if;
+ if r.status not in ('triaged','investigating') then raise exception 'A denúncia precisa ser triada antes da investigação.'; end if;
+ if exists(select 1 from unnest(coalesce(p_subjects,'{}'::uuid[])) as u(profile_id) where not exists(select 1 from public.profiles p where p.id=u.profile_id and p.country_id=r.country_id and p.registration_status='active')) then raise exception 'Pessoas investigadas devem pertencer ao país e possuir cadastro ativo.'; end if;
+ n:='INV-'||upper(substr(replace(gen_random_uuid()::text,'-',''),1,12));
+ insert into public.investigations(investigation_number,country_id,report_id,department_id,lead_profile_id,subject_profile_ids,title,summary,created_by)
+ values(n,r.country_id,r.id,r.assigned_department_id,auth.uid(),coalesce(p_subjects,'{}'),trim(p_title),trim(p_summary),auth.uid()) returning id into v;
+ update public.citizen_reports set status='investigating',updated_at=now() where id=r.id;
+ perform public.justice_audit(r.country_id,'report_investigation_opened','investigation',v,jsonb_build_object('report_id',r.id)); return v;
+end; $;
+
 create or replace function public.police_open_investigation(p_occurrence uuid,p_title text,p_summary text,p_subjects uuid[] default '{}')
 returns uuid language plpgsql security definer set search_path=public,auth as $$
 declare o public.police_occurrences%rowtype; v uuid; n text;
@@ -556,7 +572,7 @@ grant select on public.security_departments,public.police_members,public.police_
 revoke all on function public.is_police_member(uuid,text),public.is_judicial_member(uuid,text[]),public.is_court_case_party(uuid),public.is_police_member_in_department(uuid),public.is_fine_police_member(uuid),
  public.judicial_create_facility(uuid,text,text,integer),public.security_create_department(uuid,text,text,text),public.security_appoint_officer(uuid,uuid,text,text,integer),
  public.is_police_member_in_department(uuid),public.is_fine_police_member(uuid),public.police_register_occurrence(uuid,text,text,text,uuid[],uuid,timestamptz),public.citizen_submit_report(uuid,text,text,text,boolean),
- public.police_open_investigation(uuid,text,text,uuid[]),public.police_refer_investigation(uuid,text),public.police_close_investigation(uuid,text),public.traffic_record_violation(uuid,text,text),public.traffic_issue_fine(uuid,numeric,date,text),
+ public.police_open_investigation(uuid,text,text,uuid[]),public.police_investigate_report(uuid,text,text,uuid[]),public.police_refer_investigation(uuid,text),public.police_close_investigation(uuid,text),public.traffic_record_violation(uuid,text,text),public.traffic_issue_fine(uuid,numeric,date,text),
  public.citizen_appeal_fine(uuid,text),public.citizen_pay_fine(uuid,uuid,text),public.police_triage_report(uuid,uuid,text,text),
  public.judicial_create_institution(uuid,text,text),public.judicial_appoint_member(uuid,uuid,text,text),public.judicial_open_case(uuid,text,text,text,uuid,uuid,uuid),
  public.judicial_assign_judge(uuid,uuid),public.judicial_record_hearing(uuid,timestamptz,jsonb,text),public.judicial_publish_decision(uuid,text,text),
@@ -567,7 +583,7 @@ revoke all on function public.is_police_member(uuid,text),public.is_judicial_mem
 grant execute on function public.police_update_member(uuid,text,text,text),public.police_add_investigation_note(uuid,text,text,text),public.judicial_review_fine_appeal(uuid,boolean,text),public.is_police_member(uuid,text),public.is_judicial_member(uuid,text[]),public.is_court_case_party(uuid),public.is_police_member_in_department(uuid),public.is_fine_police_member(uuid),public.is_fine_judicial_member(uuid),
  public.judicial_create_facility(uuid,text,text,integer),public.security_create_department(uuid,text,text,text),public.security_appoint_officer(uuid,uuid,text,text,integer),
  public.police_lookup_vehicle(text),public.police_register_occurrence(uuid,text,text,text,uuid[],uuid,timestamptz),public.citizen_submit_report(uuid,text,text,text,boolean),
- public.police_open_investigation(uuid,text,text,uuid[]),public.police_refer_investigation(uuid,text),public.police_close_investigation(uuid,text),public.traffic_record_violation(uuid,text,text),public.traffic_issue_fine(uuid,numeric,date,text),
+ public.police_open_investigation(uuid,text,text,uuid[]),public.police_investigate_report(uuid,text,text,uuid[]),public.police_refer_investigation(uuid,text),public.police_close_investigation(uuid,text),public.traffic_record_violation(uuid,text,text),public.traffic_issue_fine(uuid,numeric,date,text),
  public.citizen_appeal_fine(uuid,text),public.citizen_pay_fine(uuid,uuid,text),public.police_triage_report(uuid,uuid,text,text),public.judicial_create_institution(uuid,text,text),public.judicial_appoint_member(uuid,uuid,text,text),
  public.judicial_open_case(uuid,text,text,text,uuid,uuid,uuid),public.judicial_assign_judge(uuid,uuid),public.judicial_record_hearing(uuid,timestamptz,jsonb,text),
  public.judicial_publish_decision(uuid,text,text),public.judicial_review_case_appeal(uuid,boolean,text),public.citizen_appeal_decision(uuid,text),public.correctional_record_event(uuid,uuid,uuid,uuid,text,text) to authenticated;
