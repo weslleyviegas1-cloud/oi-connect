@@ -182,10 +182,10 @@ grant execute on function public.is_police_member_in_department(uuid),public.is_
 
 
 create or replace function public.has_police_department_permission(p_department uuid,p_permission text)
-returns boolean language sql stable security definer set search_path=public,auth as $
+returns boolean language sql stable security definer set search_path=public,auth as $$
  select exists(select 1 from public.police_members m join public.security_departments d on d.id=m.department_id
  where m.profile_id=auth.uid() and m.department_id=p_department and m.status='active' and d.status='active' and p_permission=any(m.permissions))
-$;
+$$;
 revoke all on function public.has_police_department_permission(uuid,text) from public,anon;
 grant execute on function public.has_police_department_permission(uuid,text) to authenticated;
 
@@ -318,9 +318,9 @@ begin
 end; $$;
 
 create or replace function public.citizen_get_my_reports()
-returns setof public.citizen_reports language sql stable security definer set search_path=public,auth as $
+returns setof public.citizen_reports language sql stable security definer set search_path=public,auth as $$
  select r.* from public.citizen_reports r join public.citizen_report_owners o on o.report_id=r.id where o.submitted_by=auth.uid() order by r.created_at desc
-$;
+$$;
 revoke all on function public.citizen_get_my_reports() from public,anon;
 grant execute on function public.citizen_get_my_reports() to authenticated;
 
