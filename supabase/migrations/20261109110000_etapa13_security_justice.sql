@@ -289,6 +289,7 @@ declare d public.security_departments%rowtype; v uuid; n text;
 begin
  select * into d from public.security_departments where id=p_department and status='active';
  if not found or not public.is_police_member(d.country_id) then raise exception 'Somente agente ativo pode registrar ocorrência.'; end if;
+ if exists(select 1 from unnest(coalesce(p_involved,'{}'::uuid[])) as u(profile_id) where not exists(select 1 from public.profiles p where p.id=u.profile_id and p.country_id=d.country_id and p.registration_status='active')) then raise exception 'Pessoas envolvidas devem pertencer ao país e possuir cadastro ativo.'; end if;
  if length(trim(p_description))<10 then raise exception 'Descrição insuficiente.'; end if;
  if p_vehicle is not null and not exists(select 1 from public.vehicles where id=p_vehicle and country_id=d.country_id) then raise exception 'Veículo não pertence ao país.'; end if;
  n:='OC-'||upper(substr(replace(gen_random_uuid()::text,'-',''),1,12));
@@ -314,7 +315,7 @@ declare o public.police_occurrences%rowtype; v uuid; n text;
 begin
  select * into o from public.police_occurrences where id=p_occurrence;
  if not found or not public.is_police_member(o.country_id) then raise exception 'Sem autorização para investigar.'; end if;
- if exists(select 1 from unnest(coalesce(p_subjects,'{}'::uuid[])) x where not exists(select 1 from public.profiles p where p.id=x and p.country_id=o.country_id and p.registration_status='active')) then raise exception 'Investigados devem pertencer ao país e possuir cadastro ativo.'; end if;
+ if exists(select 1 from unnest(coalesce(p_subjects,'{}'::uuid[])) as u(profile_id) where not exists(select 1 from public.profiles p where p.id=u.profile_id and p.country_id=o.country_id and p.registration_status='active')) then raise exception 'Investigados devem pertencer ao país e possuir cadastro ativo.'; end if;
  n:='INV-'||upper(substr(replace(gen_random_uuid()::text,'-',''),1,12));
  insert into public.investigations(investigation_number,country_id,occurrence_id,department_id,lead_profile_id,subject_profile_ids,title,summary,created_by)
  values(n,o.country_id,o.id,o.department_id,auth.uid(),coalesce(p_subjects,'{}'),trim(p_title),trim(p_summary),auth.uid()) returning id into v;
@@ -346,7 +347,6 @@ declare v public.vehicles%rowtype; d uuid; x uuid; n text;
 begin
  select * into v from public.vehicles where id=p_vehicle;
  if not found or not public.is_police_member(v.country_id) then raise exception 'Consulta ou fiscalização não autorizada.'; end if;
- if exists(select 1 from unnest(coalesce(p_involved,'{}'::uuid[])) x where not exists(select 1 from public.profiles p where p.id=x and p.country_id=v.country_id and p.registration_status='active')) then raise exception 'Pessoas envolvidas devem pertencer ao país e possuir cadastro ativo.'; end if;
  select m.department_id into d from public.police_members m join public.security_departments s on s.id=m.department_id where m.profile_id=auth.uid() and m.country_id=v.country_id and m.status='active' and s.status='active' limit 1;
  n:='TR-'||upper(substr(replace(gen_random_uuid()::text,'-',''),1,12));
  insert into public.traffic_violations(violation_number,country_id,vehicle_id,responsible_profile_id,responsible_company_id,category,description,officer_profile_id)
