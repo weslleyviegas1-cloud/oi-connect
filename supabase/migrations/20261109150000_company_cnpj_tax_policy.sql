@@ -74,50 +74,7 @@ begin
  if auth.uid() is null or not public.is_company_member(p_company_id,'tax.manage') then
   raise exception 'Sem permissão para gerar a obrigação do CNPJ.';
  end if;
- if p_period !~ '^[0-9]{4}-(0[1-9]|1[0-2])$' then raise exception 'Período inválido. Use AAAA-MM.'; end if;
- perform pg_advisory_xact_lock(hashtextextended(p_company_id::text||':'||p_period,0));
- select * into c from public.companies where id=p_company_id and status='active' for update;
- if not found then raise exception 'Empresa não está ativa.'; end if;
- select * into p from public.company_registration_tax_policies where country_id=c.country_id and is_active;
- if not found then raise exception 'O Presidente ainda não configurou a taxa de CNPJ deste país.'; end if;
- if exists(select 1 from public.company_tax_records where company_id=c.id and reference_period=p_period and description='Taxa mensal de CNPJ') then
-  select id into v_record from public.company_tax_records where company_id=c.id and reference_period=p_period and description='Taxa mensal de CNPJ';
-  return v_record;
- end if;
- select * into v_rule from public.tax_rules where id=p.tax_rule_id and status='active';
- if not found then raise exception 'Regra fiscal nacional indisponível.'; end if;
- select internal_code into v_code from public.currencies where id=p.currency_id and status='active';
- if v_code is null or v_code<>(select currency_code from public.countries where id=c.country_id) then
-  raise exception 'A moeda da política não corresponde à moeda nacional vigente.';
- end if;
- v_base:=round(coalesce(c.declared_capital,0),2);
- v_amount:=case when p.billing_mode='fixed' then p.fixed_amount else round(v_base*p.rate/100,2) end;
- if v_amount<=0 then raise exception 'A taxa calculada é zero; não há obrigação a gerar.'; end if;
- v_due:=(make_date(split_part(p_period,'-',1)::int,split_part(p_period,'-',2)::int,1)+interval '1 month - 1 day')::date;
- v_due:=least(v_due,make_date(split_part(p_period,'-',1)::int,split_part(p_period,'-',2)::int,p.due_day));
- insert into public.tax_obligations(country_id,tax_rule_id,taxpayer_company_id,taxpayer_label,reference_period,
-  calculation_base,applied_rate,amount_due,currency_code_snapshot,due_date,status,created_by)
- values(c.country_id,v_rule.id,c.id,coalesce(nullif(c.trade_name,''),c.legal_name),p_period,
-  v_base,case when p.billing_mode='fixed' then 0 else p.rate end,v_amount,v_code,v_due,'open',auth.uid())
- returning id into v_obligation;
- insert into public.company_tax_records(company_id,tax_rule_id,tax_obligation_id,description,reference_period,
-  tax_base,applied_rate,amount_due,currency_id,status,validated_by,validated_at,created_by)
- values(c.id,v_rule.id,v_obligation,'Taxa mensal de CNPJ',p_period,v_base,
-  case when p.billing_mode='fixed' then 0 else p.rate end,v_amount,p.currency_id,'validated',auth.uid(),now(),auth.uid())
- returning id into v_record;
- perform public.company_audit(c.id,'cnpj_monthly_tax_generated','company_tax_record',v_record,
-  jsonb_build_object('period',p_period,'mode',p.billing_mode,'amount',v_amount,'currency',v_code,'due_date',v_due));
- return v_record;
-end;
-$function$;
-
-revoke all on function public.president_set_company_registration_tax_policy(uuid,text,numeric,numeric,uuid,integer,boolean) from public,anon;
-grant execute on function public.president_set_company_registration_tax_policy(uuid,text,numeric,numeric,uuid,integer,boolean) to authenticated;
-revoke all on function public.company_generate_cnpj_tax_obligation(uuid,text) from public,anon;
-grant execute on function public.company_generate_cnpj_tax_obligation(uuid,text) to authenticated;
-
-commit;
- then raise exception 'Período inválido. Use AAAA-MM.'; end if;
+ if length(p_period) <> 7 or substring(p_period,5,1) <> '-' or substring(p_period,1,4) not between '0001' and '9999' or substring(p_period,6,2) not in ('01','02','03','04','05','06','07','08','09','10','11','12') then raise exception 'Período inválido. Use AAAA-MM.'; end if;
  perform pg_advisory_xact_lock(hashtextextended(p_company_id::text||':'||p_period,0));
  select * into c from public.companies where id=p_company_id and status='active' for update;
  if not found then raise exception 'Empresa não está ativa.'; end if;
