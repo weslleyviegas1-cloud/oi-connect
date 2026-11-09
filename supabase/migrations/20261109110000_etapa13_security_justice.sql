@@ -179,6 +179,17 @@ create policy correctional_facilities_read on public.correctional_facilities for
 create policy correctional_records_read on public.correctional_records for select to authenticated using(profile_id=auth.uid() or public.is_world_admin() or public.is_country_president(country_id) or public.is_judicial_member(country_id,array['judge','administrator']));
 create policy justice_audit_read on public.justice_audit_logs for select to authenticated using(public.is_world_admin() or (country_id is not null and public.is_country_president(country_id)));
 
+
+revoke all on function public.justice_audit(uuid,text,text,uuid,jsonb) from public,anon,authenticated;
+create or replace function public.judicial_create_facility(p_country uuid,p_name text,p_identifier text,p_capacity integer)
+returns uuid language plpgsql security definer set search_path=public,auth as $
+declare v uuid;
+begin
+ if not (public.is_world_admin() or public.is_country_president(p_country) or public.is_judicial_member(p_country,array['administrator'])) then raise exception 'Sem permissão para cadastrar unidade.'; end if;
+ insert into public.correctional_facilities(country_id,name,facility_identifier,administrative_capacity,status,created_by)
+ values(p_country,trim(p_name),upper(trim(p_identifier)),p_capacity,'active',auth.uid()) returning id into v;
+ perform public.justice_audit(p_country,'correctional_facility_created','correctional_facility',v,'{}'); return v;
+end; $;
 create or replace function public.security_create_department(p_country uuid,p_name text,p_type text,p_description text default null)
 returns uuid language plpgsql security definer set search_path=public,auth as $$
 declare v uuid;
@@ -390,7 +401,7 @@ begin
 revoke all on public.security_departments,public.police_members,public.police_occurrences,public.citizen_reports,public.investigations,public.traffic_violations,public.administrative_fines,public.fine_appeals,public.judicial_institutions,public.judicial_members,public.court_cases,public.court_case_parties,public.court_hearings,public.court_decisions,public.court_appeals,public.correctional_facilities,public.correctional_records,public.justice_audit_logs from anon,authenticated;
 grant select on public.security_departments,public.police_members,public.police_occurrences,public.citizen_reports,public.investigations,public.traffic_violations,public.administrative_fines,public.fine_appeals,public.judicial_institutions,public.judicial_members,public.court_cases,public.court_case_parties,public.court_hearings,public.court_decisions,public.court_appeals,public.correctional_facilities,public.correctional_records,public.justice_audit_logs to authenticated;
 grant execute on function public.is_police_member(uuid,text),public.is_judicial_member(uuid,text[]),
- public.security_create_department(uuid,text,text,text),public.security_appoint_officer(uuid,uuid,text,text,integer),
+ public.judicial_create_facility(uuid,text,text,integer),public.security_create_department(uuid,text,text,text),public.security_appoint_officer(uuid,uuid,text,text,integer),
  public.police_register_occurrence(uuid,text,text,text,uuid[],uuid,timestamptz),public.citizen_submit_report(uuid,text,text,text,boolean),
  public.police_open_investigation(uuid,text,text,uuid[]),public.traffic_record_violation(uuid,text,text),public.traffic_issue_fine(uuid,numeric,date,text),
  public.citizen_appeal_fine(uuid,text),public.citizen_pay_fine(uuid,uuid,text),public.police_triage_report(uuid,uuid,text,text),public.judicial_create_institution(uuid,text,text),public.judicial_appoint_member(uuid,uuid,text,text),
