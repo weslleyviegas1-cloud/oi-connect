@@ -58,6 +58,8 @@ begin
  insert into public.commercial_banks(country_id,name,bank_identifier,bank_type,owner_description,logo_url,director_profile_id,created_by,company_id,status)
  values(c.country_id,trim(p_name),upper(trim(p_identifier)),'private',coalesce(c.trade_name,c.legal_name),nullif(trim(p_logo_url),''),auth.uid(),auth.uid(),c.id,'pending')
  returning id into v_id;
+ insert into public.bank_members(bank_id,profile_id,position,permissions,status,appointed_by)
+ values(v_id,auth.uid(),'Diretor fundador',array['bank.manage','staff.manage','account.read','transaction.read','loan.review','loan.read','audit.read'],'active',auth.uid());
  perform public.bank_audit(v_id,'bank_requested_by_company','commercial_bank',v_id,jsonb_build_object('company_id',c.id,'company_identifier',c.company_identifier,'status','pending'));
  perform public.company_audit(c.id,'commercial_bank_requested','commercial_bank',v_id,jsonb_build_object('name',trim(p_name),'identifier',upper(trim(p_identifier))));
  return v_id;
