@@ -345,7 +345,7 @@ declare r public.citizen_reports%rowtype; d public.security_departments%rowtype;
 begin
  select * into r from public.citizen_reports where id=p_report for update;
  select * into d from public.security_departments where id=p_department and status='active';
- if r.id is null or d.id is null or r.country_id<>d.country_id or not public.is_police_member(r.country_id) then raise exception 'Denúncia ou departamento indisponível.'; end if;
+ if r.id is null or d.id is null or r.country_id<>d.country_id or not (public.is_world_admin() or public.is_country_president(r.country_id) or exists(select 1 from public.police_members m where m.profile_id=auth.uid() and m.department_id=d.id and m.status='active')) then raise exception 'Denúncia ou departamento indisponível.'; end if;
  if p_status not in ('triaged','investigating','referred','dismissed','closed') then raise exception 'Situação inválida.'; end if;
  update public.citizen_reports set assigned_department_id=d.id,status=p_status,resolution_note=nullif(trim(p_note),''),updated_at=now() where id=r.id;
  perform public.justice_audit(r.country_id,'report_triaged','citizen_report',r.id,jsonb_build_object('status',p_status,'department_id',d.id));
@@ -450,7 +450,8 @@ declare a public.court_appeals%rowtype; c public.court_cases%rowtype;
 begin
  select * into a from public.court_appeals where id=p_appeal for update;
  select * into c from public.court_cases where id=a.case_id;
- if a.id is null or not (public.is_world_admin() or public.is_country_president(c.country_id) or public.is_judicial_member(c.country_id,array['judge','administrator'])) then raise exception 'Sem autorização para analisar recurso.'; end if;
+ if a.id is null or not (public.is_world_admin() or public.is_judicial_member(c.country_id,array['judge','administrator'])) then raise exception 'Sem autorização para analisar recurso.'; end if;
+ if a.decision_id is not null and exists(select 1 from public.court_decisions d where d.id=a.decision_id and d.judge_profile_id=auth.uid()) then raise exception 'O juiz que proferiu a decisão original não pode julgar o próprio recurso.'; end if;
  update public.court_appeals set status=case when p_accept then 'accepted' else 'rejected' end,reviewed_by=auth.uid(),decision_note=trim(p_note) where id=a.id;
  perform public.justice_audit(c.country_id,'court_appeal_reviewed','court_appeal',a.id,jsonb_build_object('accepted',p_accept,'note',p_note));
 end; $;
@@ -469,6 +470,8 @@ begin
  select * into f from public.correctional_facilities where id=p_facility and status='active';
  select * into d from public.court_decisions where id=p_decision and case_id=p_case;
  if not found or f.id is null or f.country_id is distinct from (select country_id from public.court_cases where id=p_case) or not (public.is_world_admin() or public.is_country_president(f.country_id) or public.is_judicial_member(f.country_id,array['judge','administrator'])) then raise exception 'Registro penitenciário sem autorização ou decisão válida.'; end if;
+ if p_type='admission' and lower(d.outcome) !~ '(culp|conden|guilty|convict)' then raise exception 'Admissão exige decisão condenatória expressa.'; end if;
+ if p_type='release' and lower(d.outcome) !~ '(absolv|liber|acquit|release)' then raise exception 'Saída exige decisão de absolvição ou liberação expressa.'; end if;
  if length(trim(coalesce(p_basis,'')))<10 then raise exception 'Fundamento legal obrigatório.'; end if;
  insert into public.correctional_records(facility_id,country_id,profile_id,case_id,decision_id,record_type,recorded_by,legal_basis)
  values(f.id,f.country_id,p_profile,p_case,p_decision,p_type,auth.uid(),trim(p_basis)) returning id into v;
