@@ -167,23 +167,23 @@ create policy police_occurrences_read on public.police_occurrences for select to
 create policy citizen_reports_read on public.citizen_reports for select to authenticated using(submitted_by=auth.uid() or public.is_world_admin() or public.is_country_president(country_id) or (assigned_department_id is not null and public.is_police_member(country_id)));
 create policy investigations_read on public.investigations for select to authenticated using(public.is_world_admin() or public.is_country_president(country_id) or public.is_police_member(country_id) or auth.uid()=any(subject_profile_ids));
 create policy traffic_violations_read on public.traffic_violations for select to authenticated using(responsible_profile_id=auth.uid() or public.is_world_admin() or public.is_country_president(country_id) or public.is_police_member(country_id));
-create policy administrative_fines_read on public.administrative_fines for select to authenticated using(recipient_profile_id=auth.uid() or public.is_world_admin() or public.is_country_president(country_id) or public.is_police_member(country_id) or (recipient_company_id is not null and public.is_company_member(recipient_company_id,'finance.read')));
+create policy administrative_fines_read on public.administrative_fines for select to authenticated using(recipient_profile_id=auth.uid() or public.is_world_admin() or public.is_country_president(country_id) or public.is_police_member(country_id) or (recipient_company_id is not null and public.is_company_member(recipient_company_id,'finance.read')) or public.is_judicial_member(country_id,array['judge','administrator']));
 
 create or replace function public.is_fine_judicial_member(p_fine uuid)
-returns boolean language sql stable security definer set search_path=public,auth as $
+returns boolean language sql stable security definer set search_path=public,auth as $$
  select exists(select 1 from public.administrative_fines f where f.id=p_fine and public.is_judicial_member(f.country_id,array['judge','administrator']))
-$;
+$$;
 revoke all on function public.is_fine_judicial_member(uuid) from public,anon;
 grant execute on function public.is_fine_judicial_member(uuid) to authenticated;
 
-create policy fine_appeals_read on public.fine_appeals for select to authenticated using(appellant_profile_id=auth.uid() or public.is_world_admin() or exists(select 1 from public.administrative_fines f where f.id=fine_id and (public.is_country_president(f.country_id) or public.is_police_member(f.country_id) or public.is_fine_judicial_member(f.id))));
+create policy fine_appeals_read on public.fine_appeals for select to authenticated using(appellant_profile_id=auth.uid() or public.is_world_admin() or public.is_fine_judicial_member(fine_id) or exists(select 1 from public.administrative_fines f where f.id=fine_id and (public.is_country_president(f.country_id) or public.is_police_member(f.country_id))));
 create policy judicial_institutions_read on public.judicial_institutions for select to authenticated using(status='active' or public.is_world_admin() or public.is_country_president(country_id));
 create policy judicial_members_read on public.judicial_members for select to authenticated using(profile_id=auth.uid() or public.is_world_admin() or public.is_country_president(country_id) or public.is_judicial_member(country_id));
 
 create or replace function public.is_court_case_party(p_case uuid)
 returns boolean language sql stable security definer set search_path=public,auth as $$
  select exists(select 1 from public.court_case_parties where case_id=p_case and profile_id=auth.uid())
-$;
+$$;
 revoke all on function public.is_court_case_party(uuid) from public,anon;
 grant execute on function public.is_court_case_party(uuid) to authenticated;
 
