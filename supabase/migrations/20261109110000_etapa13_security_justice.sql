@@ -353,6 +353,30 @@ begin
  return result;
 end; $;
 
+
+create or replace function public.police_refer_investigation(p_investigation uuid,p_note text)
+returns void language plpgsql security definer set search_path=public,auth as $
+declare i public.investigations%rowtype;
+begin
+ select * into i from public.investigations where id=p_investigation for update;
+ if not found or not (public.is_world_admin() or public.is_country_president(i.country_id) or public.is_police_member_in_department(i.department_id)) then raise exception 'Sem autorização para encaminhar investigação.'; end if;
+ if i.status not in ('open','in_progress') or length(trim(coalesce(p_note,'')))<10 then raise exception 'Investigação ou justificativa inválida.'; end if;
+ update public.investigations set status='referred_to_court',closing_note=trim(p_note),updated_at=now() where id=i.id;
+ update public.police_occurrences set status='referred',updated_at=now() where id=i.occurrence_id;
+ perform public.justice_audit(i.country_id,'investigation_referred_to_court','investigation',i.id,jsonb_build_object('note',p_note));
+end; $;
+create or replace function public.police_close_investigation(p_investigation uuid,p_note text)
+returns void language plpgsql security definer set search_path=public,auth as $
+declare i public.investigations%rowtype;
+begin
+ select * into i from public.investigations where id=p_investigation for update;
+ if not found or not (public.is_world_admin() or public.is_country_president(i.country_id) or public.is_police_member_in_department(i.department_id)) then raise exception 'Sem autorização para encerrar investigação.'; end if;
+ if i.status not in ('open','in_progress') or length(trim(coalesce(p_note,'')))<10 then raise exception 'Investigação ou justificativa inválida.'; end if;
+ update public.investigations set status='closed',closing_note=trim(p_note),updated_at=now() where id=i.id;
+ update public.police_occurrences set status='closed',updated_at=now() where id=i.occurrence_id;
+ perform public.justice_audit(i.country_id,'investigation_closed','investigation',i.id,jsonb_build_object('note',p_note));
+end; $;
+
 create or replace function public.traffic_record_violation(p_vehicle uuid,p_category text,p_description text)
 returns uuid language plpgsql security definer set search_path=public,auth as $$
 declare v public.vehicles%rowtype; d uuid; x uuid; n text;
@@ -528,7 +552,7 @@ grant select on public.security_departments,public.police_members,public.police_
 revoke all on function public.is_police_member(uuid,text),public.is_judicial_member(uuid,text[]),public.is_court_case_party(uuid),public.is_police_member_in_department(uuid),public.is_fine_police_member(uuid),
  public.judicial_create_facility(uuid,text,text,integer),public.security_create_department(uuid,text,text,text),public.security_appoint_officer(uuid,uuid,text,text,integer),
  public.is_police_member_in_department(uuid),public.is_fine_police_member(uuid),public.police_register_occurrence(uuid,text,text,text,uuid[],uuid,timestamptz),public.citizen_submit_report(uuid,text,text,text,boolean),
- public.police_open_investigation(uuid,text,text,uuid[]),public.traffic_record_violation(uuid,text,text),public.traffic_issue_fine(uuid,numeric,date,text),
+ public.police_open_investigation(uuid,text,text,uuid[]),public.police_refer_investigation(uuid,text),public.police_close_investigation(uuid,text),public.traffic_record_violation(uuid,text,text),public.traffic_issue_fine(uuid,numeric,date,text),
  public.citizen_appeal_fine(uuid,text),public.citizen_pay_fine(uuid,uuid,text),public.police_triage_report(uuid,uuid,text,text),
  public.judicial_create_institution(uuid,text,text),public.judicial_appoint_member(uuid,uuid,text,text),public.judicial_open_case(uuid,text,text,text,uuid,uuid,uuid),
  public.judicial_assign_judge(uuid,uuid),public.judicial_record_hearing(uuid,timestamptz,jsonb,text),public.judicial_publish_decision(uuid,text,text),
@@ -539,7 +563,7 @@ revoke all on function public.is_police_member(uuid,text),public.is_judicial_mem
 grant execute on function public.police_update_member(uuid,text,text,text),public.police_add_investigation_note(uuid,text,text,text),public.judicial_review_fine_appeal(uuid,boolean,text),public.is_police_member(uuid,text),public.is_judicial_member(uuid,text[]),
  public.judicial_create_facility(uuid,text,text,integer),public.security_create_department(uuid,text,text,text),public.security_appoint_officer(uuid,uuid,text,text,integer),
  public.police_lookup_vehicle(text),public.police_register_occurrence(uuid,text,text,text,uuid[],uuid,timestamptz),public.citizen_submit_report(uuid,text,text,text,boolean),
- public.police_open_investigation(uuid,text,text,uuid[]),public.traffic_record_violation(uuid,text,text),public.traffic_issue_fine(uuid,numeric,date,text),
+ public.police_open_investigation(uuid,text,text,uuid[]),public.police_refer_investigation(uuid,text),public.police_close_investigation(uuid,text),public.traffic_record_violation(uuid,text,text),public.traffic_issue_fine(uuid,numeric,date,text),
  public.citizen_appeal_fine(uuid,text),public.citizen_pay_fine(uuid,uuid,text),public.police_triage_report(uuid,uuid,text,text),public.judicial_create_institution(uuid,text,text),public.judicial_appoint_member(uuid,uuid,text,text),
  public.judicial_open_case(uuid,text,text,text,uuid,uuid,uuid),public.judicial_assign_judge(uuid,uuid),public.judicial_record_hearing(uuid,timestamptz,jsonb,text),
  public.judicial_publish_decision(uuid,text,text),public.judicial_review_case_appeal(uuid,boolean,text),public.citizen_appeal_decision(uuid,text),public.correctional_record_event(uuid,uuid,uuid,uuid,text,text) to authenticated;
