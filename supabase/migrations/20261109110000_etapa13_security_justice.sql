@@ -259,7 +259,7 @@ create or replace function public.police_add_investigation_note(p_investigation 
 returns uuid language plpgsql security definer set search_path=public,auth as $$
 declare i public.investigations%rowtype; v uuid;
 begin select * into i from public.investigations where id=p_investigation for update;
- if not found or not public.is_police_member(i.country_id) or (i.lead_profile_id<>auth.uid() and not public.is_world_admin() and not public.is_country_president(i.country_id)) then raise exception 'Sem autorização para registrar informação.'; end if;
+ if not found or not (public.is_world_admin() or public.is_country_president(i.country_id) or public.is_police_member_in_department(i.department_id)) then raise exception 'Sem autorização para registrar informação.'; end if;
  insert into public.investigation_notes(investigation_id,author_profile_id,note_type,content,evidence_url)
  values(i.id,auth.uid(),p_type,trim(p_content),nullif(trim(p_evidence_url),'')) returning id into v;
  perform public.justice_audit(i.country_id,'investigation_note_added','investigation_note',v,'{}'); return v;
