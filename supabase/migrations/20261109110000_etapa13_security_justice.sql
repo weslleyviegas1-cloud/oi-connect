@@ -371,7 +371,7 @@ declare v public.traffic_violations%rowtype; m public.police_members%rowtype; c 
 begin
  select * into v from public.traffic_violations where id=p_violation for update;
  if not found or not (public.is_world_admin() or public.is_country_president(v.country_id) or v.officer_profile_id=auth.uid()) or p_amount<=0 then raise exception 'Infração ou valor inválido.'; end if;
- select * into m from public.police_members where profile_id=auth.uid() and country_id=v.country_id and status='active' limit 1;
+ select * into m from public.police_members where profile_id=auth.uid() and country_id=v.country_id and department_id=v.department_id and status='active' limit 1;
  select id into c from public.currencies where internal_code=(select currency_code from public.countries where id=v.country_id) and status='active';
  if c is null then raise exception 'Moeda nacional ativa não configurada.'; end if;
  code:='ML-'||upper(substr(replace(gen_random_uuid()::text,'-',''),1,12));
@@ -450,6 +450,9 @@ declare i public.judicial_institutions%rowtype; v uuid; n text;
 begin
  select * into i from public.judicial_institutions where id=p_institution and status='active';
  if not found or not (public.is_world_admin() or public.is_country_president(i.country_id) or public.is_judicial_member(i.country_id,array['judge','prosecutor','defender','lawyer','administrator']) or exists(select 1 from public.investigations x where x.id=p_investigation and x.lead_profile_id=auth.uid())) then raise exception 'Sem permissão para iniciar processo.'; end if;
+ if p_respondent is not null and not exists(select 1 from public.profiles where id=p_respondent and country_id=i.country_id and registration_status='active') then raise exception 'Parte requerida deve ser perfil ativo do mesmo país.'; end if;
+ if p_investigation is not null and not exists(select 1 from public.investigations where id=p_investigation and country_id=i.country_id and status='referred_to_court') then raise exception 'Investigação precisa estar formalmente encaminhada ao Judiciário do mesmo país.'; end if;
+ if p_fine is not null and not exists(select 1 from public.administrative_fines where id=p_fine and country_id=i.country_id) then raise exception 'Multa vinculada deve pertencer ao mesmo país.'; end if;
  n:='PROC-'||upper(substr(replace(gen_random_uuid()::text,'-',''),1,12));
  insert into public.court_cases(case_number,country_id,institution_id,investigation_id,fine_id,category,title,summary,claimant_profile_id,respondent_profile_id,opened_by)
  values(n,i.country_id,i.id,p_investigation,p_fine,p_category,trim(p_title),trim(p_summary),auth.uid(),p_respondent,auth.uid()) returning id into v;
@@ -511,7 +514,7 @@ declare f public.correctional_facilities%rowtype; d public.court_decisions%rowty
 begin
  select * into f from public.correctional_facilities where id=p_facility and status='active';
  select * into d from public.court_decisions where id=p_decision and case_id=p_case;
- if not found or f.id is null or f.country_id is distinct from (select country_id from public.court_cases where id=p_case) or not (public.is_world_admin() or public.is_country_president(f.country_id) or public.is_judicial_member(f.country_id,array['judge','administrator'])) then raise exception 'Registro penitenciário sem autorização ou decisão válida.'; end if;
+ if not found or f.id is null or f.country_id is distinct from (select country_id from public.court_cases where id=p_case) or not exists(select 1 from public.profiles where id=p_profile and country_id=f.country_id and registration_status='active') or not (public.is_world_admin() or public.is_country_president(f.country_id) or public.is_judicial_member(f.country_id,array['judge','administrator'])) then raise exception 'Registro penitenciário sem autorização, titular válido ou decisão válida.'; end if;
  if p_type='admission' and lower(d.outcome) !~ '(culp|conden|guilty|convict)' then raise exception 'Admissão exige decisão condenatória expressa.'; end if;
  if p_type='release' and lower(d.outcome) !~ '(absolv|liber|acquit|release)' then raise exception 'Saída exige decisão de absolvição ou liberação expressa.'; end if;
  if length(trim(coalesce(p_basis,'')))<10 then raise exception 'Fundamento legal obrigatório.'; end if;
