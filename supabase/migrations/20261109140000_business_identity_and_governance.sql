@@ -159,6 +159,7 @@ declare v jsonb;
 begin
  if auth.uid() is null then raise exception 'Autenticação necessária.'; end if;
  select jsonb_build_object(
+  'cpf_number',(select p.cpf_number from public.profiles p where p.id=auth.uid()),
   'cash_wallets',coalesce((select jsonb_agg(jsonb_build_object('id',w.id,'country_id',w.country_id,'currency_id',w.currency_id,'currency_code',c.internal_code,'currency_name',c.name,'symbol',c.symbol,'balance',w.balance) order by c.name) from public.bank_cash_wallets w join public.currencies c on c.id=w.currency_id where w.profile_id=auth.uid()),'[]'::jsonb),
   'wallet_transactions',coalesce((select jsonb_agg(jsonb_build_object('id',t.id,'type',t.transaction_type,'amount',t.amount,'balance_after',t.balance_after,'description',t.description,'created_at',t.created_at) order by t.created_at desc) from public.bank_cash_wallet_transactions t join public.bank_cash_wallets w on w.id=t.wallet_id where w.profile_id=auth.uid()),'[]'::jsonb),
   'accounts',coalesce((select jsonb_agg(jsonb_build_object('id',a.id,'bank_id',a.bank_id,'bank_name',b.name,'bank_identifier',b.bank_identifier,'account_number',a.account_number,'account_type',a.account_type,'status',a.status,'balance',a.balance,'currency_id',a.currency_id,'currency_code',c.internal_code,'currency_symbol',c.symbol,'country_id',a.country_id) order by a.created_at desc) from public.bank_accounts a join public.commercial_banks b on b.id=a.bank_id join public.currencies c on c.id=a.currency_id where a.owner_profile_id=auth.uid()),'[]'::jsonb),
