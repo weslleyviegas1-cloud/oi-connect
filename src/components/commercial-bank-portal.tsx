@@ -24,7 +24,9 @@ type Dashboard = {accounts:Account[];banks:Bank[];transactions:Tx[];bank_members
 const fmt=(n:number,c:string)=>{try{return new Intl.NumberFormat("pt-BR",{style:"currency",currency:c||"USD",maximumFractionDigits:2}).format(n)}catch{return n.toLocaleString("pt-BR",{maximumFractionDigits:2})+" "+c}};
 const date=(v:string)=>new Date(v).toLocaleString("pt-BR");
 export function CommercialBankPortal({profile,notify}:{profile:Profile;notify:(s:string)=>void}){
- const admin=profile.role==="super_admin";\n const president=profile.role==="president";\n const [pendingBanks,setPendingBanks]=useState<PendingBank[]>([]);
+ const admin=profile.role==="super_admin";
+ const president=profile.role==="president";
+ const [pendingBanks,setPendingBanks]=useState<PendingBank[]>([]);
  const [data,setData]=useState<Dashboard>({accounts:[],banks:[],transactions:[],cash_wallets:[],wallet_transactions:[],loan_applications:[],installments:[]});
  const [currencies,setCurrencies]=useState<Currency[]>([]);
  const [busy,setBusy]=useState(false),[loading,setLoading]=useState(true),[tab,setTab]=useState("contas");
@@ -41,13 +43,15 @@ export function CommercialBankPortal({profile,notify}:{profile:Profile;notify:(s
  const [capitalSource,setCapitalSource]=useState(""),[capitalAmount,setCapitalAmount]=useState("");
  const load=useCallback(async()=>{
   setLoading(true);
-  const [dash,curs]=await Promise.all([
+  const [dash,curs,requests]=await Promise.all([
    supabase.rpc("get_my_bank_dashboard"),
-   supabase.from("currencies").select("id,internal_code,name,symbol").eq("status","active").order("name")
+   supabase.from("currencies").select("id,internal_code,name,symbol").eq("status","active").order("name"),
+   president&&profile.country_id ? supabase.from("commercial_banks").select("id,name,bank_identifier,bank_type,status,country_id,central_bank_id,company_id").eq("country_id",profile.country_id).eq("status","pending").order("created_at",{ascending:true}) : Promise.resolve({data:[],error:null})
   ]);
   if(dash.error)notify("Falha ao carregar sistema bancário: "+dash.error.message);
   else setData({...{accounts:[],banks:[],transactions:[],cash_wallets:[],wallet_transactions:[],loan_applications:[],installments:[]},...(dash.data??{})});
   if(curs.error)notify(curs.error.message);else setCurrencies(curs.data??[]);
+  if(requests.error)notify("Falha ao carregar solicitações bancárias: "+requests.error.message);else setPendingBanks(requests.data??[]);
   setLoading(false);
  },[notify]);
  useEffect(()=>{void load()},[load]);
