@@ -172,7 +172,7 @@ begin
 end; $function$;
 
 revoke all on function public.request_company_registration_v2(text,text,uuid,text,text,text,text,text,text,numeric,uuid,text,uuid,text,numeric,numeric) from public,anon;
-grant execute on function public.request_company_registration_v2(text,text,uuid,text,text,text,text,text,text,numeric,uuid,text,uuid,text) to authenticated;
+grant execute on function public.request_company_registration_v2(text,text,uuid,text,text,text,text,text,text,numeric,uuid,text,uuid,text,numeric,numeric) to authenticated;
 revoke all on function public.president_review_company(uuid,text,text) from public,anon;
 grant execute on function public.president_review_company(uuid,text,text) to authenticated;
 revoke all on function public.admin_review_company(uuid,text,text) from public,anon;
