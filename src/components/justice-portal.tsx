@@ -13,21 +13,22 @@ export function JusticePortal({profile,notify}:Props){
  const [name,setName]=useState(""),[kind,setKind]=useState("national"),[profileId,setProfileId]=useState(""),[badge,setBadge]=useState(""),[position,setPosition]=useState("Agente"),[rank,setRank]=useState("1"),[category,setCategory]=useState("denúncia"),[location,setLocation]=useState(""),[description,setDescription]=useState(""),[anonymous,setAnonymous]=useState(false),[vehicleId,setVehicleId]=useState(""),[fineAmount,setFineAmount]=useState(""),[due,setDue]=useState(""),[grounds,setGrounds]=useState(""),[title,setTitle]=useState(""),[noteType,setNoteType]=useState("note"),[noteContent,setNoteContent]=useState(""),[evidenceUrl,setEvidenceUrl]=useState(""),[summary,setSummary]=useState(""),[respondent,setRespondent]=useState(""),[judgeId,setJudgeId]=useState(""),[outcome,setOutcome]=useState("Improcedente"),[reasoning,setReasoning]=useState(""),[hearingDate,setHearingDate]=useState(""),[capacity,setCapacity]=useState("0"),[facilityId,setFacilityId]=useState(""),[recordProfile,setRecordProfile]=useState(""),[recordCase,setRecordCase]=useState(""),[recordDecision,setRecordDecision]=useState(""),[recordType,setRecordType]=useState("admission"),[recordBasis,setRecordBasis]=useState(""),[protocol,setProtocol]=useState(""),[plateSearch,setPlateSearch]=useState(""),[vehicleLookup,setVehicleLookup]=useState<Row|null>(null);
  const country=profile.country_id??"";
  const load=useCallback(async()=>{
+  const countryScope=(query:any)=>admin?query:query.eq("country_id",country);
   const queries=[
-   supabase.from("security_departments").select("*").eq("country_id",country).order("created_at",{ascending:false}),
-   supabase.from("police_members").select("*").eq("country_id",country),
-   supabase.from("police_occurrences").select("*").eq("country_id",country).order("created_at",{ascending:false}).limit(100),
-   supabase.from("citizen_reports").select("*").eq("country_id",country).order("created_at",{ascending:false}).limit(100),
-   supabase.from("investigations").select("*").eq("country_id",country).order("created_at",{ascending:false}).limit(100),
-   supabase.from("traffic_violations").select("*").eq("country_id",country).order("created_at",{ascending:false}).limit(100),
-   supabase.from("administrative_fines").select("*").eq("country_id",country).order("created_at",{ascending:false}).limit(100),
+   countryScope(supabase.from("security_departments").select("*")).order("created_at",{ascending:false}),
+   countryScope(supabase.from("police_members").select("*")),
+   countryScope(supabase.from("police_occurrences").select("*")).order("created_at",{ascending:false}).limit(100),
+   countryScope(supabase.from("citizen_reports").select("*")).order("created_at",{ascending:false}).limit(100),
+   countryScope(supabase.from("investigations").select("*")).order("created_at",{ascending:false}).limit(100),
+   countryScope(supabase.from("traffic_violations").select("*")).order("created_at",{ascending:false}).limit(100),
+   countryScope(supabase.from("administrative_fines").select("*")).order("created_at",{ascending:false}).limit(100),
    supabase.from("fine_appeals").select("*,administrative_fines(fine_number,amount,status)").order("created_at",{ascending:false}).limit(100),
-   supabase.from("judicial_institutions").select("*").eq("country_id",country).order("created_at",{ascending:false}),
-   supabase.from("judicial_members").select("*").eq("country_id",country),
-   supabase.from("court_cases").select("*").eq("country_id",country).order("opened_at",{ascending:false}).limit(100),
+   countryScope(supabase.from("judicial_institutions").select("*")).order("created_at",{ascending:false}),
+   countryScope(supabase.from("judicial_members").select("*")),
+   countryScope(supabase.from("court_cases").select("*")).order("opened_at",{ascending:false}).limit(100),
    supabase.from("court_hearings").select("*").order("scheduled_at",{ascending:false}).limit(100),
    supabase.from("court_decisions").select("*").order("published_at",{ascending:false}).limit(100),
-   supabase.from("correctional_facilities").select("*").eq("country_id",country),
+   countryScope(supabase.from("correctional_facilities").select("*")),
    supabase.from("bank_accounts").select("id,account_number,balance,currency_id,currencies(symbol)").eq("owner_profile_id",profile.id).eq("status","active"),
    supabase.from("correctional_records").select("*").eq("profile_id",profile.id).order("recorded_at",{ascending:false}),
    supabase.from("court_appeals").select("*").order("created_at",{ascending:false}).limit(100)
@@ -35,8 +36,8 @@ export function JusticePortal({profile,notify}:Props){
   const q=await Promise.all(queries);
   const setters=[setDepartments,setPoliceMembers,setOccurrences,setReports,setInvestigations,setViolations,setFines,setAppeals,setInstitutions,setJudicialMembers,setCases,setHearings,setDecisions,setFacilities,setAccounts,setCorrectionalRecords,setCourtAppeals];
   q.forEach((x,i)=>{const setter=setters[i];if(!x.error&&setter)setter(x.data??[]);});
- },[country,profile.id]);
- useEffect(()=>{if(country)void load();},[country,load]);
+ },[country,profile.id,admin]);
+ useEffect(()=>{if(country||admin)void load();},[country,admin,load]);
  const rpc=async(fn:string,args:Row,msg:string)=>{setBusy(true);try{const {error}=await supabase.rpc(fn,args);if(error)throw error;notify(msg);await load();}catch(e:any){notify(e.message??"Não foi possível concluir a operação.");}finally{setBusy(false);}};
  const submit=(fn:string,args:Row,msg:string)=>(e:FormEvent)=>{e.preventDefault();void rpc(fn,args,msg);};
  const createDepartment=submit("security_create_department",{p_country:country,p_name:name,p_type:kind,p_description:description},"Instituição de segurança cadastrada.");
