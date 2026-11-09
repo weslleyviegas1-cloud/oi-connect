@@ -32,7 +32,7 @@ export function JusticePortal({profile,notify}:Props){
   ];
   const q=await Promise.all(queries);
   const setters=[setDepartments,setPoliceMembers,setOccurrences,setReports,setInvestigations,setViolations,setFines,setAppeals,setInstitutions,setJudicialMembers,setCases,setHearings,setDecisions,setFacilities,setAccounts];
-  q.forEach((x,i)=>{if(!x.error)setters[i](x.data??[]);});
+  q.forEach((x,i)=>{const setter=setters[i];if(!x.error&&setter)setter(x.data??[]);});
  },[country,profile.id]);
  useEffect(()=>{if(country)void load();},[country,load]);
  const rpc=async(fn:string,args:Row,msg:string)=>{setBusy(true);try{const {error}=await supabase.rpc(fn,args);if(error)throw error;notify(msg);await load();}catch(e:any){notify(e.message??"Não foi possível concluir a operação.");}finally{setBusy(false);}};
@@ -52,7 +52,7 @@ export function JusticePortal({profile,notify}:Props){
  const hearing=submit("judicial_record_hearing",{p_case:caseId,p_when:new Date(hearingDate).toISOString(),p_participants:[],p_notes:summary},"Audiência registrada.");
  const decision=submit("judicial_publish_decision",{p_case:caseId,p_outcome:outcome,p_reasoning:reasoning},"Decisão publicada.");
  const payFine=(id:string)=>{if(!selectedAccount){notify("Selecione uma conta bancária.");return;}void rpc("citizen_pay_fine",{p_fine:id,p_account:selectedAccount,p_idempotency:crypto.randomUUID()},"Pagamento confirmado e arrecadação registrada no Tesouro.");};
- const tabs=[["citizen","Minha área jurídica"],...(admin||president?[["government","Instituições"]]:[]),...(policeMembers.some(x=>x.profile_id===profile.id&&x.status==="active")?[["police","Painel policial"]]:[]),...(judicialMembers.some(x=>x.profile_id===profile.id&&x.status==="active")?[["court","Judiciário"]]:[]),...(admin||president?[["oversight","Supervisão"]]:[])];
+ const tabs:[string,string][]=[["citizen","Minha área jurídica"],...(admin||president?[["government","Instituições"]]:[]),...(policeMembers.some(x=>x.profile_id===profile.id&&x.status==="active")?[["police","Painel policial"]]:[]),...(judicialMembers.some(x=>x.profile_id===profile.id&&x.status==="active")?[["court","Judiciário"]]:[]),...(admin||president?[["oversight","Supervisão"]]:[])];
  return <div className="we-justice">
   <div className="we-justice-summary"><span><b>{reports.filter(x=>x.submitted_by===profile.id).length}</b><small>Denúncias enviadas</small></span><span><b>{fines.filter(x=>x.recipient_profile_id===profile.id&&x.status!=="paid").length}</b><small>Multas pendentes</small></span><span><b>{cases.length}</b><small>Processos acessíveis</small></span><span><b>{departments.filter(x=>x.status==="active").length}</b><small>Instituições policiais</small></span></div>
   <nav className="we-justice-tabs">{tabs.map(([id,label])=><button key={id} className={tab===id?"active":""} onClick={()=>setTab(id)}>{label}</button>)}</nav>
