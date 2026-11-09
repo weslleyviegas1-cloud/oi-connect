@@ -291,6 +291,7 @@ begin
  select * into d from public.security_departments where id=p_department;
  if not found or not (public.is_world_admin() or public.is_country_president(d.country_id) or (d.director_profile_id=auth.uid() and public.is_police_member(d.country_id))) then raise exception 'Sem autorização para nomear agente.'; end if;
  if not exists(select 1 from public.profiles where id=p_profile and country_id=d.country_id and role='citizen' and registration_status='active') then raise exception 'Agente deve ser cidadão ativo do país.'; end if;
+ if exists(select 1 from public.judicial_members where profile_id=p_profile and country_id=d.country_id and status='active' and professional_role in ('judge','prosecutor')) then raise exception 'Juízes e promotores não podem integrar a polícia neste país.'; end if;
  insert into public.police_members(department_id,country_id,profile_id,badge_number,position,rank_level,status,appointed_by)
  values(p_department,d.country_id,p_profile,upper(trim(p_badge)),trim(p_position),p_rank,'active',auth.uid()) returning id into v;
  perform public.justice_audit(d.country_id,'police_member_appointed','police_member',v,jsonb_build_object('profile_id',p_profile,'badge',p_badge)); return v;
@@ -464,6 +465,9 @@ begin
  select * into i from public.judicial_institutions where id=p_institution;
  if not found or not (public.is_world_admin() or public.is_country_president(i.country_id) or exists(select 1 from public.judicial_members m where m.institution_id=i.id and m.profile_id=auth.uid() and m.professional_role='administrator' and m.status='active')) then raise exception 'Sem permissão para nomear profissional.'; end if;
  if not exists(select 1 from public.profiles where id=p_profile and country_id=i.country_id and registration_status='active') then raise exception 'Perfil inválido.'; end if;
+ if p_role in ('judge','prosecutor') and exists(select 1 from public.police_members where profile_id=p_profile and country_id=i.country_id and status='active') then raise exception 'Integrantes da polícia não podem atuar como juiz ou promotor no mesmo país.'; end if;
+ if p_role='judge' and exists(select 1 from public.judicial_members where profile_id=p_profile and country_id=i.country_id and status='active' and professional_role='prosecutor') then raise exception 'Uma pessoa não pode acumular as funções de juiz e promotor.'; end if;
+ if p_role='prosecutor' and exists(select 1 from public.judicial_members where profile_id=p_profile and country_id=i.country_id and status='active' and professional_role='judge') then raise exception 'Uma pessoa não pode acumular as funções de promotor e juiz.'; end if;
  insert into public.judicial_members(institution_id,country_id,profile_id,professional_role,registration_number,status,appointed_by)
  values(i.id,i.country_id,p_profile,p_role,upper(trim(p_registration)),'active',auth.uid()) returning id into v;
  perform public.justice_audit(i.country_id,'judicial_member_appointed','judicial_member',v,jsonb_build_object('role',p_role)); return v;
