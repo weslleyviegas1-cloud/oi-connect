@@ -252,10 +252,10 @@ export function CitizenPortal({ profileId, notify, initialTab = "overview" }: { 
         {tab === "identity" && <section className="we-panel">
           <header><h2><IdCard/> Identidade Nacional Digital</h2></header>
           <div className="we-identity-card">
-            <div className="we-identity-top"><span>WORLD ECONOMY</span><small>IDENTIFICAÇÃO INTERNA • SIMULAÇÃO</small></div>
+            <div className="we-identity-top"><span>WORLD ECONOMY</span><small>DOCUMENTO NACIONAL • WORLD ECONOMY</small></div>
             <div className="we-identity-body">
               {profile.avatar_url ? <img src={profile.avatar_url} alt="Foto do cidadão"/> : <span className="we-identity-avatar"><UserRound/></span>}
-              <div className="we-identity-data"><small>NOME DO CIDADÃO</small><strong>{profile.username}</strong><small>NICKNAME DO MINECRAFT</small><b>{profile.minecraft_username ?? "Não informado"}</b><small>ID PERMANENTE</small><strong>#{profile.player_number}</strong><small>NACIONALIDADE</small><b>{profile.country_flag ?? ""} {profile.country_name ?? "Não definida"}</b><small>DATA DE EMISSÃO</small><b>{dateLabel(identity?.issued_at ?? profile.created_at)}</b></div>
+              <div className="we-identity-data"><small>NOME DO CIDADÃO</small><strong>{profile.username}</strong><small>NICKNAME DO MINECRAFT</small><b>{profile.minecraft_username ?? "Não informado"}</b><small>CPF</small><strong>{profile.cpf_number ? String(profile.cpf_number).replace(/(\\d{3})(\\d{3})(\\d{3})(\\d{2})/, "$1.$2.$3-$4") : "Em geração"}</strong><small>ID PERMANENTE</small><strong>#{profile.player_number}</strong><small>NACIONALIDADE</small><b>{profile.country_flag ?? ""} {profile.country_name ?? "Não definida"}</b><small>DATA DE EMISSÃO</small><b>{dateLabel(identity?.issued_at ?? profile.created_at)}</b></div>
             </div>
             <div className="we-identity-footer"><span>Documento fictício válido somente dentro do WORLD ECONOMY.</span><b>{identity?.document_number ?? "IDENTIDADE NÃO EMITIDA"}</b></div>
           </div>
