@@ -560,7 +560,7 @@ revoke all on function public.is_police_member(uuid,text),public.is_judicial_mem
  public.police_update_member(uuid,text,text,text),public.police_add_investigation_note(uuid,text,text,text),public.judicial_review_fine_appeal(uuid,boolean,text),
  public.police_lookup_vehicle(text) from public,anon;
 
-grant execute on function public.police_update_member(uuid,text,text,text),public.police_add_investigation_note(uuid,text,text,text),public.judicial_review_fine_appeal(uuid,boolean,text),public.is_police_member(uuid,text),public.is_judicial_member(uuid,text[]),
+grant execute on function public.police_update_member(uuid,text,text,text),public.police_add_investigation_note(uuid,text,text,text),public.judicial_review_fine_appeal(uuid,boolean,text),public.is_police_member(uuid,text),public.is_judicial_member(uuid,text[]),public.is_court_case_party(uuid),public.is_police_member_in_department(uuid),public.is_fine_police_member(uuid),public.is_fine_judicial_member(uuid),
  public.judicial_create_facility(uuid,text,text,integer),public.security_create_department(uuid,text,text,text),public.security_appoint_officer(uuid,uuid,text,text,integer),
  public.police_lookup_vehicle(text),public.police_register_occurrence(uuid,text,text,text,uuid[],uuid,timestamptz),public.citizen_submit_report(uuid,text,text,text,boolean),
  public.police_open_investigation(uuid,text,text,uuid[]),public.police_refer_investigation(uuid,text),public.police_close_investigation(uuid,text),public.traffic_record_violation(uuid,text,text),public.traffic_issue_fine(uuid,numeric,date,text),
