@@ -93,6 +93,7 @@ begin
  if not found or not public.is_country_president(r.country_id) then raise exception 'Somente o Presidente do país emissor pode decidir a emissão da CNH.'; end if;
  if r.status<>'pending_presidency' then raise exception 'Pedido ainda não está pago ou já foi analisado.'; end if;
  if not p_approve then
+  if r.fee_amount>0 then raise exception 'Uma solicitação paga não pode ser rejeitada sem um procedimento de estorno.'; end if;
   update public.driving_license_requests set status='rejected',reviewed_by=auth.uid(),reviewed_at=now() where id=r.id;
   perform public.vehicle_audit(r.country_id,'driving_license_request',r.id,'rejected');
   return null;
