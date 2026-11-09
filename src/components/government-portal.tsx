@@ -440,7 +440,20 @@ export function GovernmentPortal({ profile, notify }: { profile: GovernmentProfi
       <label>País sob administração<select value={selectedCountryId} onChange={event => setSelectedCountryId(event.target.value)}><option value="">Selecione um país</option>{adminCountries.map(item => <option key={item.id} value={item.id}>{item.name}{item.is_active ? "" : " — Inativo"}</option>)}</select></label>
       <div className="we-admin-notice">O Super Admin pode selecionar qualquer país para supervisionar seu governo. As aprovações pendentes continuam globais.</div>
     </div>}
-    <nav className="we-admin-tabs">{tabs.filter(item => item.id !== "citizens" || isAdmin || isPresident || hasAnyPermission("citizen.read")).map(({ id, label, Icon }) => <button key={id} type="button" className={tab === id ? "active" : ""} onClick={() => setTab(id)}><Icon/><span>{label}</span></button>)}</nav>
+    {/*
+      Public transparency is read-only for ordinary citizens. Sensitive workflows
+      (appointments, notifications, budgets and audit) are reserved for authorized roles.
+      RLS remains the source of truth; this only controls navigation and presentation.
+    */}
+    <nav className="we-admin-tabs">{tabs.filter(item => {
+      if (isAdmin || isPresident) return true;
+      const publicTabs: Tab[] = ["overview", "ministries", "departments", "decisions", "legislation", "announcements", "infrastructure"];
+      if (publicTabs.includes(item.id)) return true;
+      if (item.id === "citizens") return hasAnyPermission("citizen.read");
+      if (item.id === "budget") return hasAnyPermission("budget.read") || hasAnyPermission("budget.manage");
+      if (item.id === "notifications") return !!ownMembership;
+      return false;
+    }).map(({ id, label, Icon }) => <button key={id} type="button" className={tab === id ? "active" : ""} onClick={() => setTab(id)}><Icon/><span>{label}</span></button>)}</nav>
     <div className="we-admin-toolbar"><div><small>WORLD ECONOMY / GOVERNO NACIONAL</small><h2>{tabs.find(item => item.id === tab)?.label}</h2></div><button className="we-admin-refresh" type="button" onClick={() => void load()} disabled={loading}><RefreshCw/> Atualizar</button></div>
     {loading && <div className="we-empty">Carregando dados oficiais do governo...</div>}
     {!countryId && !isAdmin && <div className="we-note">Sua conta ainda não está vinculada a um país. As informações governamentais aparecerão após a definição do vínculo nacional.</div>}
