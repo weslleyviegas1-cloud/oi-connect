@@ -39,8 +39,9 @@ export function JusticePortal({profile,notify}:Props){
    supabase.from("justice_audit_logs").select("*").order("created_at",{ascending:false}).limit(150)
   ];
   const q=await Promise.all(queries);
-  const setters=[setCountries,setDepartments,setPoliceMembers,setOccurrences,setReports,setInvestigations,setViolations,setFines,setAppeals,setInstitutions,setJudicialMembers,setCases,setHearings,setDecisions,setFacilities,setAccounts,setCorrectionalRecords,setCourtAppeals,setAuditLogs];
+  const setters=[setCountries,setDepartments,setPoliceMembers,setOccurrences,setReports,null,setInvestigations,setViolations,setFines,setAppeals,setInstitutions,setJudicialMembers,setCases,setHearings,setDecisions,setFacilities,setAccounts,setCorrectionalRecords,setCourtAppeals,setAuditLogs];
   q.forEach((x,i)=>{const setter=setters[i];if(!x.error&&setter)setter(x.data??[]);});
+  if(!q[5]?.error)setMyReports(q[5]?.data??[]);
  },[country,profile.id,admin]);
  useEffect(()=>{if(country||admin)void load();},[country,admin,load]);
  const rpc=async(fn:string,args:Row,msg:string)=>{setBusy(true);try{const {error}=await supabase.rpc(fn,args);if(error)throw error;notify(msg);await load();}catch(e:any){notify(e.message??"Não foi possível concluir a operação.");}finally{setBusy(false);}};
