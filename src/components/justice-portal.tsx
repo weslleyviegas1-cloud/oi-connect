@@ -50,7 +50,7 @@ function JusticePortalContent({profile,notify}:Props){
    console.error("WORLD ECONOMY justice portal load failed",error);
    notify("Falha ao carregar dados de Justiça e Segurança. Tente atualizar a página.");
   }
- },[country,profile.id,admin]);
+ },[country,profile.id,admin,notify]);
  useEffect(()=>{if(country||admin)void load();},[country,admin,load]);
  const rpc=async(fn:string,args:Row,msg:string)=>{setBusy(true);try{const {error}=await supabase.rpc(fn,args);if(error)throw error;notify(msg);await load();}catch(e:any){notify(e.message??"Não foi possível concluir a operação.");}finally{setBusy(false);}};
  const submit=(fn:string,args:Row,msg:string)=>(e:FormEvent)=>{e.preventDefault();void rpc(fn,args,msg);};
@@ -116,7 +116,7 @@ function JusticePortalContent({profile,notify}:Props){
 class JusticePortalErrorBoundary extends Component<{children:ReactNode},{failed:boolean}> {
  state={failed:false};
  static getDerivedStateFromError(){return {failed:true};}
- componentDidCatch(error:Error,info:ErrorInfo){console.error("WORLD ECONOMY JusticePortal render error",error,info);}
- render(){if(this.state.failed)return <section className="we-justice-panel" role="alert"><h2><Shield/> Justiça e Segurança</h2><p>O módulo encontrou um erro ao montar esta tela. Os demais módulos continuam disponíveis. Atualize a página; se o problema persistir, informe ao administrador.</p><button onClick={()=>this.setState({failed:false})}>Tentar carregar novamente</button></section>;return this.props.children;}
+ override componentDidCatch(error:Error,info:ErrorInfo){console.error("WORLD ECONOMY JusticePortal render error",error,info);}
+ override render(){if(this.state.failed)return <section className="we-justice-panel" role="alert"><h2><Shield/> Justiça e Segurança</h2><p>O módulo encontrou um erro ao montar esta tela. Os demais módulos continuam disponíveis. Atualize a página; se o problema persistir, informe ao administrador.</p><button onClick={()=>this.setState({failed:false})}>Tentar carregar novamente</button></section>;return this.props.children;}
 }
 export function JusticePortal(props:Props){return <JusticePortalErrorBoundary><JusticePortalContent {...props}/></JusticePortalErrorBoundary>;}
