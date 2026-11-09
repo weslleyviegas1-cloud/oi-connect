@@ -170,7 +170,7 @@ returns boolean language sql stable security definer set search_path=public,auth
 $$;
 create or replace function public.is_fine_police_member(p_fine uuid)
 returns boolean language sql stable security definer set search_path=public,auth as $$
- select exists(select 1 from public.administrative_fines f where f.id=p_fine and public.is_police_member_in_department(f.issuing_department_id))
+ select exists(select 1 from public.administrative_fines f join public.police_members m on m.department_id=f.issuing_department_id where f.id=p_fine and m.profile_id=auth.uid() and m.status='active' and 'police.fine'=any(m.permissions))
 $$;
 revoke all on function public.is_police_member_in_department(uuid),public.is_fine_police_member(uuid) from public,anon;
 grant execute on function public.is_police_member_in_department(uuid),public.is_fine_police_member(uuid) to authenticated;
@@ -186,11 +186,12 @@ grant execute on function public.has_police_department_permission(uuid,text) to 
 
 create policy security_departments_read on public.security_departments for select to authenticated using(status='active' or public.is_world_admin() or public.is_country_president(country_id));
 create policy police_members_read on public.police_members for select to authenticated using(profile_id=auth.uid() or public.is_world_admin() or public.is_country_president(country_id) or public.is_police_member(country_id));
-create policy police_occurrences_read on public.police_occurrences for select to authenticated using(public.is_world_admin() or public.is_country_president(country_id) or public.is_police_member_in_department(department_id) or responsible_profile_id=auth.uid() or auth.uid()=any(involved_profile_ids));
-create policy citizen_reports_read on public.citizen_reports for select to authenticated using(submitted_by=auth.uid() or public.is_world_admin() or public.is_country_president(country_id) or (assigned_department_id is not null and public.is_police_member_in_department(assigned_department_id)));
-create policy investigations_read on public.investigations for select to authenticated using(public.is_world_admin() or public.is_country_president(country_id) or public.is_police_member_in_department(department_id));
-create policy traffic_violations_read on public.traffic_violations for select to authenticated using(responsible_profile_id=auth.uid() or public.is_world_admin() or public.is_country_president(country_id) or public.is_police_member_in_department(department_id));
-create policy administrative_fines_read on public.administrative_fines for select to authenticated using(recipient_profile_id=auth.uid() or public.is_world_admin() or public.is_country_president(country_id) or public.is_police_member_in_department(issuing_department_id) or (recipient_company_id is not null and public.is_company_member(recipient_company_id,'finance.read')) or public.is_judicial_member(country_id,array['judge','administrator']));
+create policy police_occurrences_read on public.police_occurrences for select to authenticated using(public.is_world_admin() or public.is_country_president(country_id) or public.has_police_department_permission(department_id,'police.investigate') or responsible_profile_id=auth.uid() or auth.uid()=any(involved_profile_ids));
+create policy citizen_reports_read on public.citizen_reports for select to authenticated using(submitted_by=auth.uid() or public.is_world_admin() or public.is_country_president(country_id) or (assigned_department_id is not null and public.has_police_department_permission(assigned_department_id,'police.investigate')));
+create policy investigations_read on public.investigations for select to authenticated using(public.is_world_admin() or public.is_country_president(country_id) or public.has_police_department_permission(department_id,'police.investigate'));
+create policy traffic_violations_read on public.traffic_violations for select to authenticated using(responsible_profile_id=auth.uid() or public.is_world_admin() or public.is_country_president(country_id) or public.has_police_department_permission(department_id,'police.traffic'));
+
+create policy administrative_fines_read on public.administrative_fines for select to authenticated using(recipient_profile_id=auth.uid() or public.is_world_admin() or public.is_country_president(country_id) or public.has_police_department_permission(issuing_department_id,'police.fine') or (recipient_company_id is not null and public.is_company_member(recipient_company_id,'finance.read')) or public.is_judicial_member(country_id,array['judge','administrator']));
 
 create or replace function public.is_fine_judicial_member(p_fine uuid)
 returns boolean language sql stable security definer set search_path=public,auth as $$
@@ -442,7 +443,7 @@ declare r public.citizen_reports%rowtype; d public.security_departments%rowtype;
 begin
  select * into r from public.citizen_reports where id=p_report for update;
  select * into d from public.security_departments where id=p_department and status='active';
- if r.id is null or d.id is null or r.country_id<>d.country_id or not (public.is_world_admin() or public.is_country_president(r.country_id) or exists(select 1 from public.police_members m where m.profile_id=auth.uid() and m.department_id=d.id and m.status='active')) then raise exception 'Denúncia ou departamento indisponível.'; end if;
+ if r.id is null or d.id is null or r.country_id<>d.country_id or not (public.is_world_admin() or public.is_country_president(r.country_id) or public.has_police_department_permission(d.id,'police.investigate')) then raise exception 'Denúncia ou departamento indisponível.'; end if;
  if p_status not in ('triaged','investigating','referred','dismissed','closed') then raise exception 'Situação inválida.'; end if;
  update public.citizen_reports set assigned_department_id=d.id,status=p_status,resolution_note=nullif(trim(p_note),''),updated_at=now() where id=r.id;
  perform public.justice_audit(r.country_id,'report_triaged','citizen_report',r.id,jsonb_build_object('status',p_status,'department_id',d.id));
