@@ -324,7 +324,7 @@ begin
 end; $$;
 
 create or replace function public.police_investigate_report(p_report uuid,p_title text,p_summary text,p_subjects uuid[] default '{}')
-returns uuid language plpgsql security definer set search_path=public,auth as $
+returns uuid language plpgsql security definer set search_path=public,auth as $$
 declare r public.citizen_reports%rowtype; v uuid; n text;
 begin
  select * into r from public.citizen_reports where id=p_report for update;
@@ -336,7 +336,7 @@ begin
  values(n,r.country_id,r.id,r.assigned_department_id,auth.uid(),coalesce(p_subjects,'{}'),trim(p_title),trim(p_summary),auth.uid()) returning id into v;
  update public.citizen_reports set status='investigating',updated_at=now() where id=r.id;
  perform public.justice_audit(r.country_id,'report_investigation_opened','investigation',v,jsonb_build_object('report_id',r.id)); return v;
-end; $;
+end; $$;
 
 create or replace function public.police_open_investigation(p_occurrence uuid,p_title text,p_summary text,p_subjects uuid[] default '{}')
 returns uuid language plpgsql security definer set search_path=public,auth as $$
