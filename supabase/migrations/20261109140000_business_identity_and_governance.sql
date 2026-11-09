@@ -170,4 +170,34 @@ grant execute on function public.admin_review_company(uuid,text,text) to authent
 revoke all on function public.get_my_bank_dashboard() from public,anon;
 grant execute on function public.get_my_bank_dashboard() to authenticated;
 
+
+-- CPF acompanha a identidade digital do cidadão sem expor o UUID interno da conta.
+create or replace function public.get_my_citizen_profile()
+returns jsonb language plpgsql security definer set search_path=public,auth as $
+declare v_profile public.profiles%rowtype; v_extra public.citizen_profiles%rowtype; v_result jsonb;
+begin
+ if auth.uid() is null then raise exception 'É necessário entrar na conta.'; end if;
+ select * into v_profile from public.profiles where id=auth.uid();
+ if not found then raise exception 'Perfil do cidadão não encontrado.'; end if;
+ insert into public.citizen_profiles(profile_id) values(auth.uid()) on conflict(profile_id) do nothing;
+ select * into v_extra from public.citizen_profiles where profile_id=auth.uid();
+ select jsonb_build_object(
+  'id',v_profile.id,'username',v_profile.username,'avatar_url',v_profile.avatar_url,'cpf_number',v_profile.cpf_number,
+  'created_at',v_profile.created_at,'player_number',v_profile.player_number,'role',v_profile.role,'country_id',v_profile.country_id,
+  'registration_status',v_profile.registration_status,'minecraft_username',v_profile.minecraft_username,'account_status',v_profile.account_status,
+  'citizen_status',case when v_profile.account_status='suspended' then 'suspended' else 'active' end,
+  'country_joined_at',v_profile.country_joined_at,
+  'country_name',(select c.name from public.countries c where c.id=v_profile.country_id),
+  'country_flag',(select c.flag from public.countries c where c.id=v_profile.country_id),
+  'country_capital',(select c.capital from public.countries c where c.id=v_profile.country_id),
+  'country_continent',(select c.continent from public.countries c where c.id=v_profile.country_id),
+  'birth_date_sim',v_extra.birth_date_sim,'residence_city',v_extra.residence_city,'bio',v_extra.bio,
+  'public_profile_enabled',v_extra.public_profile_enabled,'show_player_number',v_extra.show_player_number,
+  'show_residence_city',v_extra.show_residence_city,'show_bio',v_extra.show_bio
+ ) into v_result;
+ return v_result;
+end; $;
+revoke all on function public.get_my_citizen_profile() from public,anon;
+grant execute on function public.get_my_citizen_profile() to authenticated;
+
 commit;
