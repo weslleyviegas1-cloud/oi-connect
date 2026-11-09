@@ -183,7 +183,7 @@ grant execute on function public.get_my_bank_dashboard() to authenticated;
 
 -- CPF acompanha a identidade digital do cidadão sem expor o UUID interno da conta.
 create or replace function public.get_my_citizen_profile()
-returns jsonb language plpgsql security definer set search_path=public,auth as $
+returns jsonb language plpgsql security definer set search_path=public,auth as $cpf$
 declare v_profile public.profiles%rowtype; v_extra public.citizen_profiles%rowtype; v_result jsonb;
 begin
  if auth.uid() is null then raise exception 'É necessário entrar na conta.'; end if;
@@ -206,7 +206,7 @@ begin
   'show_residence_city',v_extra.show_residence_city,'show_bio',v_extra.show_bio
  ) into v_result;
  return v_result;
-end; $;
+end; $cpf$;
 revoke all on function public.get_my_citizen_profile() from public,anon;
 grant execute on function public.get_my_citizen_profile() to authenticated;
 
