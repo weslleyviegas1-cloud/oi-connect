@@ -12,7 +12,7 @@ create table if not exists public.security_departments(
 create table if not exists public.police_members(
  id uuid primary key default gen_random_uuid(), department_id uuid not null references public.security_departments(id) on delete restrict,
  country_id uuid not null references public.countries(id) on delete restrict, profile_id uuid not null references public.profiles(id) on delete restrict,
- badge_number text not null, position text not null, rank_level integer not null default 1 check(rank_level between 1 and 20),
+ badge_number text not null, position text not null, rank_level integer not null default 1 check(rank_level between 1 and 20), permissions text[] not null default array['police.read'],
  status text not null default 'pending' check(status in ('pending','active','suspended','transferred','dismissed')),
  appointed_by uuid references public.profiles(id), joined_at timestamptz not null default now(), ended_at timestamptz,
  created_at timestamptz not null default now(), unique(country_id,badge_number), unique(department_id,profile_id)
@@ -138,11 +138,13 @@ create index if not exists court_cases_country_status_idx on public.court_cases(
 create index if not exists court_parties_profile_idx on public.court_case_parties(profile_id,case_id);
 create index if not exists correctional_records_profile_idx on public.correctional_records(profile_id,recorded_at desc);
 
+alter table public.police_members add column if not exists permissions text[] not null default array['police.read'];
+
 create or replace function public.is_police_member(p_country uuid,p_permission text default null)
 returns boolean language sql stable security definer set search_path=public,auth as $$
  select exists(select 1 from public.police_members m join public.security_departments d on d.id=m.department_id
  where m.profile_id=auth.uid() and m.country_id=p_country and m.status='active' and d.status='active'
- and (p_permission is null or p_permission in ('police.read','police.manage','police.investigate','police.fine')))
+ and (p_permission is null or p_permission=any(m.permissions)))
 $$;
 create or replace function public.is_judicial_member(p_country uuid,p_roles text[] default null)
 returns boolean language sql stable security definer set search_path=public,auth as $$
@@ -172,6 +174,15 @@ returns boolean language sql stable security definer set search_path=public,auth
 $$;
 revoke all on function public.is_police_member_in_department(uuid),public.is_fine_police_member(uuid) from public,anon;
 grant execute on function public.is_police_member_in_department(uuid),public.is_fine_police_member(uuid) to authenticated;
+
+
+create or replace function public.has_police_department_permission(p_department uuid,p_permission text)
+returns boolean language sql stable security definer set search_path=public,auth as $
+ select exists(select 1 from public.police_members m join public.security_departments d on d.id=m.department_id
+ where m.profile_id=auth.uid() and m.department_id=p_department and m.status='active' and d.status='active' and p_permission=any(m.permissions))
+$;
+revoke all on function public.has_police_department_permission(uuid,text) from public,anon;
+grant execute on function public.has_police_department_permission(uuid,text) to authenticated;
 
 create policy security_departments_read on public.security_departments for select to authenticated using(status='active' or public.is_world_admin() or public.is_country_president(country_id));
 create policy police_members_read on public.police_members for select to authenticated using(profile_id=auth.uid() or public.is_world_admin() or public.is_country_president(country_id) or public.is_police_member(country_id));
@@ -259,7 +270,7 @@ create or replace function public.police_add_investigation_note(p_investigation 
 returns uuid language plpgsql security definer set search_path=public,auth as $$
 declare i public.investigations%rowtype; v uuid;
 begin select * into i from public.investigations where id=p_investigation for update;
- if not found or not (public.is_world_admin() or public.is_country_president(i.country_id) or public.is_police_member_in_department(i.department_id)) then raise exception 'Sem autorização para registrar informação.'; end if;
+ if not found or not (public.is_world_admin() or public.is_country_president(i.country_id) or public.has_police_department_permission(i.department_id,'police.investigate')) then raise exception 'Sem autorização para registrar informação.'; end if;
  insert into public.investigation_notes(investigation_id,author_profile_id,note_type,content,evidence_url)
  values(i.id,auth.uid(),p_type,trim(p_content),nullif(trim(p_evidence_url),'')) returning id into v;
  perform public.justice_audit(i.country_id,'investigation_note_added','investigation_note',v,'{}'); return v;
@@ -292,8 +303,11 @@ begin
  if not found or not (public.is_world_admin() or public.is_country_president(d.country_id) or (d.director_profile_id=auth.uid() and public.is_police_member(d.country_id))) then raise exception 'Sem autorização para nomear agente.'; end if;
  if not exists(select 1 from public.profiles where id=p_profile and country_id=d.country_id and role='citizen' and registration_status='active') then raise exception 'Agente deve ser cidadão ativo do país.'; end if;
  if exists(select 1 from public.judicial_members where profile_id=p_profile and country_id=d.country_id and status='active' and professional_role in ('judge','prosecutor')) then raise exception 'Juízes e promotores não podem integrar a polícia neste país.'; end if;
- insert into public.police_members(department_id,country_id,profile_id,badge_number,position,rank_level,status,appointed_by)
- values(p_department,d.country_id,p_profile,upper(trim(p_badge)),trim(p_position),p_rank,'active',auth.uid()) returning id into v;
+ insert into public.police_members(department_id,country_id,profile_id,badge_number,position,rank_level,permissions,status,appointed_by)
+ values(p_department,d.country_id,p_profile,upper(trim(p_badge)),trim(p_position),p_rank,
+ case when lower(trim(p_position)) in ('diretor','comandante','delegado','supervisor') then array['police.read','police.occurrence.create','police.investigate','police.traffic','police.fine','police.manage']
+ when lower(trim(p_position)) like '%investig%' then array['police.read','police.occurrence.create','police.investigate','police.traffic','police.fine']
+ else array['police.read','police.occurrence.create','police.traffic'] end,'active',auth.uid()) returning id into v;
  perform public.justice_audit(d.country_id,'police_member_appointed','police_member',v,jsonb_build_object('profile_id',p_profile,'badge',p_badge)); return v;
 end; $$;
 create or replace function public.police_register_occurrence(p_department uuid,p_category text,p_location text,p_description text,p_involved uuid[] default '{}',p_vehicle uuid default null,p_occurred timestamptz default now())
@@ -301,7 +315,7 @@ returns uuid language plpgsql security definer set search_path=public,auth as $$
 declare d public.security_departments%rowtype; v uuid; n text;
 begin
  select * into d from public.security_departments where id=p_department and status='active';
- if not found or not (public.is_world_admin() or public.is_country_president(d.country_id) or public.is_police_member_in_department(d.id)) then raise exception 'Somente agente ativo do departamento pode registrar ocorrência.'; end if;
+ if not found or not (public.is_world_admin() or public.is_country_president(d.country_id) or public.has_police_department_permission(d.id,'police.occurrence.create')) then raise exception 'Somente agente autorizado do departamento pode registrar ocorrência.'; end if;
  if exists(select 1 from unnest(coalesce(p_involved,'{}'::uuid[])) as u(profile_id) where not exists(select 1 from public.profiles p where p.id=u.profile_id and p.country_id=d.country_id and p.registration_status='active')) then raise exception 'Pessoas envolvidas devem pertencer ao país e possuir cadastro ativo.'; end if;
  if length(trim(p_description))<10 then raise exception 'Descrição insuficiente.'; end if;
  if p_vehicle is not null and not exists(select 1 from public.vehicles where id=p_vehicle and country_id=d.country_id) then raise exception 'Veículo não pertence ao país.'; end if;
@@ -328,7 +342,7 @@ returns uuid language plpgsql security definer set search_path=public,auth as $$
 declare r public.citizen_reports%rowtype; v uuid; n text;
 begin
  select * into r from public.citizen_reports where id=p_report for update;
- if not found or r.assigned_department_id is null or not (public.is_world_admin() or public.is_country_president(r.country_id) or public.is_police_member_in_department(r.assigned_department_id)) then raise exception 'Denúncia não atribuída ou acesso não autorizado.'; end if;
+ if not found or r.assigned_department_id is null or not (public.is_world_admin() or public.is_country_president(r.country_id) or public.has_police_department_permission(r.assigned_department_id,'police.investigate')) then raise exception 'Denúncia não atribuída ou acesso não autorizado.'; end if;
  if r.status not in ('triaged','investigating') then raise exception 'A denúncia precisa ser triada antes da investigação.'; end if;
  if exists(select 1 from unnest(coalesce(p_subjects,'{}'::uuid[])) as u(profile_id) where not exists(select 1 from public.profiles p where p.id=u.profile_id and p.country_id=r.country_id and p.registration_status='active')) then raise exception 'Pessoas investigadas devem pertencer ao país e possuir cadastro ativo.'; end if;
  n:='INV-'||upper(substr(replace(gen_random_uuid()::text,'-',''),1,12));
@@ -343,7 +357,7 @@ returns uuid language plpgsql security definer set search_path=public,auth as $$
 declare o public.police_occurrences%rowtype; v uuid; n text;
 begin
  select * into o from public.police_occurrences where id=p_occurrence;
- if not found or not (public.is_world_admin() or public.is_country_president(o.country_id) or public.is_police_member_in_department(o.department_id)) then raise exception 'Sem autorização para investigar neste departamento.'; end if;
+ if not found or not (public.is_world_admin() or public.is_country_president(o.country_id) or public.has_police_department_permission(o.department_id,'police.investigate')) then raise exception 'Sem autorização para investigar neste departamento.'; end if;
  if exists(select 1 from unnest(coalesce(p_subjects,'{}'::uuid[])) as u(profile_id) where not exists(select 1 from public.profiles p where p.id=u.profile_id and p.country_id=o.country_id and p.registration_status='active')) then raise exception 'Investigados devem pertencer ao país e possuir cadastro ativo.'; end if;
  n:='INV-'||upper(substr(replace(gen_random_uuid()::text,'-',''),1,12));
  insert into public.investigations(investigation_number,country_id,occurrence_id,department_id,lead_profile_id,subject_profile_ids,title,summary,created_by)
@@ -357,7 +371,7 @@ returns jsonb language plpgsql security definer set search_path=public,auth as $
 declare v public.vehicles%rowtype; result jsonb;
 begin
  select * into v from public.vehicles where country_id=(select country_id from public.profiles where id=auth.uid()) and upper(plate)=upper(trim(p_plate));
- if not found or not public.is_police_member(v.country_id) then raise exception 'Veículo não encontrado ou consulta não autorizada.'; end if;
+ if not found or not exists(select 1 from public.police_members m where m.profile_id=auth.uid() and m.country_id=v.country_id and m.status='active' and 'police.read'=any(m.permissions)) then raise exception 'Veículo não encontrado ou consulta não autorizada.'; end if;
  result:=jsonb_build_object(
   'vehicle_number',v.vehicle_number,'plate',v.plate,'brand',v.brand,'model',v.model,'category',v.category_code,'year',v.model_year,
   'document_status',v.document_status,'vehicle_status',v.status,'registered_at',v.registered_at,
@@ -376,7 +390,7 @@ returns void language plpgsql security definer set search_path=public,auth as $$
 declare i public.investigations%rowtype;
 begin
  select * into i from public.investigations where id=p_investigation for update;
- if not found or not (public.is_world_admin() or public.is_country_president(i.country_id) or public.is_police_member_in_department(i.department_id)) then raise exception 'Sem autorização para encaminhar investigação.'; end if;
+ if not found or not (public.is_world_admin() or public.is_country_president(i.country_id) or public.has_police_department_permission(i.department_id,'police.investigate')) then raise exception 'Sem autorização para encaminhar investigação.'; end if;
  if i.status not in ('open','in_progress') or length(trim(coalesce(p_note,'')))<10 then raise exception 'Investigação ou justificativa inválida.'; end if;
  update public.investigations set status='referred_to_court',closing_note=trim(p_note),updated_at=now() where id=i.id;
  update public.police_occurrences set status='referred',updated_at=now() where id=i.occurrence_id;
@@ -387,7 +401,7 @@ returns void language plpgsql security definer set search_path=public,auth as $$
 declare i public.investigations%rowtype;
 begin
  select * into i from public.investigations where id=p_investigation for update;
- if not found or not (public.is_world_admin() or public.is_country_president(i.country_id) or public.is_police_member_in_department(i.department_id)) then raise exception 'Sem autorização para encerrar investigação.'; end if;
+ if not found or not (public.is_world_admin() or public.is_country_president(i.country_id) or public.has_police_department_permission(i.department_id,'police.investigate')) then raise exception 'Sem autorização para encerrar investigação.'; end if;
  if i.status not in ('open','in_progress') or length(trim(coalesce(p_note,'')))<10 then raise exception 'Investigação ou justificativa inválida.'; end if;
  update public.investigations set status='closed',closing_note=trim(p_note),updated_at=now() where id=i.id;
  update public.police_occurrences set status='closed',updated_at=now() where id=i.occurrence_id;
@@ -399,7 +413,7 @@ returns uuid language plpgsql security definer set search_path=public,auth as $$
 declare v public.vehicles%rowtype; d uuid; x uuid; n text;
 begin
  select * into v from public.vehicles where id=p_vehicle;
- if not found or not public.is_police_member(v.country_id) then raise exception 'Consulta ou fiscalização não autorizada.'; end if;
+ if not found or not exists(select 1 from public.police_members m where m.profile_id=auth.uid() and m.country_id=v.country_id and m.status='active' and 'police.traffic'=any(m.permissions)) then raise exception 'Consulta ou fiscalização não autorizada.'; end if;
  select m.department_id into d from public.police_members m join public.security_departments s on s.id=m.department_id where m.profile_id=auth.uid() and m.country_id=v.country_id and m.status='active' and s.status='active' limit 1;
  n:='TR-'||upper(substr(replace(gen_random_uuid()::text,'-',''),1,12));
  insert into public.traffic_violations(violation_number,country_id,vehicle_id,responsible_profile_id,responsible_company_id,category,description,officer_profile_id,department_id)
@@ -411,7 +425,7 @@ returns uuid language plpgsql security definer set search_path=public,auth as $$
 declare v public.traffic_violations%rowtype; m public.police_members%rowtype; c uuid; f uuid; code text;
 begin
  select * into v from public.traffic_violations where id=p_violation for update;
- if not found or not (public.is_world_admin() or public.is_country_president(v.country_id) or v.officer_profile_id=auth.uid()) or p_amount<=0 then raise exception 'Infração ou valor inválido.'; end if;
+ if not found or not (public.is_world_admin() or public.is_country_president(v.country_id) or (v.officer_profile_id=auth.uid() and exists(select 1 from public.police_members m where m.profile_id=auth.uid() and m.department_id=v.department_id and m.status='active' and 'police.fine'=any(m.permissions)))) or p_amount<=0 then raise exception 'Infração ou valor inválido.'; end if;
  select * into m from public.police_members where profile_id=auth.uid() and country_id=v.country_id and department_id=v.department_id and status='active' limit 1;
  select id into c from public.currencies where internal_code=(select currency_code from public.countries where id=v.country_id) and status='active';
  if c is null then raise exception 'Moeda nacional ativa não configurada.'; end if;
@@ -569,7 +583,7 @@ begin
 -- Exposição controlada: sem escrita direta nas tabelas de justiça.
 revoke all on public.security_departments,public.police_members,public.police_occurrences,public.citizen_reports,public.investigations,public.traffic_violations,public.administrative_fines,public.fine_appeals,public.judicial_institutions,public.judicial_members,public.court_cases,public.court_case_parties,public.court_hearings,public.court_decisions,public.court_appeals,public.correctional_facilities,public.correctional_records,public.justice_audit_logs from anon,authenticated;
 grant select on public.security_departments,public.police_members,public.police_occurrences,public.citizen_reports,public.investigations,public.traffic_violations,public.administrative_fines,public.fine_appeals,public.judicial_institutions,public.judicial_members,public.court_cases,public.court_case_parties,public.court_hearings,public.court_decisions,public.court_appeals,public.correctional_facilities,public.correctional_records,public.justice_audit_logs to authenticated;
-revoke all on function public.is_police_member(uuid,text),public.is_judicial_member(uuid,text[]),public.is_court_case_party(uuid),public.is_police_member_in_department(uuid),public.is_fine_police_member(uuid),
+revoke all on function public.is_police_member(uuid,text),public.is_judicial_member(uuid,text[]),public.is_court_case_party(uuid),public.is_police_member_in_department(uuid),public.is_fine_police_member(uuid),public.has_police_department_permission(uuid,text),
  public.judicial_create_facility(uuid,text,text,integer),public.security_create_department(uuid,text,text,text),public.security_appoint_officer(uuid,uuid,text,text,integer),
  public.is_police_member_in_department(uuid),public.is_fine_police_member(uuid),public.police_register_occurrence(uuid,text,text,text,uuid[],uuid,timestamptz),public.citizen_submit_report(uuid,text,text,text,boolean),
  public.police_open_investigation(uuid,text,text,uuid[]),public.police_investigate_report(uuid,text,text,uuid[]),public.police_refer_investigation(uuid,text),public.police_close_investigation(uuid,text),public.traffic_record_violation(uuid,text,text),public.traffic_issue_fine(uuid,numeric,date,text),
@@ -580,7 +594,7 @@ revoke all on function public.is_police_member(uuid,text),public.is_judicial_mem
  public.police_update_member(uuid,text,text,text),public.police_add_investigation_note(uuid,text,text,text),public.judicial_review_fine_appeal(uuid,boolean,text),
  public.police_lookup_vehicle(text) from public,anon;
 
-grant execute on function public.police_update_member(uuid,text,text,text),public.police_add_investigation_note(uuid,text,text,text),public.judicial_review_fine_appeal(uuid,boolean,text),public.is_police_member(uuid,text),public.is_judicial_member(uuid,text[]),public.is_court_case_party(uuid),public.is_police_member_in_department(uuid),public.is_fine_police_member(uuid),public.is_fine_judicial_member(uuid),
+grant execute on function public.police_update_member(uuid,text,text,text),public.police_add_investigation_note(uuid,text,text,text),public.judicial_review_fine_appeal(uuid,boolean,text),public.is_police_member(uuid,text),public.is_judicial_member(uuid,text[]),public.is_court_case_party(uuid),public.is_police_member_in_department(uuid),public.is_fine_police_member(uuid),public.is_fine_judicial_member(uuid),public.has_police_department_permission(uuid,text),
  public.judicial_create_facility(uuid,text,text,integer),public.security_create_department(uuid,text,text,text),public.security_appoint_officer(uuid,uuid,text,text,integer),
  public.police_lookup_vehicle(text),public.police_register_occurrence(uuid,text,text,text,uuid[],uuid,timestamptz),public.citizen_submit_report(uuid,text,text,text,boolean),
  public.police_open_investigation(uuid,text,text,uuid[]),public.police_investigate_report(uuid,text,text,uuid[]),public.police_refer_investigation(uuid,text),public.police_close_investigation(uuid,text),public.traffic_record_violation(uuid,text,text),public.traffic_issue_fine(uuid,numeric,date,text),
