@@ -319,7 +319,7 @@ begin
  if not found or not public.is_police_member(v.country_id) then raise exception 'Consulta ou fiscalização não autorizada.'; end if;
  select m.department_id into d from public.police_members m join public.security_departments s on s.id=m.department_id where m.profile_id=auth.uid() and m.country_id=v.country_id and m.status='active' and s.status='active' limit 1;
  n:='TR-'||upper(substr(replace(gen_random_uuid()::text,'-',''),1,12));
- insert into public.traffic_violations(violation_number,country_id,vehicle_id,responsible_profile_id,category,description,officer_profile_id)
+ insert into public.traffic_violations(violation_number,country_id,vehicle_id,responsible_profile_id,responsible_company_id,category,description,officer_profile_id)
  values(n,v.country_id,v.id,v.owner_profile_id,v.owner_company_id,trim(p_category),trim(p_description),auth.uid()) returning id into x;
  perform public.justice_audit(v.country_id,'traffic_violation_recorded','traffic_violation',x,jsonb_build_object('vehicle_id',v.id)); return x;
 end; $$;
@@ -357,8 +357,10 @@ begin
  if length(trim(coalesce(p_idempotency,'')))<12 then raise exception 'Chave de pagamento inválida.'; end if;
  perform pg_advisory_xact_lock(hashtextextended(p_idempotency,0));
  select * into f from public.administrative_fines where id=p_fine for update;
- if f.id is null or f.recipient_profile_id<>auth.uid() or f.status not in ('pending','overdue') then raise exception 'Multa não pode ser paga por esta conta.'; end if;
- select * into a from public.bank_accounts where id=p_account and owner_profile_id=auth.uid() and status='active' for update;
+ if f.id is null then raise exception 'Multa não encontrada.'; end if;
+ if f.status='paid' and f.idempotency_key=p_idempotency then return f.bank_transaction_id; end if;
+ if f.status not in ('pending','overdue') or not (f.recipient_profile_id=auth.uid() or (f.recipient_company_id is not null and public.is_company_member(f.recipient_company_id,'finance.manage'))) then raise exception 'Multa não pode ser paga por esta conta.'; end if;
+ select * into a from public.bank_accounts where id=p_account and status='active' and ((f.recipient_profile_id is not null and owner_profile_id=f.recipient_profile_id) or (f.recipient_company_id is not null and owner_company_id=f.recipient_company_id)) for update;
  if a.id is null or a.country_id<>f.country_id or a.currency_id<>f.currency_id then raise exception 'Conta bancária, país ou moeda incompatível.'; end if;
  if a.balance<f.amount then raise exception 'Saldo insuficiente.'; end if;
  update public.bank_accounts set balance=balance-f.amount where id=a.id returning * into a;
