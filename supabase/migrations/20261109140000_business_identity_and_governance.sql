@@ -7,6 +7,14 @@ create sequence if not exists public.world_cnpj_number_seq start 1;
 alter table public.profiles add column if not exists cpf_number text;
 alter table public.companies add column if not exists cnpj text;
 alter table public.companies add column if not exists business_activity text not null default 'general';
+alter table public.companies add column if not exists latitude numeric(10,7);
+alter table public.companies add column if not exists longitude numeric(10,7);
+alter table public.vehicle_dealerships add column if not exists latitude numeric(10,7);
+alter table public.vehicle_dealerships add column if not exists longitude numeric(10,7);
+alter table public.companies drop constraint if exists companies_coordinates_check;
+alter table public.companies add constraint companies_coordinates_check check((latitude is null or latitude between -90 and 90) and (longitude is null or longitude between -180 and 180));
+alter table public.vehicle_dealerships drop constraint if exists vehicle_dealerships_coordinates_check;
+alter table public.vehicle_dealerships add constraint vehicle_dealerships_coordinates_check check((latitude is null or latitude between -90 and 90) and (longitude is null or longitude between -180 and 180));
 
 do $$
 declare r record; n text;
@@ -53,7 +61,7 @@ for each row execute function public.assign_world_cnpj();
 create or replace function public.request_company_registration_v2(
  p_legal_name text,p_trade_name text,p_country_id uuid,p_city text,p_region text,p_sector text,
  p_company_type text,p_size_class text,p_description text,p_declared_capital numeric,p_currency_id uuid,
- p_business_activity text,p_government_entity_id uuid default null,p_logo_url text default null
+ p_business_activity text,p_government_entity_id uuid default null,p_logo_url text default null,p_latitude numeric default null,p_longitude numeric default null
 ) returns uuid language plpgsql security definer set search_path=public,auth as $$
 declare v_id uuid;
 begin
@@ -67,7 +75,8 @@ begin
   p_legal_name,p_trade_name,p_country_id,p_city,p_region,p_sector,p_company_type,p_size_class,
   p_description,p_declared_capital,p_currency_id,p_government_entity_id,p_logo_url
  );
- update public.companies set business_activity=p_business_activity where id=v_id;
+ if (p_latitude is not null and p_latitude not between -90 and 90) or (p_longitude is not null and p_longitude not between -180 and 180) then raise exception 'Coordenadas geográficas inválidas.'; end if;
+ update public.companies set business_activity=p_business_activity,latitude=p_latitude,longitude=p_longitude where id=v_id;
  perform public.company_audit(v_id,'business_activity_selected','company',v_id,jsonb_build_object('business_activity',p_business_activity));
  return v_id;
 end; $$;
@@ -110,9 +119,9 @@ returns trigger language plpgsql security definer set search_path=public,auth as
 begin
  if new.status='active' and (tg_op='INSERT' or old.status is distinct from new.status) then
   if new.business_activity='vehicle_dealership' and not exists(select 1 from public.vehicle_dealerships d where d.company_id=new.id) then
-   insert into public.vehicle_dealerships(identifier,name,country_id,city,region,logo_url,company_id,bank_account_id,status,created_by,approved_by,approved_at)
+   insert into public.vehicle_dealerships(identifier,name,country_id,city,region,logo_url,company_id,bank_account_id,latitude,longitude,status,created_by,approved_by,approved_at)
    values('DLR-'||upper(substr(replace(gen_random_uuid()::text,'-',''),1,12)),coalesce(nullif(new.trade_name,''),new.legal_name),
-    new.country_id,new.city,new.region,new.logo_url,new.id,null,'active',new.created_by,new.approved_by,coalesce(new.approved_at,now()));
+    new.country_id,new.city,new.region,new.logo_url,new.id,null,new.latitude,new.longitude,'active',new.created_by,new.approved_by,coalesce(new.approved_at,now()));
    perform public.company_audit(new.id,'dealership_created_from_company','vehicle_dealership',null,jsonb_build_object('status','active'));
   elsif new.business_activity='driving_school' and not exists(select 1 from public.driving_schools s where s.company_id=new.id) then
    insert into public.driving_schools(identifier,name,country_id,city,region,responsible_profile_id,company_id,is_public,status,created_by,approved_by,approved_at)
@@ -161,7 +170,7 @@ begin
  return v;
 end; $function$;
 
-revoke all on function public.request_company_registration_v2(text,text,uuid,text,text,text,text,text,text,numeric,uuid,text,uuid,text) from public,anon;
+revoke all on function public.request_company_registration_v2(text,text,uuid,text,text,text,text,text,text,numeric,uuid,text,uuid,text,numeric,numeric) from public,anon;
 grant execute on function public.request_company_registration_v2(text,text,uuid,text,text,text,text,text,text,numeric,uuid,text,uuid,text) to authenticated;
 revoke all on function public.president_review_company(uuid,text,text) from public,anon;
 grant execute on function public.president_review_company(uuid,text,text) to authenticated;
