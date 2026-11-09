@@ -313,7 +313,7 @@ begin
 end; $$;
 
 create or replace function public.police_lookup_vehicle(p_plate text)
-returns jsonb language plpgsql security definer set search_path=public,auth as $
+returns jsonb language plpgsql security definer set search_path=public,auth as $$
 declare v public.vehicles%rowtype; result jsonb;
 begin
  select * into v from public.vehicles where country_id=(select country_id from public.profiles where id=auth.uid()) and upper(plate)=upper(trim(p_plate));
