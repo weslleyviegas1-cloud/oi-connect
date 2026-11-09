@@ -53,7 +53,7 @@ export function CommercialBankPortal({profile,notify}:{profile:Profile;notify:(s
   if(curs.error)notify(curs.error.message);else setCurrencies(curs.data??[]);
   if(requests.error)notify("Falha ao carregar solicitações bancárias: "+requests.error.message);else setPendingBanks(requests.data??[]);
   setLoading(false);
- },[notify]);
+ },[notify,president,profile.country_id]);
  useEffect(()=>{void load()},[load]);
  useEffect(()=>{const nextBank=data.banks?.find(b=>b.status==="active")??data.banks?.[0];if(!selectedBank&&nextBank)setSelectedBank(nextBank.id)},[data.banks,selectedBank]);
  const call=async(fn:string,args:Record<string,unknown>,message:string)=>{
