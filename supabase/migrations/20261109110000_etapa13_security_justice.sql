@@ -163,13 +163,13 @@ do $$ declare t text; begin
 end $$;
 
 create or replace function public.is_police_member_in_department(p_department uuid)
-returns boolean language sql stable security definer set search_path=public,auth as $
+returns boolean language sql stable security definer set search_path=public,auth as $$
  select exists(select 1 from public.police_members m join public.security_departments d on d.id=m.department_id where m.profile_id=auth.uid() and m.department_id=p_department and m.status='active' and d.status='active')
-$;
+$$;
 create or replace function public.is_fine_police_member(p_fine uuid)
-returns boolean language sql stable security definer set search_path=public,auth as $
+returns boolean language sql stable security definer set search_path=public,auth as $$
  select exists(select 1 from public.administrative_fines f where f.id=p_fine and public.is_police_member_in_department(f.issuing_department_id))
-$;
+$$;
 revoke all on function public.is_police_member_in_department(uuid),public.is_fine_police_member(uuid) from public,anon;
 grant execute on function public.is_police_member_in_department(uuid),public.is_fine_police_member(uuid) to authenticated;
 
@@ -218,7 +218,7 @@ begin
  insert into public.correctional_facilities(country_id,name,facility_identifier,administrative_capacity,status,created_by)
  values(p_country,trim(p_name),upper(trim(p_identifier)),p_capacity,'active',auth.uid()) returning id into v;
  perform public.justice_audit(p_country,'correctional_facility_created','correctional_facility',v,'{}'); return v;
-end; $;
+end; $$;
 
 create table if not exists public.police_member_history(
  id uuid primary key default gen_random_uuid(), member_id uuid not null references public.police_members(id), country_id uuid not null references public.countries(id),
@@ -240,7 +240,7 @@ alter table public.police_member_history enable row level security;
 alter table public.investigation_notes enable row level security;
 alter table public.court_case_documents enable row level security;
 create policy police_member_history_read on public.police_member_history for select to authenticated using(public.is_world_admin() or public.is_country_president(country_id) or exists(select 1 from public.police_members m where m.id=member_id and m.profile_id=auth.uid()));
-create policy investigation_notes_read on public.investigation_notes for select to authenticated using(exists(select 1 from public.investigations i where i.id=investigation_id and (public.is_world_admin() or public.is_country_president(i.country_id) or public.is_police_member(i.country_id) or auth.uid()=any(i.subject_profile_ids))));
+create policy investigation_notes_read on public.investigation_notes for select to authenticated using(exists(select 1 from public.investigations i where i.id=investigation_id and (public.is_world_admin() or public.is_country_president(i.country_id) or public.is_police_member_in_department(i.department_id))));
 create policy court_case_documents_read on public.court_case_documents for select to authenticated using(exists(select 1 from public.court_cases c where c.id=case_id and (public.is_world_admin() or public.is_country_president(c.country_id) or public.is_judicial_member(c.country_id) or (visibility='parties' and exists(select 1 from public.court_case_parties p where p.case_id=c.id and p.profile_id=auth.uid())))));
 revoke all on public.police_member_history,public.investigation_notes,public.court_case_documents from anon,authenticated;
 grant select on public.police_member_history,public.investigation_notes,public.court_case_documents to authenticated;
@@ -254,7 +254,7 @@ begin select * into m from public.police_members where id=p_member for update;
  insert into public.police_member_history(member_id,country_id,previous_status,new_status,previous_position,new_position,changed_by,reason)
  values(m.id,m.country_id,m.status,p_status,m.position,coalesce(nullif(trim(p_position),''),m.position),auth.uid(),trim(p_reason));
  perform public.justice_audit(m.country_id,'police_member_updated','police_member',m.id,jsonb_build_object('status',p_status,'reason',p_reason));
-end; $;
+end; $$;
 create or replace function public.police_add_investigation_note(p_investigation uuid,p_type text,p_content text,p_evidence_url text default null)
 returns uuid language plpgsql security definer set search_path=public,auth as $$
 declare i public.investigations%rowtype; v uuid;
@@ -263,7 +263,7 @@ begin select * into i from public.investigations where id=p_investigation for up
  insert into public.investigation_notes(investigation_id,author_profile_id,note_type,content,evidence_url)
  values(i.id,auth.uid(),p_type,trim(p_content),nullif(trim(p_evidence_url),'')) returning id into v;
  perform public.justice_audit(i.country_id,'investigation_note_added','investigation_note',v,'{}'); return v;
-end; $;
+end; $$;
 create or replace function public.judicial_review_fine_appeal(p_appeal uuid,p_accept boolean,p_note text)
 returns void language plpgsql security definer set search_path=public,auth as $$
 declare a public.fine_appeals%rowtype; f public.administrative_fines%rowtype;
@@ -272,7 +272,7 @@ begin select * into a from public.fine_appeals where id=p_appeal for update; sel
  update public.fine_appeals set status=case when p_accept then 'accepted' else 'rejected' end,reviewed_by=auth.uid(),reviewed_at=now(),decision_note=trim(p_note) where id=a.id;
  if p_accept then update public.administrative_fines set status='cancelled' where id=f.id and status='contested'; else update public.administrative_fines set status='pending' where id=f.id and status='contested'; end if;
  perform public.justice_audit(f.country_id,'fine_appeal_reviewed','fine_appeal',a.id,jsonb_build_object('accepted',p_accept,'note',p_note));
-end; $;
+end; $$;
 
 create or replace function public.security_create_department(p_country uuid,p_name text,p_type text,p_description text default null)
 returns uuid language plpgsql security definer set search_path=public,auth as $$
@@ -317,7 +317,7 @@ begin
  if not found or p.country_id is distinct from p_country then raise exception 'Somente cidadão ativo do país pode enviar denúncia.'; end if;
  if length(trim(coalesce(p_description,'')))<15 then raise exception 'Descreva a situação com pelo menos 15 caracteres.'; end if;
  n:='DEN-'||upper(substr(replace(gen_random_uuid()::text,'-',''),1,12));
- insert into public.citizen_reports(protocol,country_id,category,location,description,is_anonymous,reporter_profile_id)
+ insert into public.citizen_reports(protocol,country_id,category,location,description,is_anonymous,reporter_profile_id,submitted_by)
  values(n,p_country,trim(p_category),nullif(trim(p_location),''),trim(p_description),p_anonymous,case when p_anonymous then null else auth.uid() end,auth.uid()) returning id into v;
  perform public.justice_audit(p_country,'citizen_report_submitted','citizen_report',v,jsonb_build_object('anonymous',p_anonymous)); return v;
 end; $$;
@@ -351,11 +351,11 @@ begin
  );
  perform public.justice_audit(v.country_id,'police_vehicle_lookup','vehicle',v.id,jsonb_build_object('plate',v.plate));
  return result;
-end; $;
+end; $$;
 
 
 create or replace function public.police_refer_investigation(p_investigation uuid,p_note text)
-returns void language plpgsql security definer set search_path=public,auth as $
+returns void language plpgsql security definer set search_path=public,auth as $$
 declare i public.investigations%rowtype;
 begin
  select * into i from public.investigations where id=p_investigation for update;
@@ -364,9 +364,9 @@ begin
  update public.investigations set status='referred_to_court',closing_note=trim(p_note),updated_at=now() where id=i.id;
  update public.police_occurrences set status='referred',updated_at=now() where id=i.occurrence_id;
  perform public.justice_audit(i.country_id,'investigation_referred_to_court','investigation',i.id,jsonb_build_object('note',p_note));
-end; $;
+end; $$;
 create or replace function public.police_close_investigation(p_investigation uuid,p_note text)
-returns void language plpgsql security definer set search_path=public,auth as $
+returns void language plpgsql security definer set search_path=public,auth as $$
 declare i public.investigations%rowtype;
 begin
  select * into i from public.investigations where id=p_investigation for update;
@@ -375,7 +375,7 @@ begin
  update public.investigations set status='closed',closing_note=trim(p_note),updated_at=now() where id=i.id;
  update public.police_occurrences set status='closed',updated_at=now() where id=i.occurrence_id;
  perform public.justice_audit(i.country_id,'investigation_closed','investigation',i.id,jsonb_build_object('note',p_note));
-end; $;
+end; $$;
 
 create or replace function public.traffic_record_violation(p_vehicle uuid,p_category text,p_description text)
 returns uuid language plpgsql security definer set search_path=public,auth as $$
@@ -415,7 +415,7 @@ begin
  if p_status not in ('triaged','investigating','referred','dismissed','closed') then raise exception 'Situação inválida.'; end if;
  update public.citizen_reports set assigned_department_id=d.id,status=p_status,resolution_note=nullif(trim(p_note),''),updated_at=now() where id=r.id;
  perform public.justice_audit(r.country_id,'report_triaged','citizen_report',r.id,jsonb_build_object('status',p_status,'department_id',d.id));
-end; $;
+end; $$;
 create or replace function public.citizen_pay_fine(p_fine uuid,p_account uuid,p_idempotency text)
 returns uuid language plpgsql security definer set search_path=public,auth as $$
 declare f public.administrative_fines%rowtype; a public.bank_accounts%rowtype; tx uuid; code text;
@@ -439,7 +439,7 @@ begin
  update public.administrative_fines set status='paid',bank_transaction_id=tx,idempotency_key=p_idempotency where id=f.id;
  perform public.justice_audit(f.country_id,'fine_paid','administrative_fine',f.id,jsonb_build_object('bank_transaction_id',tx));
  return tx;
-end; $;
+end; $$;
 
 create or replace function public.citizen_appeal_fine(p_fine uuid,p_grounds text)
 returns uuid language plpgsql security definer set search_path=public,auth as $$
@@ -523,7 +523,7 @@ begin
  if a.decision_id is not null and exists(select 1 from public.court_decisions d where d.id=a.decision_id and d.judge_profile_id=auth.uid()) then raise exception 'O juiz que proferiu a decisão original não pode julgar o próprio recurso.'; end if;
  update public.court_appeals set status=case when p_accept then 'accepted' else 'rejected' end,reviewed_by=auth.uid(),decision_note=trim(p_note) where id=a.id;
  perform public.justice_audit(c.country_id,'court_appeal_reviewed','court_appeal',a.id,jsonb_build_object('accepted',p_accept,'note',p_note));
-end; $;
+end; $$;
 
 create or replace function public.citizen_appeal_decision(p_decision uuid,p_grounds text)
 returns uuid language plpgsql security definer set search_path=public,auth as $$
