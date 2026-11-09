@@ -114,7 +114,7 @@ function JusticePortalContent({profile,notify}:Props){
 
 
 class JusticePortalErrorBoundary extends Component<{children:ReactNode},{failed:boolean}> {
- state={failed:false};
+ override state={failed:false};
  static getDerivedStateFromError(){return {failed:true};}
  override componentDidCatch(error:Error,info:ErrorInfo){console.error("WORLD ECONOMY JusticePortal render error",error,info);}
  override render(){if(this.state.failed)return <section className="we-justice-panel" role="alert"><h2><Shield/> Justiça e Segurança</h2><p>O módulo encontrou um erro ao montar esta tela. Os demais módulos continuam disponíveis. Atualize a página; se o problema persistir, informe ao administrador.</p><button onClick={()=>this.setState({failed:false})}>Tentar carregar novamente</button></section>;return this.props.children;}
