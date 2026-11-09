@@ -172,7 +172,7 @@ create policy judicial_institutions_read on public.judicial_institutions for sel
 create policy judicial_members_read on public.judicial_members for select to authenticated using(profile_id=auth.uid() or public.is_world_admin() or public.is_country_president(country_id) or public.is_judicial_member(country_id));
 
 create or replace function public.is_court_case_party(p_case uuid)
-returns boolean language sql stable security definer set search_path=public,auth as $
+returns boolean language sql stable security definer set search_path=public,auth as $$
  select exists(select 1 from public.court_case_parties where case_id=p_case and profile_id=auth.uid())
 $;
 revoke all on function public.is_court_case_party(uuid) from public,anon;
@@ -190,7 +190,7 @@ create policy justice_audit_read on public.justice_audit_logs for select to auth
 
 revoke all on function public.justice_audit(uuid,text,text,uuid,jsonb) from public,anon,authenticated;
 create or replace function public.judicial_create_facility(p_country uuid,p_name text,p_identifier text,p_capacity integer)
-returns uuid language plpgsql security definer set search_path=public,auth as $
+returns uuid language plpgsql security definer set search_path=public,auth as $$
 declare v uuid;
 begin
  if not (public.is_world_admin() or public.is_country_president(p_country) or public.is_judicial_member(p_country,array['administrator'])) then raise exception 'Sem permissão para cadastrar unidade.'; end if;
@@ -224,7 +224,7 @@ create policy court_case_documents_read on public.court_case_documents for selec
 revoke all on public.police_member_history,public.investigation_notes,public.court_case_documents from anon,authenticated;
 grant select on public.police_member_history,public.investigation_notes,public.court_case_documents to authenticated;
 create or replace function public.police_update_member(p_member uuid,p_status text,p_position text,p_reason text)
-returns void language plpgsql security definer set search_path=public,auth as $
+returns void language plpgsql security definer set search_path=public,auth as $$
 declare m public.police_members%rowtype;
 begin select * into m from public.police_members where id=p_member for update;
  if not found or not (public.is_world_admin() or public.is_country_president(m.country_id)) then raise exception 'Sem autorização para alterar vínculo funcional.'; end if;
@@ -235,7 +235,7 @@ begin select * into m from public.police_members where id=p_member for update;
  perform public.justice_audit(m.country_id,'police_member_updated','police_member',m.id,jsonb_build_object('status',p_status,'reason',p_reason));
 end; $;
 create or replace function public.police_add_investigation_note(p_investigation uuid,p_type text,p_content text,p_evidence_url text default null)
-returns uuid language plpgsql security definer set search_path=public,auth as $
+returns uuid language plpgsql security definer set search_path=public,auth as $$
 declare i public.investigations%rowtype; v uuid;
 begin select * into i from public.investigations where id=p_investigation for update;
  if not found or not public.is_police_member(i.country_id) or (i.lead_profile_id<>auth.uid() and not public.is_world_admin() and not public.is_country_president(i.country_id)) then raise exception 'Sem autorização para registrar informação.'; end if;
@@ -244,7 +244,7 @@ begin select * into i from public.investigations where id=p_investigation for up
  perform public.justice_audit(i.country_id,'investigation_note_added','investigation_note',v,'{}'); return v;
 end; $;
 create or replace function public.judicial_review_fine_appeal(p_appeal uuid,p_accept boolean,p_note text)
-returns void language plpgsql security definer set search_path=public,auth as $
+returns void language plpgsql security definer set search_path=public,auth as $$
 declare a public.fine_appeals%rowtype; f public.administrative_fines%rowtype;
 begin select * into a from public.fine_appeals where id=p_appeal for update; select * into f from public.administrative_fines where id=a.fine_id;
  if a.id is null or not (public.is_world_admin() or public.is_country_president(f.country_id) or public.is_judicial_member(f.country_id,array['judge','administrator'])) then raise exception 'Sem autorização para julgar contestação.'; end if;
@@ -340,7 +340,7 @@ begin
 end; $$;
 
 create or replace function public.police_triage_report(p_report uuid,p_department uuid,p_status text,p_note text default null)
-returns void language plpgsql security definer set search_path=public,auth as $
+returns void language plpgsql security definer set search_path=public,auth as $$
 declare r public.citizen_reports%rowtype; d public.security_departments%rowtype;
 begin
  select * into r from public.citizen_reports where id=p_report for update;
@@ -351,7 +351,7 @@ begin
  perform public.justice_audit(r.country_id,'report_triaged','citizen_report',r.id,jsonb_build_object('status',p_status,'department_id',d.id));
 end; $;
 create or replace function public.citizen_pay_fine(p_fine uuid,p_account uuid,p_idempotency text)
-returns uuid language plpgsql security definer set search_path=public,auth as $
+returns uuid language plpgsql security definer set search_path=public,auth as $$
 declare f public.administrative_fines%rowtype; a public.bank_accounts%rowtype; tx uuid; code text;
 begin
  if length(trim(coalesce(p_idempotency,'')))<12 then raise exception 'Chave de pagamento inválida.'; end if;
@@ -443,7 +443,7 @@ begin select * into c from public.court_cases where id=p_case for update;
  perform public.justice_audit(c.country_id,'court_decision_published','court_decision',v,jsonb_build_object('case_id',c.id)); return v; end; $$;
 
 create or replace function public.judicial_review_case_appeal(p_appeal uuid,p_accept boolean,p_note text)
-returns void language plpgsql security definer set search_path=public,auth as $
+returns void language plpgsql security definer set search_path=public,auth as $$
 declare a public.court_appeals%rowtype; c public.court_cases%rowtype;
 begin
  select * into a from public.court_appeals where id=p_appeal for update;
