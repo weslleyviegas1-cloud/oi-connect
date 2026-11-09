@@ -74,7 +74,7 @@ begin
  if auth.uid() is null or not public.is_company_member(p_company_id,'tax.manage') then
   raise exception 'Sem permissão para gerar a obrigação do CNPJ.';
  end if;
- if p_period !~ '^[0-9]{4}-(0[1-9]|1[0-2]) then raise exception 'Período inválido. Use AAAA-MM.'; end if;
+ if p_period !~ '^[0-9]{4}-(0[1-9]|1[0-2])$' then raise exception 'Período inválido. Use AAAA-MM.'; end if;
  perform pg_advisory_xact_lock(hashtextextended(p_company_id::text||':'||p_period,0));
  select * into c from public.companies where id=p_company_id and status='active' for update;
  if not found then raise exception 'Empresa não está ativa.'; end if;
