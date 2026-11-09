@@ -1,4 +1,4 @@
-import { useCallback,useEffect,useState,type FormEvent } from "react";
+import { Component, useCallback,useEffect,useState,type ErrorInfo,type FormEvent,type ReactNode } from "react";
 import { Shield,Scale,FileText,AlertTriangle,Car,RefreshCw,Plus,Lock } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import "./justice-portal.css";
@@ -6,7 +6,7 @@ import "./justice-portal.css";
 type Row=Record<string,any>;
 type Props={profile:{id:string;role?:string;country_id?:string|null};notify:(s:string)=>void};
 const status=(v:string)=>({active:"Ativo",pending:"Pendente",open:"Aberto",under_review:"Em análise",in_progress:"Em andamento",referred:"Encaminhado",referred_to_court:"Encaminhado à Justiça",closed:"Encerrado",concluded:"Concluído",paid:"Pago",contested:"Contestado",submitted:"Enviado",scheduled:"Agendado",held:"Realizada",suspended:"Suspenso",dismissed:"Arquivado",cancelled:"Cancelado",overdue:"Vencido",accepted:"Deferido",rejected:"Indeferido"} as Record<string,string>)[v]??v;
-export function JusticePortal({profile,notify}:Props){
+function JusticePortalContent({profile,notify}:Props){
  const admin=profile.role==="super_admin",president=profile.role==="president";
  const [tab,setTab]=useState("citizen"),[busy,setBusy]=useState(false),[departments,setDepartments]=useState<Row[]>([]),[countries,setCountries]=useState<Row[]>([]),[correctionalRecords,setCorrectionalRecords]=useState<Row[]>([]),[courtAppeals,setCourtAppeals]=useState<Row[]>([]),[auditLogs,setAuditLogs]=useState<Row[]>([]),[fineRules,setFineRules]=useState<Row[]>([]),[policeMembers,setPoliceMembers]=useState<Row[]>([]),[occurrences,setOccurrences]=useState<Row[]>([]),[reports,setReports]=useState<Row[]>([]),[myReports,setMyReports]=useState<Row[]>([]),[investigations,setInvestigations]=useState<Row[]>([]),[violations,setViolations]=useState<Row[]>([]),[fines,setFines]=useState<Row[]>([]),[appeals,setAppeals]=useState<Row[]>([]),[institutions,setInstitutions]=useState<Row[]>([]),[judicialMembers,setJudicialMembers]=useState<Row[]>([]),[cases,setCases]=useState<Row[]>([]),[hearings,setHearings]=useState<Row[]>([]),[decisions,setDecisions]=useState<Row[]>([]),[facilities,setFacilities]=useState<Row[]>([]),[accounts,setAccounts]=useState<Row[]>([]);
  const [targetCountry,setTargetCountry]=useState(profile.country_id??""),[department,setDepartment]=useState(""),[institution,setInstitution]=useState(""),[caseId,setCaseId]=useState(""),[investigationSelected,setInvestigationSelected]=useState(""),[occurrenceId,setOccurrenceId]=useState(""),[fineId,setFineId]=useState(""),[appealFineId,setAppealFineId]=useState(""),[appealDecisionId,setAppealDecisionId]=useState(""),[selectedAccount,setSelectedAccount]=useState("");
@@ -39,11 +39,18 @@ export function JusticePortal({profile,notify}:Props){
    supabase.from("court_appeals").select("*").order("created_at",{ascending:false}).limit(100),
    supabase.from("justice_audit_logs").select("*").order("created_at",{ascending:false}).limit(150)
   ];
-  const q=await Promise.all(queries);
-  const setters=[setCountries,setDepartments,setPoliceMembers,setOccurrences,setReports,null,setInvestigations,setViolations,setFineRules,setFines,setAppeals,setInstitutions,setJudicialMembers,setCases,setHearings,setDecisions,setFacilities,setAccounts,setCorrectionalRecords,setCourtAppeals,setAuditLogs];
-  q.forEach((x,i)=>{const setter=setters[i];if(!x.error&&setter)setter(x.data??[]);});
-  if(!q[5]?.error)setMyReports(q[5]?.data??[]);
- },[country,profile.id,admin]);
+  try {
+   const q=await Promise.all(queries);
+   const setters=[setCountries,setDepartments,setPoliceMembers,setOccurrences,setReports,null,setInvestigations,setViolations,setFineRules,setFines,setAppeals,setInstitutions,setJudicialMembers,setCases,setHearings,setDecisions,setFacilities,setAccounts,setCorrectionalRecords,setCourtAppeals,setAuditLogs];
+   q.forEach((x,i)=>{const setter=setters[i];if(!x.error&&setter)setter(Array.isArray(x.data)?x.data:[]);});
+   if(!q[5]?.error)setMyReports(Array.isArray(q[5]?.data)?q[5].data:[]);
+   const failures=q.filter(x=>x.error);
+   if(failures.length)notify("Algumas informações de Justiça não puderam ser carregadas. Atualize novamente ou contate o administrador.");
+  } catch (error) {
+   console.error("WORLD ECONOMY justice portal load failed",error);
+   notify("Falha ao carregar dados de Justiça e Segurança. Tente atualizar a página.");
+  }
+ },[country,profile.id,admin,notify]);
  useEffect(()=>{if(country||admin)void load();},[country,admin,load]);
  const rpc=async(fn:string,args:Row,msg:string)=>{setBusy(true);try{const {error}=await supabase.rpc(fn,args);if(error)throw error;notify(msg);await load();}catch(e:any){notify(e.message??"Não foi possível concluir a operação.");}finally{setBusy(false);}};
  const submit=(fn:string,args:Row,msg:string)=>(e:FormEvent)=>{e.preventDefault();void rpc(fn,args,msg);};
@@ -104,3 +111,12 @@ export function JusticePortal({profile,notify}:Props){
   <button className="we-justice-refresh" onClick={()=>void load()}><RefreshCw/> Atualizar dados</button>
  </div>;
 }
+
+
+class JusticePortalErrorBoundary extends Component<{children:ReactNode},{failed:boolean}> {
+ override state={failed:false};
+ static getDerivedStateFromError(){return {failed:true};}
+ override componentDidCatch(error:Error,info:ErrorInfo){console.error("WORLD ECONOMY JusticePortal render error",error,info);}
+ override render(){if(this.state.failed)return <section className="we-justice-panel" role="alert"><h2><Shield/> Justiça e Segurança</h2><p>O módulo encontrou um erro ao montar esta tela. Os demais módulos continuam disponíveis. Atualize a página; se o problema persistir, informe ao administrador.</p><button onClick={()=>this.setState({failed:false})}>Tentar carregar novamente</button></section>;return this.props.children;}
+}
+export function JusticePortal(props:Props){return <JusticePortalErrorBoundary><JusticePortalContent {...props}/></JusticePortalErrorBoundary>;}
