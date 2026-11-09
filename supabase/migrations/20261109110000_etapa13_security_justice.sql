@@ -311,6 +311,25 @@ begin
  update public.police_occurrences set status='under_review',updated_at=now() where id=o.id;
  perform public.justice_audit(o.country_id,'investigation_opened','investigation',v,jsonb_build_object('occurrence_id',o.id)); return v;
 end; $$;
+
+create or replace function public.police_lookup_vehicle(p_plate text)
+returns jsonb language plpgsql security definer set search_path=public,auth as $
+declare v public.vehicles%rowtype; result jsonb;
+begin
+ select * into v from public.vehicles where country_id=(select country_id from public.profiles where id=auth.uid()) and upper(plate)=upper(trim(p_plate));
+ if not found or not public.is_police_member(v.country_id) then raise exception 'Veículo não encontrado ou consulta não autorizada.'; end if;
+ result:=jsonb_build_object(
+  'vehicle_number',v.vehicle_number,'plate',v.plate,'brand',v.brand,'model',v.model,'category',v.category_code,'year',v.model_year,
+  'document_status',v.document_status,'vehicle_status',v.status,'registered_at',v.registered_at,
+  'owner_profile_id',v.owner_profile_id,'owner_company_id',v.owner_company_id,
+  'owner_name',coalesce((select username from public.profiles where id=v.owner_profile_id),(select coalesce(trade_name,legal_name) from public.companies where id=v.owner_company_id)),
+  'licenses',(select coalesce(jsonb_agg(jsonb_build_object('category',l.category_code,'number',l.license_number,'status',l.status,'expires_at',l.expires_at)),'[]'::jsonb) from public.driving_licenses l where l.holder_profile_id=v.owner_profile_id and l.country_id=v.country_id),
+  'fees',(select coalesce(jsonb_agg(jsonb_build_object('status',f.status,'due_at',f.due_at)),'[]'::jsonb) from public.vehicle_fees f where f.vehicle_id=v.id)
+ );
+ perform public.justice_audit(v.country_id,'police_vehicle_lookup','vehicle',v.id,jsonb_build_object('plate',v.plate));
+ return result;
+end; $;
+
 create or replace function public.traffic_record_violation(p_vehicle uuid,p_category text,p_description text)
 returns uuid language plpgsql security definer set search_path=public,auth as $$
 declare v public.vehicles%rowtype; d uuid; x uuid; n text;
@@ -482,7 +501,7 @@ revoke all on public.security_departments,public.police_members,public.police_oc
 grant select on public.security_departments,public.police_members,public.police_occurrences,public.citizen_reports,public.investigations,public.traffic_violations,public.administrative_fines,public.fine_appeals,public.judicial_institutions,public.judicial_members,public.court_cases,public.court_case_parties,public.court_hearings,public.court_decisions,public.court_appeals,public.correctional_facilities,public.correctional_records,public.justice_audit_logs to authenticated;
 grant execute on function public.police_update_member(uuid,text,text,text),public.police_add_investigation_note(uuid,text,text,text),public.judicial_review_fine_appeal(uuid,boolean,text),public.is_police_member(uuid,text),public.is_judicial_member(uuid,text[]),
  public.judicial_create_facility(uuid,text,text,integer),public.security_create_department(uuid,text,text,text),public.security_appoint_officer(uuid,uuid,text,text,integer),
- public.police_register_occurrence(uuid,text,text,text,uuid[],uuid,timestamptz),public.citizen_submit_report(uuid,text,text,text,boolean),
+ public.police_lookup_vehicle(text),public.police_register_occurrence(uuid,text,text,text,uuid[],uuid,timestamptz),public.citizen_submit_report(uuid,text,text,text,boolean),
  public.police_open_investigation(uuid,text,text,uuid[]),public.traffic_record_violation(uuid,text,text),public.traffic_issue_fine(uuid,numeric,date,text),
  public.citizen_appeal_fine(uuid,text),public.citizen_pay_fine(uuid,uuid,text),public.police_triage_report(uuid,uuid,text,text),public.judicial_create_institution(uuid,text,text),public.judicial_appoint_member(uuid,uuid,text,text),
  public.judicial_open_case(uuid,text,text,text,uuid,uuid,uuid),public.judicial_assign_judge(uuid,uuid),public.judicial_record_hearing(uuid,timestamptz,jsonb,text),
