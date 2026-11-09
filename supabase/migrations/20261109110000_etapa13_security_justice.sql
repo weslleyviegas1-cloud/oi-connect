@@ -170,9 +170,17 @@ create policy administrative_fines_read on public.administrative_fines for selec
 create policy fine_appeals_read on public.fine_appeals for select to authenticated using(appellant_profile_id=auth.uid() or public.is_world_admin() or exists(select 1 from public.administrative_fines f where f.id=fine_id and (public.is_country_president(f.country_id) or public.is_police_member(f.country_id))));
 create policy judicial_institutions_read on public.judicial_institutions for select to authenticated using(status='active' or public.is_world_admin() or public.is_country_president(country_id));
 create policy judicial_members_read on public.judicial_members for select to authenticated using(profile_id=auth.uid() or public.is_world_admin() or public.is_country_president(country_id) or public.is_judicial_member(country_id));
-create policy court_cases_read on public.court_cases for select to authenticated using(public.is_world_admin() or public.is_country_president(country_id) or public.is_judicial_member(country_id) or exists(select 1 from public.court_case_parties p where p.case_id=id and p.profile_id=auth.uid()));
+
+create or replace function public.is_court_case_party(p_case uuid)
+returns boolean language sql stable security definer set search_path=public,auth as $
+ select exists(select 1 from public.court_case_parties where case_id=p_case and profile_id=auth.uid())
+$;
+revoke all on function public.is_court_case_party(uuid) from public,anon;
+grant execute on function public.is_court_case_party(uuid) to authenticated;
+
+create policy court_cases_read on public.court_cases for select to authenticated using(public.is_world_admin() or public.is_country_president(country_id) or public.is_judicial_member(country_id) or public.is_court_case_party(id));
 create policy court_parties_read on public.court_case_parties for select to authenticated using(profile_id=auth.uid() or exists(select 1 from public.court_cases c where c.id=case_id and (public.is_world_admin() or public.is_country_president(c.country_id) or public.is_judicial_member(c.country_id))));
-create policy court_hearings_read on public.court_hearings for select to authenticated using(exists(select 1 from public.court_cases c where c.id=case_id and (public.is_world_admin() or public.is_country_president(c.country_id) or public.is_judicial_member(c.country_id) or exists(select 1 from public.court_case_parties p where p.case_id=c.id and p.profile_id=auth.uid()))));
+create policy court_hearings_read on public.court_hearings for select to authenticated using(exists(select 1 from public.court_cases c where c.id=case_id and (public.is_world_admin() or public.is_country_president(c.country_id) or public.is_judicial_member(c.country_id) or public.is_court_case_party(c.id))));
 create policy court_decisions_read on public.court_decisions for select to authenticated using(exists(select 1 from public.court_cases c where c.id=case_id and (public.is_world_admin() or public.is_country_president(c.country_id) or public.is_judicial_member(c.country_id) or exists(select 1 from public.court_case_parties p where p.case_id=c.id and p.profile_id=auth.uid()))));
 create policy court_appeals_read on public.court_appeals for select to authenticated using(appellant_profile_id=auth.uid() or exists(select 1 from public.court_cases c where c.id=case_id and (public.is_world_admin() or public.is_country_president(c.country_id) or public.is_judicial_member(c.country_id))));
 create policy correctional_facilities_read on public.correctional_facilities for select to authenticated using(status='active' or public.is_world_admin() or public.is_country_president(country_id) or public.is_judicial_member(country_id,array['judge','administrator']));
@@ -433,6 +441,18 @@ begin select * into c from public.court_cases where id=p_case for update;
  insert into public.court_decisions(case_id,decision_number,judge_profile_id,outcome,reasoning) values(c.id,n,auth.uid(),trim(p_outcome),trim(p_reasoning)) returning id into v;
  update public.court_cases set status='concluded',updated_at=now() where id=c.id;
  perform public.justice_audit(c.country_id,'court_decision_published','court_decision',v,jsonb_build_object('case_id',c.id)); return v; end; $$;
+
+create or replace function public.judicial_review_case_appeal(p_appeal uuid,p_accept boolean,p_note text)
+returns void language plpgsql security definer set search_path=public,auth as $
+declare a public.court_appeals%rowtype; c public.court_cases%rowtype;
+begin
+ select * into a from public.court_appeals where id=p_appeal for update;
+ select * into c from public.court_cases where id=a.case_id;
+ if a.id is null or not (public.is_world_admin() or public.is_country_president(c.country_id) or public.is_judicial_member(c.country_id,array['judge','administrator'])) then raise exception 'Sem autorização para analisar recurso.'; end if;
+ update public.court_appeals set status=case when p_accept then 'accepted' else 'rejected' end,reviewed_by=auth.uid(),decision_note=trim(p_note) where id=a.id;
+ perform public.justice_audit(c.country_id,'court_appeal_reviewed','court_appeal',a.id,jsonb_build_object('accepted',p_accept,'note',p_note));
+end; $;
+
 create or replace function public.citizen_appeal_decision(p_decision uuid,p_grounds text)
 returns uuid language plpgsql security definer set search_path=public,auth as $$
 declare d public.court_decisions%rowtype; c public.court_cases%rowtype; v uuid;
@@ -461,6 +481,6 @@ grant execute on function public.police_update_member(uuid,text,text,text),publi
  public.police_open_investigation(uuid,text,text,uuid[]),public.traffic_record_violation(uuid,text,text),public.traffic_issue_fine(uuid,numeric,date,text),
  public.citizen_appeal_fine(uuid,text),public.citizen_pay_fine(uuid,uuid,text),public.police_triage_report(uuid,uuid,text,text),public.judicial_create_institution(uuid,text,text),public.judicial_appoint_member(uuid,uuid,text,text),
  public.judicial_open_case(uuid,text,text,text,uuid,uuid,uuid),public.judicial_assign_judge(uuid,uuid),public.judicial_record_hearing(uuid,timestamptz,jsonb,text),
- public.judicial_publish_decision(uuid,text,text),public.citizen_appeal_decision(uuid,text),public.correctional_record_event(uuid,uuid,uuid,uuid,text,text) to authenticated;
+ public.judicial_publish_decision(uuid,text,text),public.judicial_review_case_appeal(uuid,boolean,text),public.citizen_appeal_decision(uuid,text),public.correctional_record_event(uuid,uuid,uuid,uuid,text,text) to authenticated;
 
 commit;
