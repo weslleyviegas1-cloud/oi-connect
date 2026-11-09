@@ -28,7 +28,7 @@ create table if not exists public.police_occurrences(
 create table if not exists public.citizen_reports(
  id uuid primary key default gen_random_uuid(), protocol text not null unique, country_id uuid not null references public.countries(id),
  category text not null, location text, description text not null, involved_profile_ids uuid[] not null default '{}',
- is_anonymous boolean not null default false, reporter_profile_id uuid references public.profiles(id),
+ is_anonymous boolean not null default false, reporter_profile_id uuid references public.profiles(id), submitted_by uuid references public.profiles(id),
  assigned_department_id uuid references public.security_departments(id), status text not null default 'submitted'
  check(status in ('submitted','triaged','investigating','referred','dismissed','closed')),
  resolution_note text, created_at timestamptz not null default now(), updated_at timestamptz not null default now()
@@ -163,7 +163,7 @@ end $$;
 create policy security_departments_read on public.security_departments for select to authenticated using(status='active' or public.is_world_admin() or public.is_country_president(country_id));
 create policy police_members_read on public.police_members for select to authenticated using(profile_id=auth.uid() or public.is_world_admin() or public.is_country_president(country_id) or public.is_police_member(country_id));
 create policy police_occurrences_read on public.police_occurrences for select to authenticated using(public.is_world_admin() or public.is_country_president(country_id) or public.is_police_member(country_id) or responsible_profile_id=auth.uid() or auth.uid()=any(involved_profile_ids));
-create policy citizen_reports_read on public.citizen_reports for select to authenticated using((not is_anonymous and reporter_profile_id=auth.uid()) or public.is_world_admin() or public.is_country_president(country_id) or (assigned_department_id is not null and public.is_police_member(country_id)));
+create policy citizen_reports_read on public.citizen_reports for select to authenticated using(submitted_by=auth.uid() or public.is_world_admin() or public.is_country_president(country_id) or (assigned_department_id is not null and public.is_police_member(country_id)));
 create policy investigations_read on public.investigations for select to authenticated using(public.is_world_admin() or public.is_country_president(country_id) or public.is_police_member(country_id) or auth.uid()=any(subject_profile_ids));
 create policy traffic_violations_read on public.traffic_violations for select to authenticated using(responsible_profile_id=auth.uid() or public.is_world_admin() or public.is_country_president(country_id) or public.is_police_member(country_id));
 create policy administrative_fines_read on public.administrative_fines for select to authenticated using(recipient_profile_id=auth.uid() or public.is_world_admin() or public.is_country_president(country_id) or public.is_police_member(country_id) or (recipient_company_id is not null and public.is_company_member(recipient_company_id,'finance.read')));
@@ -222,7 +222,7 @@ begin
  if length(trim(coalesce(p_description,'')))<15 then raise exception 'Descreva a situação com pelo menos 15 caracteres.'; end if;
  n:='DEN-'||upper(substr(replace(gen_random_uuid()::text,'-',''),1,12));
  insert into public.citizen_reports(protocol,country_id,category,location,description,is_anonymous,reporter_profile_id)
- values(n,p_country,trim(p_category),nullif(trim(p_location),''),trim(p_description),p_anonymous,case when p_anonymous then null else auth.uid() end) returning id into v;
+ values(n,p_country,trim(p_category),nullif(trim(p_location),''),trim(p_description),p_anonymous,case when p_anonymous then null else auth.uid() end,auth.uid()) returning id into v;
  perform public.justice_audit(p_country,'citizen_report_submitted','citizen_report',v,jsonb_build_object('anonymous',p_anonymous)); return v;
 end; $$;
 create or replace function public.police_open_investigation(p_occurrence uuid,p_title text,p_summary text,p_subjects uuid[] default '{}')
@@ -264,6 +264,41 @@ begin
  update public.traffic_violations set status='fined' where id=v.id;
  perform public.justice_audit(v.country_id,'administrative_fine_issued','administrative_fine',f,jsonb_build_object('amount',p_amount)); return f;
 end; $$;
+
+create or replace function public.police_triage_report(p_report uuid,p_department uuid,p_status text,p_note text default null)
+returns void language plpgsql security definer set search_path=public,auth as $
+declare r public.citizen_reports%rowtype; d public.security_departments%rowtype;
+begin
+ select * into r from public.citizen_reports where id=p_report for update;
+ select * into d from public.security_departments where id=p_department and status='active';
+ if r.id is null or d.id is null or r.country_id<>d.country_id or not public.is_police_member(r.country_id) then raise exception 'Denúncia ou departamento indisponível.'; end if;
+ if p_status not in ('triaged','investigating','referred','dismissed','closed') then raise exception 'Situação inválida.'; end if;
+ update public.citizen_reports set assigned_department_id=d.id,status=p_status,resolution_note=nullif(trim(p_note),''),updated_at=now() where id=r.id;
+ perform public.justice_audit(r.country_id,'report_triaged','citizen_report',r.id,jsonb_build_object('status',p_status,'department_id',d.id));
+end; $;
+create or replace function public.citizen_pay_fine(p_fine uuid,p_account uuid,p_idempotency text)
+returns uuid language plpgsql security definer set search_path=public,auth as $
+declare f public.administrative_fines%rowtype; a public.bank_accounts%rowtype; tx uuid; code text;
+begin
+ if length(trim(coalesce(p_idempotency,'')))<12 then raise exception 'Chave de pagamento inválida.'; end if;
+ perform pg_advisory_xact_lock(hashtextextended(p_idempotency,0));
+ select * into f from public.administrative_fines where id=p_fine for update;
+ if f.id is null or f.recipient_profile_id<>auth.uid() or f.status not in ('pending','overdue') then raise exception 'Multa não pode ser paga por esta conta.'; end if;
+ select * into a from public.bank_accounts where id=p_account and owner_profile_id=auth.uid() and status='active' for update;
+ if a.id is null or a.country_id<>f.country_id or a.currency_id<>f.currency_id then raise exception 'Conta bancária, país ou moeda incompatível.'; end if;
+ if a.balance<f.amount then raise exception 'Saldo insuficiente.'; end if;
+ update public.bank_accounts set balance=balance-f.amount where id=a.id returning * into a;
+ insert into public.bank_transactions(account_id,transaction_type,amount,currency_id,balance_after,description,reference_id,idempotency_key,actor_id)
+ values(a.id,'fee',f.amount,a.currency_id,a.balance,'Pagamento de multa administrativa',f.id,'fine-'||p_idempotency,auth.uid()) returning id into tx;
+ select currency_code into code from public.countries where id=f.country_id;
+ insert into public.treasury_ledger_entries(country_id,entry_type,category,description,amount,currency_code_snapshot,signed_amount,source_type,source_id,idempotency_key,created_by)
+ values(f.country_id,'revenue','administrative_fine','Pagamento de multa '||f.fine_number,f.amount,code,f.amount,'administrative_fine',f.id,'fine-treasury-'||p_idempotency,auth.uid())
+ on conflict(country_id,idempotency_key) do nothing;
+ update public.administrative_fines set status='paid',bank_transaction_id=tx,idempotency_key=p_idempotency where id=f.id;
+ perform public.justice_audit(f.country_id,'fine_paid','administrative_fine',f.id,jsonb_build_object('bank_transaction_id',tx));
+ return tx;
+end; $;
+
 create or replace function public.citizen_appeal_fine(p_fine uuid,p_grounds text)
 returns uuid language plpgsql security definer set search_path=public,auth as $$
 declare f public.administrative_fines%rowtype; v uuid;
@@ -354,11 +389,11 @@ begin
 -- Exposição controlada: sem escrita direta nas tabelas de justiça.
 revoke all on public.security_departments,public.police_members,public.police_occurrences,public.citizen_reports,public.investigations,public.traffic_violations,public.administrative_fines,public.fine_appeals,public.judicial_institutions,public.judicial_members,public.court_cases,public.court_case_parties,public.court_hearings,public.court_decisions,public.court_appeals,public.correctional_facilities,public.correctional_records,public.justice_audit_logs from anon,authenticated;
 grant select on public.security_departments,public.police_members,public.police_occurrences,public.citizen_reports,public.investigations,public.traffic_violations,public.administrative_fines,public.fine_appeals,public.judicial_institutions,public.judicial_members,public.court_cases,public.court_case_parties,public.court_hearings,public.court_decisions,public.court_appeals,public.correctional_facilities,public.correctional_records,public.justice_audit_logs to authenticated;
-grant execute on function public.is_police_member(uuid,text),public.is_judicial_member(uuid,text[]),public.justice_audit(uuid,text,text,uuid,jsonb),
+grant execute on function public.is_police_member(uuid,text),public.is_judicial_member(uuid,text[]),
  public.security_create_department(uuid,text,text,text),public.security_appoint_officer(uuid,uuid,text,text,integer),
  public.police_register_occurrence(uuid,text,text,text,uuid[],uuid,timestamptz),public.citizen_submit_report(uuid,text,text,text,boolean),
  public.police_open_investigation(uuid,text,text,uuid[]),public.traffic_record_violation(uuid,text,text),public.traffic_issue_fine(uuid,numeric,date,text),
- public.citizen_appeal_fine(uuid,text),public.judicial_create_institution(uuid,text,text),public.judicial_appoint_member(uuid,uuid,text,text),
+ public.citizen_appeal_fine(uuid,text),public.citizen_pay_fine(uuid,uuid,text),public.police_triage_report(uuid,uuid,text,text),public.judicial_create_institution(uuid,text,text),public.judicial_appoint_member(uuid,uuid,text,text),
  public.judicial_open_case(uuid,text,text,text,uuid,uuid,uuid),public.judicial_assign_judge(uuid,uuid),public.judicial_record_hearing(uuid,timestamptz,jsonb,text),
  public.judicial_publish_decision(uuid,text,text),public.citizen_appeal_decision(uuid,text),public.correctional_record_event(uuid,uuid,uuid,uuid,text,text) to authenticated;
 
