@@ -22,7 +22,9 @@ export function CompanyPortal({profile,notify}:Props){
  const [taxRule,setTaxRule]=useState(""),[taxDesc,setTaxDesc]=useState(""),[taxPeriod,setTaxPeriod]=useState(""),[taxBase,setTaxBase]=useState(""),[taxAmount,setTaxAmount]=useState("");
  
  const company=companies.find(c=>c.id===selected);
- const canManageSelectedCompany=Boolean(company&&(company.created_by===profile.id||owners.some(o=>o.company_id===company.id&&o.profile_id===profile.id&&o.status==="active"&&["owner","founder"].includes(o.owner_role))||members.some(m=>m.company_id===company.id&&m.profile_id===profile.id&&m.status==="active"&&(m.member_role==="owner"||m.member_role==="director"||m.permissions?.includes("company.manage"))));
+ const isSelectedCompanyOwner=Boolean(company&&(company.created_by===profile.id||owners.some(o=>o.company_id===company.id&&o.profile_id===profile.id&&o.status==="active"&&(o.owner_role==="owner"||o.owner_role==="founder"))));
+ const isSelectedCompanyManager=Boolean(company&&members.some(m=>m.company_id===company.id&&m.profile_id===profile.id&&m.status==="active"&&(m.member_role==="owner"||m.member_role==="director"||(m.permissions??[]).includes("company.manage"))));
+ const canManageSelectedCompany=isSelectedCompanyOwner||isSelectedCompanyManager;
  const myContracts=contracts.filter(c=>c.employee_profile_id===profile.id);
  const myApps=apps.filter(a=>a.applicant_profile_id===profile.id);
  const ownedJobs=jobs.filter(j=>j.company_id===selected);
