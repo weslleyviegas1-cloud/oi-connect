@@ -29,9 +29,9 @@ create table if not exists public.country_natural_resources (
  recorded_by uuid not null references public.profiles(id) on delete restrict,
  updated_by uuid references public.profiles(id) on delete restrict,
  created_at timestamptz not null default now(),
- updated_at timestamptz not null default now(),
- unique(country_id,resource_id,coalesce(region,''))
+ updated_at timestamptz not null default now()
 );
+create unique index if not exists country_resources_region_uidx on public.country_natural_resources(country_id,resource_id,coalesce(region,''));
 create index if not exists country_resources_scope_idx on public.country_natural_resources(country_id,status);
 
 create table if not exists public.product_catalog (
@@ -71,6 +71,18 @@ create table if not exists public.industrial_facilities (
  check((latitude is null or latitude between -90 and 90) and (longitude is null or longitude between -180 and 180))
 );
 create index if not exists industrial_facilities_country_idx on public.industrial_facilities(country_id,status,category);
+
+create or replace function public.validate_industry_company_country()
+returns trigger language plpgsql security definer set search_path=public as $
+begin
+ if new.company_id is not null and not exists(select 1 from public.companies c where c.id=new.company_id and c.country_id=new.country_id) then
+  raise exception 'A empresa informada não pertence ao país do registro.';
+ end if;
+ return new;
+end; $;
+drop trigger if exists industrial_facility_country_guard on public.industrial_facilities;
+create trigger industrial_facility_country_guard before insert or update of country_id,company_id on public.industrial_facilities
+for each row execute function public.validate_industry_company_country();
 
 create table if not exists public.extraction_records (
  id uuid primary key default gen_random_uuid(),
@@ -151,7 +163,7 @@ create table if not exists public.inventory_movements (
 create index if not exists inventory_company_created_idx on public.inventory_movements(company_id,created_at desc);
 create index if not exists inventory_country_item_idx on public.inventory_movements(country_id,item_type,resource_id,product_id);
 
-create or replace view public.inventory_balances as
+create or replace view public.inventory_balances with (security_invoker=true) as
 select country_id,company_id,item_type,resource_id,product_id,unit_snapshot,
  sum(case when movement_type in ('in','adjustment_in','released') then quantity
           when movement_type in ('out','adjustment_out','reserved') then -quantity else 0 end) as balance
@@ -392,7 +404,7 @@ create policy production_recipes_read on public.production_recipes for select to
 create policy production_recipes_write on public.production_recipes for all to authenticated using(public.is_world_admin() or (country_id is not null and public.can_manage_industry_country(country_id,'industry.manage'))) with check(public.is_world_admin() or (country_id is not null and public.can_manage_industry_country(country_id,'industry.manage')));
 create policy production_recipe_inputs_read on public.production_recipe_inputs for select to authenticated using(exists(select 1 from public.production_recipes r where r.id=recipe_id and (r.status='active' or public.is_world_admin() or (r.country_id is not null and public.is_country_president(r.country_id)))));
 create policy production_recipe_inputs_write on public.production_recipe_inputs for all to authenticated using(exists(select 1 from public.production_recipes r where r.id=recipe_id and (public.is_world_admin() or (r.country_id is not null and public.can_manage_industry_country(r.country_id,'industry.manage'))))) with check(exists(select 1 from public.production_recipes r where r.id=recipe_id and (public.is_world_admin() or (r.country_id is not null and public.can_manage_industry_country(r.country_id,'industry.manage')))));
-create policy inventory_movements_read on public.inventory_movements for select to authenticated using(public.is_world_admin() or public.is_country_president(country_id) or (company_id is not null and public.can_manage_industry_company(company_id)));
+create policy inventory_movements_read on public.inventory_movements for select to authenticated using(public.is_world_admin() or (company_id is not null and public.can_manage_industry_company(company_id)));
 create policy production_orders_read on public.production_orders for select to authenticated using(public.is_world_admin() or public.is_country_president(country_id) or public.can_manage_industry_company(company_id));
 create policy energy_facilities_read on public.energy_facilities for select to authenticated using(public.is_world_admin() or public.is_government_country_citizen(country_id) or (company_id is not null and public.can_manage_industry_company(company_id)));
 create policy energy_facilities_write on public.energy_facilities for all to authenticated using(public.is_world_admin() or (company_id is not null and public.can_manage_industry_company(company_id)) or public.can_manage_industry_country(country_id,'infrastructure.manage')) with check(public.is_world_admin() or (company_id is not null and public.can_manage_industry_company(company_id)) or public.can_manage_industry_country(country_id,'infrastructure.manage'));
