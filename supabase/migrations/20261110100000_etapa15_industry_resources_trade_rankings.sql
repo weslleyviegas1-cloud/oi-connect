@@ -544,7 +544,7 @@ begin
  if not exists(select 1 from public.companies c where c.id=p_company_id and c.country_id=p_country_id and c.status='active') and p_company_id is not null then raise exception 'Empresa não pertence ao país ou não está ativa.'; end if;
  select unit into v_unit from public.natural_resources where id=p_resource_id and is_active;
  if not found then raise exception 'Recurso inexistente ou inativo.'; end if;
- if p_country_resource_id is not null and not exists(select 1 from public.country_natural_resources cr where cr.id=p_country_resource_id and cr.country_id=p_country_id and cr.resource_id=p_resource_id and cr.status='confirmed') then raise exception 'A reserva não está confirmada para este país.'; end if;
+ if p_country_resource_id is null or not exists(select 1 from public.country_natural_resources cr where cr.id=p_country_resource_id and cr.country_id=p_country_id and cr.resource_id=p_resource_id and cr.status='confirmed' and cr.confirmed_reserve is not null) then raise exception 'Selecione uma reserva confirmada para este recurso e país. Reservas estimadas não autorizam extração.'; end if;
  v_key:=coalesce(nullif(trim(p_idempotency_key),''),gen_random_uuid()::text);
  insert into public.extraction_records(country_id,company_id,resource_id,country_resource_id,quantity,unit_snapshot,origin_location,proof_url,notes,created_by,idempotency_key)
  values(p_country_id,p_company_id,p_resource_id,p_country_resource_id,p_quantity,v_unit,trim(p_origin),nullif(trim(p_proof_url),''),nullif(trim(p_notes),''),auth.uid(),v_key)
@@ -581,6 +581,42 @@ begin
  return e.id;
 end; $$;
 
+create or replace function public.create_industry_recipe(
+ p_country_id uuid,p_name text,p_description text,p_output_product_id uuid,p_output_quantity numeric,
+ p_duration_minutes integer,p_is_global boolean,p_inputs jsonb
+) returns uuid language plpgsql security definer set search_path=public,auth as $
+declare v_id uuid; v_item jsonb; v_unit text; v_type text; v_resource uuid; v_product uuid;
+begin
+ if auth.uid() is null then raise exception 'Autenticação obrigatória.'; end if;
+ if nullif(trim(p_name),'') is null or p_output_quantity is null or p_output_quantity<=0 then raise exception 'Nome e quantidade de saída são obrigatórios.'; end if;
+ if p_inputs is null or jsonb_typeof(p_inputs)<>'array' or jsonb_array_length(p_inputs)=0 then raise exception 'Informe ao menos um insumo.'; end if;
+ if p_is_global then
+  if not public.is_world_admin() then raise exception 'Somente o Super Admin pode criar receitas globais.'; end if;
+ else
+  if p_country_id is null or not public.can_manage_industry_country(p_country_id,'industry.manage') then raise exception 'Sem permissão para criar receita nacional.'; end if;
+ end if;
+ if not exists(select 1 from public.product_catalog p where p.id=p_output_product_id and p.is_active and (p.country_id is null or p.country_id=p_country_id)) then raise exception 'Produto de saída não disponível para este escopo.'; end if;
+ insert into public.production_recipes(country_id,name,description,output_product_id,output_quantity,duration_minutes,status,is_global,created_by,approved_by)
+ values(case when p_is_global then null else p_country_id end,trim(p_name),nullif(trim(p_description),''),p_output_product_id,p_output_quantity,p_duration_minutes,'active',p_is_global,auth.uid(),auth.uid())
+ returning id into v_id;
+ for v_item in select * from jsonb_array_elements(p_inputs) loop
+  v_type:=v_item->>'item_type';
+  if v_type='resource' then
+   v_resource:=nullif(v_item->>'item_id','')::uuid; v_product:=null;
+   select unit into v_unit from public.natural_resources where id=v_resource and is_active;
+  elsif v_type='product' then
+   v_product:=nullif(v_item->>'item_id','')::uuid; v_resource:=null;
+   select unit into v_unit from public.product_catalog where id=v_product and is_active and (country_id is null or country_id=p_country_id);
+  else raise exception 'Tipo de insumo inválido.'; end if;
+  if v_unit is null then raise exception 'Insumo inexistente ou indisponível.'; end if;
+  if coalesce((v_item->>'quantity')::numeric,0)<=0 then raise exception 'Quantidade de insumo inválida.'; end if;
+  insert into public.production_recipe_inputs(recipe_id,item_type,resource_id,product_id,quantity_per_batch,unit_snapshot)
+  values(v_id,v_type,v_resource,v_product,(v_item->>'quantity')::numeric,v_unit);
+ end loop;
+ perform public.industry_audit(p_country_id,null,'recipe_created','production_recipe',v_id,jsonb_build_object('global',p_is_global));
+ return v_id;
+end; $;
+
 create or replace function public.create_production_order(p_facility_id uuid,p_recipe_id uuid,p_batch_count integer,p_idempotency_key text)
 returns uuid language plpgsql security definer set search_path=public,auth as $$
 declare f public.industrial_facilities%rowtype; r public.production_recipes%rowtype; v_id uuid;
@@ -607,6 +643,7 @@ begin
  perform pg_advisory_xact_lock(hashtextextended(o.company_id::text,0));
  select * into r from public.production_recipes where id=o.recipe_id and status='active';
  if not found then raise exception 'Receita não está ativa.'; end if;
+ if not exists(select 1 from public.production_recipe_inputs where recipe_id=r.id) then raise exception 'A receita não possui insumos configurados.'; end if;
  for i in select * from public.production_recipe_inputs where recipe_id=r.id loop
   select coalesce(sum(case when movement_type in ('in','adjustment_in','released') then quantity else -quantity end),0)
    into v_balance from public.inventory_movements
@@ -659,5 +696,5 @@ grant execute on function public.can_manage_industry_company(uuid) to authentica
 grant execute on function public.can_manage_industry_country(uuid,text) to authenticated;
 grant execute on function public.review_industrial_facility(uuid,text,text) to authenticated;\ngrant execute on function public.accept_trade_contract(uuid,text) to authenticated;\ngrant execute on function public.update_industry_shipment(uuid,text) to authenticated;\ngrant execute on function public.record_industry_extraction(uuid,uuid,uuid,uuid,numeric,text,text,text,text) to authenticated;
 grant execute on function public.review_industry_extraction(uuid,text,text) to authenticated;
-grant execute on function public.create_production_order(uuid,uuid,integer,text) to authenticated;
+grant execute on function public.create_industry_recipe(uuid,text,text,uuid,numeric,integer,boolean,jsonb) to authenticated;\ngrant execute on function public.create_production_order(uuid,uuid,integer,text) to authenticated;
 grant execute on function public.complete_production_order(uuid) to authenticated;
