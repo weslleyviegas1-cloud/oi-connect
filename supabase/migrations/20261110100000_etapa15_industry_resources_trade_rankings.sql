@@ -77,7 +77,8 @@ returns trigger language plpgsql security definer set search_path=public as $
 declare t public.trade_contracts%rowtype; v_existing numeric;
 begin
  select * into t from public.trade_contracts where id=new.contract_id;
- if not found or t.status not in ('accepted','fulfilled') then raise exception 'A remessa exige contrato aceito.'; end if;\n if new.status<>'planned' then raise exception 'Uma remessa nova deve iniciar como planejada; use o fluxo de atualização validado.'; end if;
+ if not found or t.status not in ('accepted','fulfilled') then raise exception 'A remessa exige contrato aceito.'; end if;
+ if new.status<>'planned' then raise exception 'Uma remessa nova deve iniciar como planejada; use o fluxo de atualização validado.'; end if;
  select coalesce(sum(quantity),0) into v_existing from public.shipment_records where contract_id=new.contract_id and status<>'cancelled';
  if v_existing+new.quantity>t.quantity then raise exception 'A quantidade total das remessas excede a quantidade contratada.'; end if;
  return new;
@@ -453,7 +454,7 @@ create policy shipment_records_insert on public.shipment_records for insert to a
 -- Situação de remessas é alterada exclusivamente por RPC validada.
 create policy environmental_records_read on public.environmental_records for select to authenticated using(public.is_world_admin() or public.is_country_president(country_id) or public.is_government_country_citizen(country_id) and (company_id is null or public.can_manage_industry_company(company_id)) or (company_id is not null and public.can_manage_industry_company(company_id)));
 create policy environmental_records_insert on public.environmental_records for insert to authenticated with check(created_by=auth.uid() and (public.is_world_admin() or public.can_manage_industry_country(country_id,'environment.manage') or (company_id is not null and public.can_manage_industry_company(company_id))));
-create policy environmental_records_update on public.environmental_records for update to authenticated using(public.can_manage_industry_country(country_id,'environment.manage') or (company_id is not null and public.can_manage_industry_company(company_id))) with check(public.can_manage_industry_country(country_id,'environment.manage') or (company_id is not null and public.can_manage_industry_company(company_id)));
+create policy environmental_records_update on public.environmental_records for update to authenticated using(public.can_manage_industry_country(country_id,'environment.manage')) with check(public.can_manage_industry_country(country_id,'environment.manage'));
 create policy security_indicators_read on public.global_security_indicators for select to authenticated using(public.is_world_admin() or public.is_government_country_citizen(country_id));
 create policy security_indicators_insert on public.global_security_indicators for insert to authenticated with check(recorded_by=auth.uid() and public.can_manage_industry_country(country_id,'security.manage'));
 create policy security_indicators_update on public.global_security_indicators for update to authenticated using(public.can_manage_industry_country(country_id,'security.manage')) with check(public.can_manage_industry_country(country_id,'security.manage'));
@@ -787,7 +788,8 @@ group by t.buyer_country_id,c.name;
 grant select on public.inventory_balances,public.global_industry_rankings to authenticated;
 grant execute on function public.can_manage_industry_company(uuid) to authenticated;
 grant execute on function public.can_manage_industry_country(uuid,text) to authenticated;
-grant execute on function public.review_environmental_record(uuid,text,text) to authenticated;\ngrant execute on function public.review_industrial_facility(uuid,text,text) to authenticated;
+grant execute on function public.review_environmental_record(uuid,text,text) to authenticated;
+grant execute on function public.review_industrial_facility(uuid,text,text) to authenticated;
 grant execute on function public.accept_trade_contract(uuid,text) to authenticated;
 grant execute on function public.update_industry_shipment(uuid,text) to authenticated;
 grant execute on function public.settle_trade_contract(uuid,uuid,uuid,text) to authenticated;
