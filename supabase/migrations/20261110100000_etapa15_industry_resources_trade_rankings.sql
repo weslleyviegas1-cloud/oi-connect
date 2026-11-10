@@ -401,7 +401,8 @@ alter table public.industry_audit_logs enable row level security;
 alter table public.industry_notifications enable row level security;
 
 create policy natural_resources_read on public.natural_resources for select to authenticated using(is_active or public.is_world_admin());
-create policy natural_resources_admin_write on public.natural_resources for all to authenticated using(public.is_world_admin()) with check(public.is_world_admin());
+create policy natural_resources_admin_insert on public.natural_resources for insert to authenticated with check(public.is_world_admin() and created_by=auth.uid());
+create policy natural_resources_admin_update on public.natural_resources for update to authenticated using(public.is_world_admin()) with check(public.is_world_admin());
 create policy country_resources_read on public.country_natural_resources for select to authenticated using(public.is_world_admin() or public.is_government_country_citizen(country_id));
 create policy country_resources_insert on public.country_natural_resources for insert to authenticated with check(recorded_by=auth.uid() and public.can_manage_industry_country(country_id,'resources.manage'));
 create policy country_resources_update on public.country_natural_resources for update to authenticated using(public.can_manage_industry_country(country_id,'resources.manage')) with check(public.can_manage_industry_country(country_id,'resources.manage'));
@@ -409,14 +410,16 @@ create policy product_catalog_read on public.product_catalog for select to authe
 create policy product_catalog_insert on public.product_catalog for insert to authenticated with check(created_by=auth.uid() and (public.is_world_admin() or (country_id is not null and public.can_manage_industry_country(country_id,'industry.manage'))));
 create policy product_catalog_update on public.product_catalog for update to authenticated using(public.is_world_admin() or (country_id is not null and public.can_manage_industry_country(country_id,'industry.manage'))) with check(public.is_world_admin() or (country_id is not null and public.can_manage_industry_country(country_id,'industry.manage')));
 create policy industrial_facilities_read on public.industrial_facilities for select to authenticated using(status='active' or public.is_world_admin() or public.is_country_president(country_id) or public.can_manage_industry_company(company_id));
-create policy industrial_facilities_write on public.industrial_facilities for all to authenticated using(public.can_manage_industry_company(company_id)) with check(public.can_manage_industry_company(company_id));
+create policy industrial_facilities_insert on public.industrial_facilities for insert to authenticated with check(created_by=auth.uid() and public.can_manage_industry_company(company_id));
+create policy industrial_facilities_update on public.industrial_facilities for update to authenticated using(public.can_manage_industry_company(company_id)) with check(public.can_manage_industry_company(company_id));
 create policy extraction_records_read on public.extraction_records for select to authenticated using(public.is_world_admin() or public.is_country_president(country_id) or public.is_government_country_citizen(country_id) and (company_id is null or public.can_manage_industry_company(company_id)) or (company_id is not null and public.can_manage_industry_company(company_id)));
 create policy extraction_records_insert on public.extraction_records for insert to authenticated with check(created_by=auth.uid() and (public.is_world_admin() or (company_id is not null and public.can_manage_industry_company(company_id)) or (company_id is null and public.can_manage_industry_country(country_id,'resources.manage'))));
 create policy production_recipes_read on public.production_recipes for select to authenticated using((status='active' and (is_global or public.is_government_country_citizen(country_id))) or public.is_world_admin() or (country_id is not null and public.is_country_president(country_id)));
 create policy production_recipes_insert on public.production_recipes for insert to authenticated with check(created_by=auth.uid() and (public.is_world_admin() or (country_id is not null and public.can_manage_industry_country(country_id,'industry.manage'))));
 create policy production_recipes_update on public.production_recipes for update to authenticated using(public.is_world_admin() or (country_id is not null and public.can_manage_industry_country(country_id,'industry.manage'))) with check(public.is_world_admin() or (country_id is not null and public.can_manage_industry_country(country_id,'industry.manage')));
 create policy production_recipe_inputs_read on public.production_recipe_inputs for select to authenticated using(exists(select 1 from public.production_recipes r where r.id=recipe_id and (r.status='active' or public.is_world_admin() or (r.country_id is not null and public.is_country_president(r.country_id)))));
-create policy production_recipe_inputs_write on public.production_recipe_inputs for all to authenticated using(exists(select 1 from public.production_recipes r where r.id=recipe_id and (public.is_world_admin() or (r.country_id is not null and public.can_manage_industry_country(r.country_id,'industry.manage'))))) with check(exists(select 1 from public.production_recipes r where r.id=recipe_id and (public.is_world_admin() or (r.country_id is not null and public.can_manage_industry_country(r.country_id,'industry.manage')))));
+create policy production_recipe_inputs_insert on public.production_recipe_inputs for insert to authenticated with check(exists(select 1 from public.production_recipes r where r.id=recipe_id and (public.is_world_admin() or (r.country_id is not null and public.can_manage_industry_country(r.country_id,'industry.manage')))));
+create policy production_recipe_inputs_update on public.production_recipe_inputs for update to authenticated using(exists(select 1 from public.production_recipes r where r.id=recipe_id and (public.is_world_admin() or (r.country_id is not null and public.can_manage_industry_country(r.country_id,'industry.manage'))))) with check(exists(select 1 from public.production_recipes r where r.id=recipe_id and (public.is_world_admin() or (r.country_id is not null and public.can_manage_industry_country(r.country_id,'industry.manage')))));
 create policy inventory_movements_read on public.inventory_movements for select to authenticated using(public.is_world_admin() or (company_id is not null and public.can_manage_industry_company(company_id)));
 create policy production_orders_read on public.production_orders for select to authenticated using(public.is_world_admin() or public.is_country_president(country_id) or public.can_manage_industry_company(company_id));
 create policy energy_facilities_read on public.energy_facilities for select to authenticated using(public.is_world_admin() or public.is_government_country_citizen(country_id) or (company_id is not null and public.can_manage_industry_company(company_id)));
@@ -508,6 +511,22 @@ begin
  return s.id;
 end; $;
 
+create or replace function public.guard_country_resource_reserve()
+returns trigger language plpgsql set search_path=public as $
+begin
+ if new.extracted_quantity is distinct from old.extracted_quantity
+   and current_setting('app.industry_ledger_write',true) is distinct from 'on' then
+  raise exception 'A quantidade extraída só pode ser alterada por uma aprovação de extração registrada.';
+ end if;
+ if new.confirmed_reserve is not null and new.extracted_quantity>new.confirmed_reserve then
+  raise exception 'A reserva confirmada não pode ser inferior ao total já extraído.';
+ end if;
+ return new;
+end; $;
+drop trigger if exists country_resource_reserve_guard on public.country_natural_resources;
+create trigger country_resource_reserve_guard before update on public.country_natural_resources
+for each row execute function public.guard_country_resource_reserve();
+
 create or replace function public.record_industry_extraction(
  p_country_id uuid,p_company_id uuid,p_resource_id uuid,p_country_resource_id uuid,p_quantity numeric,p_origin text,p_notes text default null,p_proof_url text default null,p_idempotency_key text default null
 ) returns uuid language plpgsql security definer set search_path=public,auth as $$
@@ -542,6 +561,7 @@ begin
   perform pg_advisory_xact_lock(hashtextextended(e.country_resource_id::text,0));
   select greatest(confirmed_reserve-extracted_quantity,0) into v_balance from public.country_natural_resources where id=e.country_resource_id for update;
   if v_balance is null or e.quantity>v_balance then raise exception 'Quantidade superior à reserva confirmada ainda disponível.'; end if;
+  perform set_config('app.industry_ledger_write','on',true);
   update public.country_natural_resources set extracted_quantity=extracted_quantity+e.quantity,updated_by=auth.uid(),updated_at=now() where id=e.country_resource_id;
  end if;
  update public.extraction_records set status=p_decision,reviewed_by=auth.uid(),reviewed_at=now(),review_note=nullif(trim(p_note),'') where id=e.id;
