@@ -24,7 +24,9 @@ export function IndustryPortal({ profile, notify }: Props) {
  const isPresident = profile?.role === "president";
  const [tab, setTab] = useState<Tab>("overview");
  const [countryId, setCountryId] = useState(profile?.country_id ?? "");
- const [countries, setCountries] = useState<Row[]>([]);\n const [currencies, setCurrencies] = useState<Row[]>([]);\n const [bankAccounts, setBankAccounts] = useState<Row[]>([]);
+ const [countries, setCountries] = useState<Row[]>([]);
+ const [currencies, setCurrencies] = useState<Row[]>([]);
+ const [bankAccounts, setBankAccounts] = useState<Row[]>([]);
  const [resources, setResources] = useState<Row[]>([]);
  const [countryResources, setCountryResources] = useState<Row[]>([]);
  const [extractions, setExtractions] = useState<Row[]>([]);
@@ -102,7 +104,10 @@ export function IndustryPortal({ profile, notify }: Props) {
     ...(ow.data ?? []).map((o: Row) => o.company_id),
     ...(co.data ?? []).filter((x: Row) => x.created_by === profile?.id).map((x: Row) => x.id),
    ]);
-   setManagedCompanies((co.data ?? []).filter((x: Row) => managed.has(x.id) && (!selected || x.country_id === selected)));\n   const [cur, accounts] = await Promise.all([supabase.from("currencies").select("id,name,internal_code,symbol").eq("status","active").order("name"),supabase.from("bank_accounts").select("id,owner_company_id,account_number,currency_id,balance,status").eq("status","active").not("owner_company_id","is",null)]);\n   if (cur.error) throw cur.error; if (accounts.error) throw accounts.error;\n   setCurrencies(cur.data ?? []); setBankAccounts(accounts.data ?? []);
+   setManagedCompanies((co.data ?? []).filter((x: Row) => managed.has(x.id) && (!selected || x.country_id === selected)));
+   const [cur, accounts] = await Promise.all([supabase.from("currencies").select("id,name,internal_code,symbol").eq("status","active").order("name"),supabase.from("bank_accounts").select("id,owner_company_id,account_number,currency_id,balance,status").eq("status","active").not("owner_company_id","is",null)]);
+   if (cur.error) throw cur.error; if (accounts.error) throw accounts.error;
+   setCurrencies(cur.data ?? []); setBankAccounts(accounts.data ?? []);
    if (gm.data?.id) {
     const perms = await supabase.from("government_member_permissions").select("permission_key,scope_type,scope_id").eq("member_id", gm.data.id);
     if (perms.error) throw perms.error;
@@ -127,7 +132,8 @@ export function IndustryPortal({ profile, notify }: Props) {
  };
  const companyLabel = (c: Row) => c.trade_name || c.legal_name;
  const activeCountryName = countries.find(c => c.id === selectedCountry)?.name || profile?.country_name || "País";
- const managedCompanyOptions = managedCompanies.filter(c => c.status === "active");\n const currencyOptions = currencies.map(c => [c.id, `${c.name} (${c.internal_code})`] as [string,string]);
+ const managedCompanyOptions = managedCompanies.filter(c => c.status === "active");
+ const currencyOptions = currencies.map(c => [c.id, `${c.name} (${c.internal_code})`] as [string,string]);
  const productName = (row: Row) => row.product_catalog?.name || row.natural_resources?.name || row.name || "—";
  const metrics = [
   ["Reservas confirmadas", countryResources.filter(x => x.status === "confirmed").length],
