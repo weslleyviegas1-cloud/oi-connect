@@ -762,28 +762,124 @@ begin
 end; $$;
 
 create or replace view public.global_industry_rankings as
-select 'industrial_output'::text as ranking_type,m.country_id,c.name as country_name,sum(m.quantity)::numeric(30,6) as metric_value,
- max(m.created_at)::date as reference_date,'Produção industrial acumulada registrada no livro de estoque; não representa valor monetário'::text as methodology
-from public.inventory_movements m join public.countries c on c.id=m.country_id
-where m.item_type='product' and m.movement_type='in' and m.source_type='production'
-group by m.country_id,c.name
+with reference_currency as (
+ select s.reference_currency_id,c.internal_code
+ from public.currency_system_settings s
+ join public.currencies c on c.id=s.reference_currency_id
+ where s.singleton=true and s.reference_currency_id is not null
+),
+latest_gdp as (
+ select distinct on (g.country_id) g.*
+ from public.economic_gdp_records g
+ where g.status in ('confirmed','revised')
+ order by g.country_id,g.period_end desc,g.updated_at desc
+)
+select 'gdp'::text as ranking_type,g.country_id,c.name as country_name,
+ (g.total_value*fx.rate)::numeric(30,6) as metric_value,g.period_end as reference_date,
+ ('Último PIB confirmado convertido para a moeda de referência ('||rc.internal_code||'); países sem cotação vigente não são classificados.')::text as methodology
+from latest_gdp g
+join public.countries c on c.id=g.country_id
+join public.country_currency_assignments ca on ca.country_id=g.country_id
+ and ca.effective_from<=g.period_end::timestamptz+interval '1 day'
+ and (ca.effective_until is null or ca.effective_until>g.period_end::timestamptz+interval '1 day')
+join public.currencies cu on cu.id=ca.currency_id and cu.internal_code=g.currency_code_snapshot
+cross join reference_currency rc
+cross join lateral (
+ select case
+  when ca.currency_id=rc.reference_currency_id then 1::numeric
+  else coalesce(
+   (select x.rate from public.exchange_rates x where x.from_currency_id=ca.currency_id and x.to_currency_id=rc.reference_currency_id
+    and x.status='active' and x.effective_from<=g.period_end::timestamptz+interval '1 day'
+    and (x.effective_until is null or x.effective_until>g.period_end::timestamptz+interval '1 day')
+    order by x.effective_from desc,x.version desc limit 1),
+   1::numeric/nullif((select x.rate from public.exchange_rates x where x.from_currency_id=rc.reference_currency_id and x.to_currency_id=ca.currency_id
+    and x.status='active' and x.effective_from<=g.period_end::timestamptz+interval '1 day'
+    and (x.effective_until is null or x.effective_until>g.period_end::timestamptz+interval '1 day')
+    order by x.effective_from desc,x.version desc limit 1),0)
+  ) end as rate
+) fx
+where fx.rate is not null
 union all
-select 'confirmed_reserves',r.country_id,c.name,sum(r.confirmed_reserve)::numeric(30,6),max(r.updated_at)::date,
- 'Soma das reservas confirmadas cadastradas; não representa estoque disponível'
-from public.country_natural_resources r join public.countries c on c.id=r.country_id
-where r.status='confirmed' group by r.country_id,c.name
+select 'industrial_output',m.country_id,c.name,sum(m.quantity*pp.amount*fx.rate)::numeric(30,6),max(m.created_at)::date,
+ ('Valor da produção concluída com base em preços praticados registrados e convertidos para '||rc.internal_code||'; itens sem preço válido não entram.')::text
+from public.inventory_movements m
+join public.countries c on c.id=m.country_id
+join public.product_prices pp on pp.country_id=m.country_id and pp.product_id=m.product_id
+ and pp.price_type='practiced' and pp.valid_from<=m.created_at::date
+ and (pp.valid_until is null or pp.valid_until>=m.created_at::date)
+cross join reference_currency rc
+cross join lateral (
+ select case when pp.currency_id=rc.reference_currency_id then 1::numeric else coalesce(
+  (select x.rate from public.exchange_rates x where x.from_currency_id=pp.currency_id and x.to_currency_id=rc.reference_currency_id
+   and x.status='active' and x.effective_from<=m.created_at and (x.effective_until is null or x.effective_until>m.created_at)
+   order by x.effective_from desc,x.version desc limit 1),
+  1::numeric/nullif((select x.rate from public.exchange_rates x where x.from_currency_id=rc.reference_currency_id and x.to_currency_id=pp.currency_id
+   and x.status='active' and x.effective_from<=m.created_at and (x.effective_until is null or x.effective_until>m.created_at)
+   order by x.effective_from desc,x.version desc limit 1),0)
+ ) end as rate
+) fx
+where m.item_type='product' and m.movement_type='in' and m.source_type='production' and fx.rate is not null
+group by m.country_id,c.name,rc.internal_code
 union all
-select 'exports',t.seller_country_id,c.name,sum(t.total_value)::numeric(30,6),max(t.updated_at)::date,
- 'Valor nominal contratado em moeda de cada contrato; moedas não normalizadas, não comparar diretamente entre moedas'
-from public.trade_contracts t join public.countries c on c.id=t.seller_country_id
-where t.trade_type in ('export','import') and t.status in ('accepted','fulfilled')
-group by t.seller_country_id,c.name
+select 'confirmed_reserves',r.country_id,c.name,sum(r.confirmed_reserve*pp.amount*fx.rate)::numeric(30,6),max(r.updated_at)::date,
+ ('Valor de reservas confirmadas calculado por preço de referência registrado e convertido para '||rc.internal_code||'; reservas sem preço não entram.')::text
+from public.country_natural_resources r
+join public.countries c on c.id=r.country_id
+join lateral (
+ select p.amount,p.currency_id from public.product_prices p
+ where p.country_id=r.country_id and p.resource_id=r.resource_id and p.price_type in ('reference','practiced')
+  and p.valid_from<=current_date and (p.valid_until is null or p.valid_until>=current_date)
+ order by case p.price_type when 'reference' then 0 else 1 end,p.valid_from desc limit 1
+) pp on true
+cross join reference_currency rc
+cross join lateral (
+ select case when pp.currency_id=rc.reference_currency_id then 1::numeric else coalesce(
+  (select x.rate from public.exchange_rates x where x.from_currency_id=pp.currency_id and x.to_currency_id=rc.reference_currency_id
+   and x.status='active' and x.effective_from<=now() and (x.effective_until is null or x.effective_until>now())
+   order by x.effective_from desc,x.version desc limit 1),
+  1::numeric/nullif((select x.rate from public.exchange_rates x where x.from_currency_id=rc.reference_currency_id and x.to_currency_id=pp.currency_id
+   and x.status='active' and x.effective_from<=now() and (x.effective_until is null or x.effective_until>now())
+   order by x.effective_from desc,x.version desc limit 1),0)
+ ) end as rate
+) fx
+where r.status='confirmed' and r.confirmed_reserve is not null and fx.rate is not null
+group by r.country_id,c.name,rc.internal_code
 union all
-select 'imports',t.buyer_country_id,c.name,sum(t.total_value)::numeric(30,6),max(t.updated_at)::date,
- 'Valor nominal contratado em moeda de cada contrato; moedas não normalizadas, não comparar diretamente entre moedas'
-from public.trade_contracts t join public.countries c on c.id=t.buyer_country_id
-where t.trade_type in ('export','import') and t.status in ('accepted','fulfilled')
-group by t.buyer_country_id,c.name;
+select 'exports',t.seller_country_id,c.name,sum(t.total_value*fx.rate)::numeric(30,6),max(t.updated_at)::date,
+ ('Valor de contratos de exportação aceitos/entregues convertido para '||rc.internal_code||'; não representa receita recebida.')::text
+from public.trade_contracts t
+join public.countries c on c.id=t.seller_country_id
+cross join reference_currency rc
+cross join lateral (
+ select case when t.currency_id=rc.reference_currency_id then 1::numeric else coalesce(
+  (select x.rate from public.exchange_rates x where x.from_currency_id=t.currency_id and x.to_currency_id=rc.reference_currency_id
+   and x.status='active' and x.effective_from<=t.updated_at and (x.effective_until is null or x.effective_until>t.updated_at)
+   order by x.effective_from desc,x.version desc limit 1),
+  1::numeric/nullif((select x.rate from public.exchange_rates x where x.from_currency_id=rc.reference_currency_id and x.to_currency_id=t.currency_id
+   and x.status='active' and x.effective_from<=t.updated_at and (x.effective_until is null or x.effective_until>t.updated_at)
+   order by x.effective_from desc,x.version desc limit 1),0)
+ ) end as rate
+) fx
+where t.trade_type in ('export','import') and t.status in ('accepted','fulfilled') and fx.rate is not null
+group by t.seller_country_id,c.name,rc.internal_code
+union all
+select 'imports',t.buyer_country_id,c.name,sum(t.total_value*fx.rate)::numeric(30,6),max(t.updated_at)::date,
+ ('Valor de contratos de importação aceitos/entregues convertido para '||rc.internal_code||'; não representa pagamento realizado.')::text
+from public.trade_contracts t
+join public.countries c on c.id=t.buyer_country_id
+cross join reference_currency rc
+cross join lateral (
+ select case when t.currency_id=rc.reference_currency_id then 1::numeric else coalesce(
+  (select x.rate from public.exchange_rates x where x.from_currency_id=t.currency_id and x.to_currency_id=rc.reference_currency_id
+   and x.status='active' and x.effective_from<=t.updated_at and (x.effective_until is null or x.effective_until>t.updated_at)
+   order by x.effective_from desc,x.version desc limit 1),
+  1::numeric/nullif((select x.rate from public.exchange_rates x where x.from_currency_id=rc.reference_currency_id and x.to_currency_id=t.currency_id
+   and x.status='active' and x.effective_from<=t.updated_at and (x.effective_until is null or x.effective_until>t.updated_at)
+   order by x.effective_from desc,x.version desc limit 1),0)
+ ) end as rate
+) fx
+where t.trade_type in ('export','import') and t.status in ('accepted','fulfilled') and fx.rate is not null
+group by t.buyer_country_id,c.name,rc.internal_code;
 
 grant select on public.inventory_balances,public.global_industry_rankings to authenticated;
 grant execute on function public.can_manage_industry_company(uuid) to authenticated;
