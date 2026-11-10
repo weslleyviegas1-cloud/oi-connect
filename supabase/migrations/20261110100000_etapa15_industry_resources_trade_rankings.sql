@@ -72,6 +72,20 @@ create table if not exists public.industrial_facilities (
 );
 create index if not exists industrial_facilities_country_idx on public.industrial_facilities(country_id,status,category);
 
+create or replace function public.validate_industry_shipment()
+returns trigger language plpgsql security definer set search_path=public as $
+declare t public.trade_contracts%rowtype; v_existing numeric;
+begin
+ select * into t from public.trade_contracts where id=new.contract_id;
+ if not found or t.status not in ('accepted','fulfilled') then raise exception 'A remessa exige contrato aceito.'; end if;
+ select coalesce(sum(quantity),0) into v_existing from public.shipment_records where contract_id=new.contract_id and status<>'cancelled';
+ if v_existing+new.quantity>t.quantity then raise exception 'A quantidade total das remessas excede a quantidade contratada.'; end if;
+ return new;
+end; $;
+drop trigger if exists industry_shipment_quantity_guard on public.shipment_records;
+create trigger industry_shipment_quantity_guard before insert on public.shipment_records
+for each row execute function public.validate_industry_shipment();
+
 create or replace function public.validate_industry_company_country()
 returns trigger language plpgsql security definer set search_path=public as $
 begin
@@ -500,6 +514,41 @@ begin
  return t.id;
 end; $;
 
+create or replace function public.settle_trade_contract(p_contract_id uuid,p_from_account_id uuid,p_to_account_id uuid,p_idempotency_key text)
+returns uuid language plpgsql security definer set search_path=public,auth as $
+declare t public.trade_contracts%rowtype; a public.bank_accounts%rowtype; b public.bank_accounts%rowtype; v_transfer uuid;
+begin
+ if auth.uid() is null then raise exception 'Autenticação obrigatória.'; end if;
+ if length(trim(coalesce(p_idempotency_key,'')))<12 then raise exception 'Chave de idempotência inválida.'; end if;
+ select * into t from public.trade_contracts where id=p_contract_id for update;
+ if not found or t.status not in ('accepted','fulfilled') then raise exception 'Contrato ainda não foi aceito.'; end if;
+ if t.payment_status='paid' then raise exception 'Este contrato já foi pago.'; end if;
+ if not public.can_manage_industry_company(t.buyer_company_id) then raise exception 'Somente a empresa compradora pode efetuar o pagamento.'; end if;
+ if t.buyer_country_id<>t.seller_country_id then raise exception 'Liquidação internacional está bloqueada pela regra bancária atual. O contrato pode ser negociado, mas a transferência entre países exige autorização bancária internacional.'; end if;
+ select * into a from public.bank_accounts where id=p_from_account_id for update;
+ select * into b from public.bank_accounts where id=p_to_account_id for update;
+ if a.id is null or a.owner_company_id<>t.buyer_company_id or a.status<>'active' then raise exception 'Conta de origem não pertence à empresa compradora ou está indisponível.'; end if;
+ if b.id is null or b.owner_company_id<>t.seller_company_id or b.status<>'active' then raise exception 'Conta de destino não pertence à empresa vendedora ou está indisponível.'; end if;
+ if a.country_id<>b.country_id or a.country_id<>t.buyer_country_id then raise exception 'Transferência entre países não autorizada.'; end if;
+ if a.currency_id<>t.currency_id or b.currency_id<>t.currency_id then raise exception 'As duas contas devem utilizar a moeda do contrato.'; end if;
+ if a.balance<t.total_value then raise exception 'Saldo insuficiente na conta da empresa compradora.'; end if;
+ perform 1 from public.bank_accounts where id in (a.id,b.id) order by id for update;
+ update public.bank_accounts set balance=balance-t.total_value where id=a.id returning * into a;
+ update public.bank_accounts set balance=balance+t.total_value where id=b.id returning * into b;
+ insert into public.bank_transfers(from_account_id,to_account_id,amount_sent,from_currency_id,amount_received,to_currency_id,exchange_rate_id,exchange_rate,fee_amount,idempotency_key,initiated_by,description)
+ values(a.id,b.id,t.total_value,a.currency_id,t.total_value,b.currency_id,null,1,0,p_idempotency_key,auth.uid(),'Liquidação do contrato comercial '||t.id::text) returning id into v_transfer;
+ insert into public.bank_transactions(account_id,transaction_type,amount,currency_id,balance_after,description,reference_id,idempotency_key,actor_id)
+ values(a.id,'transfer_out',t.total_value,a.currency_id,a.balance,'Pagamento de contrato comercial',v_transfer,p_idempotency_key||':out',auth.uid()),
+       (b.id,'transfer_in',t.total_value,b.currency_id,b.balance,'Recebimento de contrato comercial',v_transfer,p_idempotency_key||':in',auth.uid());
+ update public.trade_contracts set payment_status='paid',updated_at=now() where id=t.id;
+ perform public.bank_audit(a.bank_id,'trade_payment_sent','bank_transfer',v_transfer,jsonb_build_object('contract_id',t.id,'seller_company_id',t.seller_company_id));
+ perform public.industry_audit(t.seller_country_id,t.seller_company_id,'trade_paid','trade_contract',t.id,jsonb_build_object('transfer_id',v_transfer,'amount',t.total_value));
+ insert into public.industry_notifications(recipient_profile_id,country_id,event_type,title,message,entity_type,entity_id)
+ select distinct m.profile_id,t.seller_country_id,'trade_paid','Pagamento comercial recebido','O pagamento do contrato comercial foi confirmado no banco da simulação.','trade_contract',t.id
+ from public.company_members m where m.company_id=t.seller_company_id and m.status='active';
+ return v_transfer;
+end; $;
+
 create or replace function public.update_industry_shipment(p_shipment_id uuid,p_status text)
 returns uuid language plpgsql security definer set search_path=public,auth as $
 declare s public.shipment_records%rowtype; t public.trade_contracts%rowtype; v_delivered numeric;
@@ -509,6 +558,26 @@ begin
  if not found or s.status in ('delivered','cancelled') then raise exception 'Remessa inexistente ou encerrada.'; end if;
  select * into t from public.trade_contracts where id=s.contract_id for update;
  if not (public.is_world_admin() or public.can_manage_industry_company(t.seller_company_id) or public.can_manage_industry_company(t.buyer_company_id)) then raise exception 'Sem permissão para atualizar esta remessa.'; end if;
+ if p_status='delivered' then
+  perform pg_advisory_xact_lock(hashtextextended(t.seller_company_id::text,0));
+  if t.product_id is not null then
+   select coalesce(sum(case when movement_type in ('in','adjustment_in','released') then quantity else -quantity end),0) into v_balance
+    from public.inventory_movements where company_id=t.seller_company_id and item_type='product' and product_id=t.product_id;
+  else
+   select coalesce(sum(case when movement_type in ('in','adjustment_in','released') then quantity else -quantity end),0) into v_balance
+    from public.inventory_movements where company_id=t.seller_company_id and item_type='resource' and resource_id=t.resource_id;
+  end if;
+  if v_balance<s.quantity then raise exception 'Estoque insuficiente na empresa vendedora para entregar esta remessa.'; end if;
+  if t.product_id is not null then
+   insert into public.inventory_movements(country_id,company_id,item_type,product_id,movement_type,quantity,unit_snapshot,source_type,source_id,reason,idempotency_key,actor_id)
+   values(t.seller_country_id,t.seller_company_id,'product',t.product_id,'out',s.quantity,t.unit_snapshot,'shipment',s.id,'Expedição de contrato comercial','shipment:'||s.id::text||':seller',auth.uid()),
+         (t.buyer_country_id,t.buyer_company_id,'product',t.product_id,'in',s.quantity,t.unit_snapshot,'shipment',s.id,'Recebimento de contrato comercial','shipment:'||s.id::text||':buyer',auth.uid());
+  else
+   insert into public.inventory_movements(country_id,company_id,item_type,resource_id,movement_type,quantity,unit_snapshot,source_type,source_id,reason,idempotency_key,actor_id)
+   values(t.seller_country_id,t.seller_company_id,'resource',t.resource_id,'out',s.quantity,t.unit_snapshot,'shipment',s.id,'Expedição de contrato comercial','shipment:'||s.id::text||':seller',auth.uid()),
+         (t.buyer_country_id,t.buyer_company_id,'resource',t.resource_id,'in',s.quantity,t.unit_snapshot,'shipment',s.id,'Recebimento de contrato comercial','shipment:'||s.id::text||':buyer',auth.uid());
+  end if;
+ end if;
  update public.shipment_records set status=p_status,departure_at=case when p_status='in_transit' then coalesce(departure_at,now()) else departure_at end,delivered_at=case when p_status='delivered' then now() else delivered_at end where id=s.id;
  select coalesce(sum(quantity),0) into v_delivered from public.shipment_records where contract_id=t.id and status='delivered';
  update public.trade_contracts set delivery_status=case when v_delivered>=t.quantity then 'received' when v_delivered>0 then 'partially_received' when p_status='in_transit' then 'shipped' else delivery_status end,updated_at=now() where id=t.id;
@@ -694,7 +763,8 @@ group by t.buyer_country_id,c.name;
 grant select on public.inventory_balances,public.global_industry_rankings to authenticated;
 grant execute on function public.can_manage_industry_company(uuid) to authenticated;
 grant execute on function public.can_manage_industry_country(uuid,text) to authenticated;
-grant execute on function public.review_industrial_facility(uuid,text,text) to authenticated;\ngrant execute on function public.accept_trade_contract(uuid,text) to authenticated;\ngrant execute on function public.update_industry_shipment(uuid,text) to authenticated;\ngrant execute on function public.record_industry_extraction(uuid,uuid,uuid,uuid,numeric,text,text,text,text) to authenticated;
+grant execute on function public.review_industrial_facility(uuid,text,text) to authenticated;\ngrant execute on function public.accept_trade_contract(uuid,text) to authenticated;\ngrant execute on function public.update_industry_shipment(uuid,text) to authenticated;
+grant execute on function public.settle_trade_contract(uuid,uuid,uuid,text) to authenticated;\ngrant execute on function public.record_industry_extraction(uuid,uuid,uuid,uuid,numeric,text,text,text,text) to authenticated;
 grant execute on function public.review_industry_extraction(uuid,text,text) to authenticated;
 grant execute on function public.create_industry_recipe(uuid,text,text,uuid,numeric,integer,boolean,jsonb) to authenticated;\ngrant execute on function public.create_production_order(uuid,uuid,integer,text) to authenticated;
 grant execute on function public.complete_production_order(uuid) to authenticated;
