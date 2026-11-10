@@ -461,6 +461,10 @@ create policy global_events_read on public.global_events for select to authentic
 create policy global_events_insert on public.global_events for insert to authenticated with check(created_by=auth.uid() and (public.is_world_admin() or (country_id is not null and public.can_manage_industry_country(country_id,'security.manage'))));
 create policy global_events_update on public.global_events for update to authenticated using(public.is_world_admin() or (country_id is not null and public.can_manage_industry_country(country_id,'security.manage'))) with check(public.is_world_admin() or (country_id is not null and public.can_manage_industry_country(country_id,'security.manage')));
 create policy industry_audit_read on public.industry_audit_logs for select to authenticated using(public.is_world_admin() or actor_id=auth.uid() or (country_id is not null and public.is_country_president(country_id)) or (company_id is not null and public.can_manage_industry_company(company_id)));
+drop policy if exists bank_accounts_industry_trade_read on public.bank_accounts;
+create policy bank_accounts_industry_trade_read on public.bank_accounts for select to authenticated
+using(owner_company_id is not null and public.can_manage_industry_company(owner_company_id));
+
 create policy industry_notifications_read on public.industry_notifications for select to authenticated using(recipient_profile_id=auth.uid() or public.is_world_admin());
 create policy industry_notifications_update on public.industry_notifications for update to authenticated using(recipient_profile_id=auth.uid()) with check(recipient_profile_id=auth.uid());
 
