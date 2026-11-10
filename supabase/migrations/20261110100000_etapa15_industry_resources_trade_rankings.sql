@@ -1,0 +1,546 @@
+-- WORLD ECONOMY — Etapa 15: produção, recursos, comércio, rankings e resiliência
+-- Todas as operações são dados fictícios da simulação. Nenhum saldo é criado automaticamente.
+
+create table if not exists public.natural_resources (
+ id uuid primary key default gen_random_uuid(),
+ code text not null unique,
+ name text not null unique,
+ category text not null check(category in ('metallic_ore','mineral','energy','forest','agricultural','other')),
+ unit text not null,
+ description text,
+ classification text not null default 'renewable' check(classification in ('renewable','non_renewable','mixed','other')),
+ is_active boolean not null default true,
+ created_by uuid references public.profiles(id) on delete restrict,
+ created_at timestamptz not null default now(),
+ updated_at timestamptz not null default now()
+);
+
+create table if not exists public.country_natural_resources (
+ id uuid primary key default gen_random_uuid(),
+ country_id uuid not null references public.countries(id) on delete restrict,
+ resource_id uuid not null references public.natural_resources(id) on delete restrict,
+ estimated_reserve numeric(30,6) check(estimated_reserve is null or estimated_reserve>=0),
+ confirmed_reserve numeric(30,6) check(confirmed_reserve is null or confirmed_reserve>=0),
+ extracted_quantity numeric(30,6) not null default 0 check(extracted_quantity>=0),
+ unit_snapshot text not null,
+ region text,
+ status text not null default 'under_review' check(status in ('under_review','estimated','confirmed','suspended','depleted')),
+ source_description text,
+ recorded_by uuid not null references public.profiles(id) on delete restrict,
+ updated_by uuid references public.profiles(id) on delete restrict,
+ created_at timestamptz not null default now(),
+ updated_at timestamptz not null default now(),
+ unique(country_id,resource_id,coalesce(region,''))
+);
+create index if not exists country_resources_scope_idx on public.country_natural_resources(country_id,status);
+
+create table if not exists public.product_catalog (
+ id uuid primary key default gen_random_uuid(),
+ code text not null unique,
+ name text not null,
+ category text not null,
+ unit text not null,
+ description text,
+ country_id uuid references public.countries(id) on delete restrict,
+ is_active boolean not null default true,
+ created_by uuid not null references public.profiles(id) on delete restrict,
+ created_at timestamptz not null default now(),
+ unique(country_id,name)
+);
+
+create table if not exists public.industrial_facilities (
+ id uuid primary key default gen_random_uuid(),
+ country_id uuid not null references public.countries(id) on delete restrict,
+ company_id uuid not null references public.companies(id) on delete restrict,
+ name text not null check(length(trim(name)) between 2 and 160),
+ category text not null check(category in ('steel','metallurgy','construction','agriculture_food','energy','fuels','wood_paper','technology','transport_logistics','chemical_admin','custom')),
+ location text,
+ latitude numeric(10,7),
+ longitude numeric(10,7),
+ responsible_profile_id uuid references public.profiles(id) on delete restrict,
+ capacity numeric(30,6) check(capacity is null or capacity>=0),
+ capacity_unit text,
+ status text not null default 'pending' check(status in ('pending','active','suspended','closed')),
+ notes text,
+ created_by uuid not null references public.profiles(id) on delete restrict,
+ approved_by uuid references public.profiles(id) on delete restrict,
+ approved_at timestamptz,
+ created_at timestamptz not null default now(),
+ updated_at timestamptz not null default now(),
+ unique(company_id,name),
+ check((latitude is null or latitude between -90 and 90) and (longitude is null or longitude between -180 and 180))
+);
+create index if not exists industrial_facilities_country_idx on public.industrial_facilities(country_id,status,category);
+
+create table if not exists public.extraction_records (
+ id uuid primary key default gen_random_uuid(),
+ country_id uuid not null references public.countries(id) on delete restrict,
+ company_id uuid references public.companies(id) on delete restrict,
+ resource_id uuid not null references public.natural_resources(id) on delete restrict,
+ country_resource_id uuid references public.country_natural_resources(id) on delete restrict,
+ quantity numeric(30,6) not null check(quantity>0),
+ unit_snapshot text not null,
+ origin_location text not null,
+ occurred_at timestamptz not null default now(),
+ status text not null default 'pending' check(status in ('pending','approved','rejected','cancelled')),
+ proof_url text,
+ notes text,
+ created_by uuid not null references public.profiles(id) on delete restrict,
+ reviewed_by uuid references public.profiles(id) on delete restrict,
+ reviewed_at timestamptz,
+ review_note text,
+ idempotency_key text not null,
+ created_at timestamptz not null default now(),
+ unique(country_id,idempotency_key)
+);
+create index if not exists extraction_country_status_idx on public.extraction_records(country_id,status,occurred_at desc);
+
+create table if not exists public.production_recipes (
+ id uuid primary key default gen_random_uuid(),
+ country_id uuid references public.countries(id) on delete restrict,
+ name text not null,
+ description text,
+ output_product_id uuid not null references public.product_catalog(id) on delete restrict,
+ output_quantity numeric(30,6) not null check(output_quantity>0),
+ duration_minutes integer check(duration_minutes is null or duration_minutes>=0),
+ status text not null default 'draft' check(status in ('draft','active','inactive')),
+ is_global boolean not null default false,
+ created_by uuid not null references public.profiles(id) on delete restrict,
+ approved_by uuid references public.profiles(id) on delete restrict,
+ created_at timestamptz not null default now(),
+ updated_at timestamptz not null default now(),
+ check((is_global and country_id is null) or (not is_global and country_id is not null))
+);
+create unique index if not exists production_recipes_global_name_uidx on public.production_recipes(lower(name)) where is_global;
+create unique index if not exists production_recipes_country_name_uidx on public.production_recipes(country_id,lower(name)) where not is_global;
+
+create table if not exists public.production_recipe_inputs (
+ id uuid primary key default gen_random_uuid(),
+ recipe_id uuid not null references public.production_recipes(id) on delete restrict,
+ item_type text not null check(item_type in ('resource','product')),
+ resource_id uuid references public.natural_resources(id) on delete restrict,
+ product_id uuid references public.product_catalog(id) on delete restrict,
+ quantity_per_batch numeric(30,6) not null check(quantity_per_batch>0),
+ unit_snapshot text not null,
+ created_at timestamptz not null default now(),
+ check((item_type='resource' and resource_id is not null and product_id is null) or (item_type='product' and product_id is not null and resource_id is null))
+);
+create unique index if not exists production_recipe_input_resource_uidx on public.production_recipe_inputs(recipe_id,resource_id) where item_type='resource';
+create unique index if not exists production_recipe_input_product_uidx on public.production_recipe_inputs(recipe_id,product_id) where item_type='product';
+
+create table if not exists public.inventory_movements (
+ id uuid primary key default gen_random_uuid(),
+ country_id uuid not null references public.countries(id) on delete restrict,
+ company_id uuid references public.companies(id) on delete restrict,
+ item_type text not null check(item_type in ('resource','product')),
+ resource_id uuid references public.natural_resources(id) on delete restrict,
+ product_id uuid references public.product_catalog(id) on delete restrict,
+ movement_type text not null check(movement_type in ('in','out','adjustment_in','adjustment_out','reserved','released')),
+ quantity numeric(30,6) not null check(quantity>0),
+ unit_snapshot text not null,
+ source_type text not null,
+ source_id uuid,
+ destination_description text,
+ reason text,
+ idempotency_key text not null,
+ actor_id uuid not null references public.profiles(id) on delete restrict,
+ created_at timestamptz not null default now(),
+ check((item_type='resource' and resource_id is not null and product_id is null) or (item_type='product' and product_id is not null and resource_id is null)),
+ unique(country_id,idempotency_key)
+);
+create index if not exists inventory_company_created_idx on public.inventory_movements(company_id,created_at desc);
+create index if not exists inventory_country_item_idx on public.inventory_movements(country_id,item_type,resource_id,product_id);
+
+create or replace view public.inventory_balances as
+select country_id,company_id,item_type,resource_id,product_id,unit_snapshot,
+ sum(case when movement_type in ('in','adjustment_in','released') then quantity
+          when movement_type in ('out','adjustment_out','reserved') then -quantity else 0 end) as balance
+from public.inventory_movements
+group by country_id,company_id,item_type,resource_id,product_id,unit_snapshot;
+
+create table if not exists public.production_orders (
+ id uuid primary key default gen_random_uuid(),
+ country_id uuid not null references public.countries(id) on delete restrict,
+ company_id uuid not null references public.companies(id) on delete restrict,
+ facility_id uuid not null references public.industrial_facilities(id) on delete restrict,
+ recipe_id uuid not null references public.production_recipes(id) on delete restrict,
+ batch_count integer not null check(batch_count between 1 and 1000000),
+ status text not null default 'planned' check(status in ('planned','in_progress','completed','cancelled','blocked')),
+ started_at timestamptz,
+ completed_at timestamptz,
+ created_by uuid not null references public.profiles(id) on delete restrict,
+ created_at timestamptz not null default now(),
+ updated_at timestamptz not null default now(),
+ idempotency_key text not null,
+ unique(company_id,idempotency_key)
+);
+create index if not exists production_orders_company_idx on public.production_orders(company_id,status,created_at desc);
+
+create table if not exists public.energy_facilities (
+ id uuid primary key default gen_random_uuid(),
+ country_id uuid not null references public.countries(id) on delete restrict,
+ company_id uuid references public.companies(id) on delete restrict,
+ name text not null,
+ facility_type text not null check(facility_type in ('power_plant','renewable_plant','fuel_storage','warehouse','logistics_center','other')),
+ location text,
+ latitude numeric(10,7),
+ longitude numeric(10,7),
+ registered_capacity numeric(30,6) check(registered_capacity is null or registered_capacity>=0),
+ capacity_unit text,
+ status text not null default 'registered' check(status in ('registered','active','inactive','under_maintenance','decommissioned')),
+ responsible_profile_id uuid references public.profiles(id) on delete restrict,
+ notes text,
+ created_by uuid not null references public.profiles(id) on delete restrict,
+ created_at timestamptz not null default now(),
+ check((latitude is null or latitude between -90 and 90) and (longitude is null or longitude between -180 and 180))
+);
+
+create table if not exists public.product_prices (
+ id uuid primary key default gen_random_uuid(),
+ country_id uuid not null references public.countries(id) on delete restrict,
+ product_id uuid references public.product_catalog(id) on delete restrict,
+ resource_id uuid references public.natural_resources(id) on delete restrict,
+ price_type text not null check(price_type in ('reference','announced','practiced')),
+ amount numeric(30,6) not null check(amount>=0),
+ currency_id uuid not null references public.currencies(id) on delete restrict,
+ valid_from date not null,
+ valid_until date,
+ source_description text,
+ created_by uuid not null references public.profiles(id) on delete restrict,
+ created_at timestamptz not null default now(),
+ check((product_id is not null)::int + (resource_id is not null)::int = 1),
+ check(valid_until is null or valid_until>=valid_from)
+);
+create index if not exists product_prices_scope_date_idx on public.product_prices(country_id,valid_from desc);
+
+create table if not exists public.trade_contracts (
+ id uuid primary key default gen_random_uuid(),
+ seller_country_id uuid not null references public.countries(id) on delete restrict,
+ buyer_country_id uuid not null references public.countries(id) on delete restrict,
+ seller_company_id uuid not null references public.companies(id) on delete restrict,
+ buyer_company_id uuid not null references public.companies(id) on delete restrict,
+ product_id uuid references public.product_catalog(id) on delete restrict,
+ resource_id uuid references public.natural_resources(id) on delete restrict,
+ quantity numeric(30,6) not null check(quantity>0),
+ unit_snapshot text not null,
+ unit_price numeric(30,6) not null check(unit_price>=0),
+ currency_id uuid not null references public.currencies(id) on delete restrict,
+ total_value numeric(30,6) generated always as (quantity*unit_price) stored,
+ trade_type text not null check(trade_type in ('domestic','export','import')),
+ status text not null default 'proposed' check(status in ('proposed','accepted','rejected','cancelled','fulfilled')),
+ payment_status text not null default 'unpaid' check(payment_status in ('unpaid','pending','paid','refunded')),
+ delivery_status text not null default 'not_shipped' check(delivery_status in ('not_shipped','shipped','partially_received','received')),
+ terms text,
+ created_by uuid not null references public.profiles(id) on delete restrict,
+ accepted_by uuid references public.profiles(id) on delete restrict,
+ created_at timestamptz not null default now(),
+ updated_at timestamptz not null default now(),
+ idempotency_key text not null,
+ check((product_id is not null)::int + (resource_id is not null)::int = 1),
+ check((trade_type='domestic' and seller_country_id=buyer_country_id) or (trade_type in ('export','import') and seller_country_id<>buyer_country_id)),
+ unique(seller_company_id,idempotency_key)
+);
+create index if not exists trade_contracts_country_idx on public.trade_contracts(seller_country_id,buyer_country_id,status,created_at desc);
+
+create table if not exists public.shipment_records (
+ id uuid primary key default gen_random_uuid(),
+ contract_id uuid not null references public.trade_contracts(id) on delete restrict,
+ origin text not null,
+ destination text not null,
+ transport_mode text not null check(transport_mode in ('road','rail','air','sea','other')),
+ quantity numeric(30,6) not null check(quantity>0),
+ status text not null default 'planned' check(status in ('planned','in_transit','delivered','cancelled')),
+ tracking_reference text,
+ departure_at timestamptz,
+ estimated_arrival_at timestamptz,
+ delivered_at timestamptz,
+ coordinates jsonb not null default '{}'::jsonb,
+ notes text,
+ created_by uuid not null references public.profiles(id) on delete restrict,
+ created_at timestamptz not null default now()
+);
+
+create table if not exists public.environmental_records (
+ id uuid primary key default gen_random_uuid(),
+ country_id uuid not null references public.countries(id) on delete restrict,
+ company_id uuid references public.companies(id) on delete restrict,
+ facility_id uuid references public.industrial_facilities(id) on delete restrict,
+ extraction_id uuid references public.extraction_records(id) on delete restrict,
+ record_type text not null check(record_type in ('license','protected_area','restoration_project','resource_consumption','incident','inspection')),
+ title text not null,
+ description text,
+ status text not null default 'registered' check(status in ('registered','pending','approved','rejected','in_progress','completed','closed')),
+ authority_profile_id uuid references public.profiles(id) on delete restrict,
+ valid_from date,
+ valid_until date,
+ created_by uuid not null references public.profiles(id) on delete restrict,
+ reviewed_by uuid references public.profiles(id) on delete restrict,
+ created_at timestamptz not null default now()
+);
+
+create table if not exists public.global_security_indicators (
+ id uuid primary key default gen_random_uuid(),
+ country_id uuid not null references public.countries(id) on delete restrict,
+ indicator_type text not null check(indicator_type in ('institutional_stability','essential_services','critical_infrastructure','international_cooperation','disaster_preparedness','administrative_response','civil_protection')),
+ value numeric(12,4) check(value is null or value between 0 and 100),
+ status text not null default 'reported' check(status in ('reported','under_review','verified','archived')),
+ methodology text not null,
+ period_start date,
+ period_end date,
+ source_description text not null,
+ recorded_by uuid not null references public.profiles(id) on delete restrict,
+ verified_by uuid references public.profiles(id) on delete restrict,
+ created_at timestamptz not null default now()
+);
+
+create table if not exists public.global_events (
+ id uuid primary key default gen_random_uuid(),
+ country_id uuid references public.countries(id) on delete restrict,
+ event_type text not null check(event_type in ('administrative_alert','natural_disaster','service_disruption','environmental_event','international_cooperation','civil_protection_project','institutional_event')),
+ title text not null,
+ description text,
+ severity text not null default 'informational' check(severity in ('informational','low','moderate','high','critical')),
+ status text not null default 'open' check(status in ('open','monitoring','resolved','closed')),
+ occurred_at timestamptz not null default now(),
+ responsible_profile_id uuid references public.profiles(id) on delete restrict,
+ source_description text,
+ created_by uuid not null references public.profiles(id) on delete restrict,
+ updated_at timestamptz not null default now()
+);
+
+create table if not exists public.industry_audit_logs (
+ id uuid primary key default gen_random_uuid(),
+ country_id uuid references public.countries(id) on delete restrict,
+ company_id uuid references public.companies(id) on delete restrict,
+ actor_id uuid references public.profiles(id) on delete restrict,
+ action text not null,
+ entity_type text not null,
+ entity_id uuid,
+ details jsonb not null default '{}'::jsonb,
+ created_at timestamptz not null default now()
+);
+
+create table if not exists public.industry_notifications (
+ id uuid primary key default gen_random_uuid(),
+ recipient_profile_id uuid not null references public.profiles(id) on delete restrict,
+ country_id uuid references public.countries(id) on delete restrict,
+ event_type text not null,
+ title text not null,
+ message text not null,
+ entity_type text,
+ entity_id uuid,
+ read_at timestamptz,
+ created_at timestamptz not null default now()
+);
+
+create or replace function public.can_manage_industry_company(p_company_id uuid)
+returns boolean language sql stable security definer set search_path=public,auth as $$
+ select auth.uid() is not null and (
+  public.is_world_admin()
+  or exists(select 1 from public.companies c where c.id=p_company_id and c.status='active' and c.created_by=auth.uid())
+  or public.is_company_member(p_company_id)
+  or exists(select 1 from public.company_owners o join public.companies c on c.id=o.company_id
+    where o.company_id=p_company_id and o.profile_id=auth.uid() and o.status='active' and c.status='active')
+ );
+$$;
+
+create or replace function public.can_manage_industry_country(p_country_id uuid,p_permission text default 'industry.manage')
+returns boolean language sql stable security definer set search_path=public,auth as $$
+ select auth.uid() is not null and (
+  public.is_world_admin()
+  or public.is_country_president(p_country_id)
+  or public.has_government_permission(p_country_id,p_permission,null,null)
+ );
+$$;
+
+create or replace function public.industry_audit(p_country_id uuid,p_company_id uuid,p_action text,p_type text,p_id uuid,p_details jsonb default '{}'::jsonb)
+returns void language sql security definer set search_path=public,auth as $$
+ insert into public.industry_audit_logs(country_id,company_id,actor_id,action,entity_type,entity_id,details)
+ values(p_country_id,p_company_id,auth.uid(),p_action,p_type,p_id,coalesce(p_details,'{}'::jsonb));
+$$;
+
+alter table public.natural_resources enable row level security;
+alter table public.country_natural_resources enable row level security;
+alter table public.product_catalog enable row level security;
+alter table public.industrial_facilities enable row level security;
+alter table public.extraction_records enable row level security;
+alter table public.production_recipes enable row level security;
+alter table public.production_recipe_inputs enable row level security;
+alter table public.inventory_movements enable row level security;
+alter table public.production_orders enable row level security;
+alter table public.energy_facilities enable row level security;
+alter table public.product_prices enable row level security;
+alter table public.trade_contracts enable row level security;
+alter table public.shipment_records enable row level security;
+alter table public.environmental_records enable row level security;
+alter table public.global_security_indicators enable row level security;
+alter table public.global_events enable row level security;
+alter table public.industry_audit_logs enable row level security;
+alter table public.industry_notifications enable row level security;
+
+create policy natural_resources_read on public.natural_resources for select to authenticated using(is_active or public.is_world_admin());
+create policy natural_resources_admin_write on public.natural_resources for all to authenticated using(public.is_world_admin()) with check(public.is_world_admin());
+create policy country_resources_read on public.country_natural_resources for select to authenticated using(public.is_world_admin() or public.is_government_country_citizen(country_id));
+create policy country_resources_write on public.country_natural_resources for all to authenticated using(public.can_manage_industry_country(country_id,'resources.manage')) with check(public.can_manage_industry_country(country_id,'resources.manage'));
+create policy product_catalog_read on public.product_catalog for select to authenticated using(is_active or public.is_world_admin() or (country_id is not null and public.is_government_country_citizen(country_id)));
+create policy product_catalog_write on public.product_catalog for all to authenticated using(public.is_world_admin() or (country_id is not null and public.can_manage_industry_country(country_id,'industry.manage'))) with check(public.is_world_admin() or (country_id is not null and public.can_manage_industry_country(country_id,'industry.manage')));
+create policy industrial_facilities_read on public.industrial_facilities for select to authenticated using(status='active' or public.is_world_admin() or public.is_country_president(country_id) or public.can_manage_industry_company(company_id));
+create policy industrial_facilities_write on public.industrial_facilities for all to authenticated using(public.can_manage_industry_company(company_id)) with check(public.can_manage_industry_company(company_id));
+create policy extraction_records_read on public.extraction_records for select to authenticated using(public.is_world_admin() or public.is_country_president(country_id) or public.is_government_country_citizen(country_id) and (company_id is null or public.can_manage_industry_company(company_id)) or (company_id is not null and public.can_manage_industry_company(company_id)));
+create policy extraction_records_insert on public.extraction_records for insert to authenticated with check(created_by=auth.uid() and (public.is_world_admin() or (company_id is not null and public.can_manage_industry_company(company_id)) or (company_id is null and public.can_manage_industry_country(country_id,'resources.manage'))));
+create policy production_recipes_read on public.production_recipes for select to authenticated using((status='active' and (is_global or public.is_government_country_citizen(country_id))) or public.is_world_admin() or (country_id is not null and public.is_country_president(country_id)));
+create policy production_recipes_write on public.production_recipes for all to authenticated using(public.is_world_admin() or (country_id is not null and public.can_manage_industry_country(country_id,'industry.manage'))) with check(public.is_world_admin() or (country_id is not null and public.can_manage_industry_country(country_id,'industry.manage')));
+create policy production_recipe_inputs_read on public.production_recipe_inputs for select to authenticated using(exists(select 1 from public.production_recipes r where r.id=recipe_id and (r.status='active' or public.is_world_admin() or (r.country_id is not null and public.is_country_president(r.country_id)))));
+create policy production_recipe_inputs_write on public.production_recipe_inputs for all to authenticated using(exists(select 1 from public.production_recipes r where r.id=recipe_id and (public.is_world_admin() or (r.country_id is not null and public.can_manage_industry_country(r.country_id,'industry.manage'))))) with check(exists(select 1 from public.production_recipes r where r.id=recipe_id and (public.is_world_admin() or (r.country_id is not null and public.can_manage_industry_country(r.country_id,'industry.manage')))));
+create policy inventory_movements_read on public.inventory_movements for select to authenticated using(public.is_world_admin() or public.is_country_president(country_id) or (company_id is not null and public.can_manage_industry_company(company_id)));
+create policy production_orders_read on public.production_orders for select to authenticated using(public.is_world_admin() or public.is_country_president(country_id) or public.can_manage_industry_company(company_id));
+create policy energy_facilities_read on public.energy_facilities for select to authenticated using(public.is_world_admin() or public.is_government_country_citizen(country_id) or (company_id is not null and public.can_manage_industry_company(company_id)));
+create policy energy_facilities_write on public.energy_facilities for all to authenticated using(public.is_world_admin() or (company_id is not null and public.can_manage_industry_company(company_id)) or public.can_manage_industry_country(country_id,'infrastructure.manage')) with check(public.is_world_admin() or (company_id is not null and public.can_manage_industry_company(company_id)) or public.can_manage_industry_country(country_id,'infrastructure.manage'));
+create policy product_prices_read on public.product_prices for select to authenticated using(public.is_world_admin() or public.is_government_country_citizen(country_id));
+create policy product_prices_write on public.product_prices for insert to authenticated with check(created_by=auth.uid() and public.can_manage_industry_country(country_id,'prices.manage'));
+create policy trade_contracts_read on public.trade_contracts for select to authenticated using(public.is_world_admin() or public.is_country_president(seller_country_id) or public.is_country_president(buyer_country_id) or public.can_manage_industry_company(seller_company_id) or public.can_manage_industry_company(buyer_company_id));
+create policy trade_contracts_insert on public.trade_contracts for insert to authenticated with check(created_by=auth.uid() and public.can_manage_industry_company(seller_company_id) and exists(select 1 from public.companies s where s.id=seller_company_id and s.country_id=seller_country_id and s.status='active') and exists(select 1 from public.companies b where b.id=buyer_company_id and b.country_id=buyer_country_id and b.status='active'));
+create policy trade_contracts_update on public.trade_contracts for update to authenticated using(public.can_manage_industry_company(seller_company_id) or public.can_manage_industry_company(buyer_company_id) or public.is_world_admin()) with check(public.can_manage_industry_company(seller_company_id) or public.can_manage_industry_company(buyer_company_id) or public.is_world_admin());
+create policy shipment_records_read on public.shipment_records for select to authenticated using(exists(select 1 from public.trade_contracts t where t.id=contract_id and (public.is_world_admin() or public.is_country_president(t.seller_country_id) or public.is_country_president(t.buyer_country_id) or public.can_manage_industry_company(t.seller_company_id) or public.can_manage_industry_company(t.buyer_company_id))));
+create policy shipment_records_insert on public.shipment_records for insert to authenticated with check(created_by=auth.uid() and exists(select 1 from public.trade_contracts t where t.id=contract_id and (public.can_manage_industry_company(t.seller_company_id) or public.can_manage_industry_company(t.buyer_company_id))));
+create policy shipment_records_update on public.shipment_records for update to authenticated using(exists(select 1 from public.trade_contracts t where t.id=contract_id and (public.can_manage_industry_company(t.seller_company_id) or public.can_manage_industry_company(t.buyer_company_id) or public.is_world_admin()))) with check(exists(select 1 from public.trade_contracts t where t.id=contract_id and (public.can_manage_industry_company(t.seller_company_id) or public.can_manage_industry_company(t.buyer_company_id) or public.is_world_admin())));
+create policy environmental_records_read on public.environmental_records for select to authenticated using(public.is_world_admin() or public.is_country_president(country_id) or public.is_government_country_citizen(country_id) and (company_id is null or public.can_manage_industry_company(company_id)) or (company_id is not null and public.can_manage_industry_company(company_id)));
+create policy environmental_records_insert on public.environmental_records for insert to authenticated with check(created_by=auth.uid() and (public.is_world_admin() or public.can_manage_industry_country(country_id,'environment.manage') or (company_id is not null and public.can_manage_industry_company(company_id))));
+create policy environmental_records_update on public.environmental_records for update to authenticated using(public.can_manage_industry_country(country_id,'environment.manage') or (company_id is not null and public.can_manage_industry_company(company_id))) with check(public.can_manage_industry_country(country_id,'environment.manage') or (company_id is not null and public.can_manage_industry_company(company_id)));
+create policy security_indicators_read on public.global_security_indicators for select to authenticated using(public.is_world_admin() or public.is_government_country_citizen(country_id));
+create policy security_indicators_write on public.global_security_indicators for all to authenticated using(public.can_manage_industry_country(country_id,'security.manage')) with check(public.can_manage_industry_country(country_id,'security.manage'));
+create policy global_events_read on public.global_events for select to authenticated using(country_id is null or public.is_world_admin() or public.is_government_country_citizen(country_id));
+create policy global_events_write on public.global_events for all to authenticated using(public.is_world_admin() or (country_id is not null and public.can_manage_industry_country(country_id,'security.manage'))) with check(public.is_world_admin() or (country_id is not null and public.can_manage_industry_country(country_id,'security.manage')));
+create policy industry_audit_read on public.industry_audit_logs for select to authenticated using(public.is_world_admin() or actor_id=auth.uid() or (country_id is not null and public.is_country_president(country_id)) or (company_id is not null and public.can_manage_industry_company(company_id)));
+create policy industry_notifications_read on public.industry_notifications for select to authenticated using(recipient_profile_id=auth.uid() or public.is_world_admin());
+create policy industry_notifications_update on public.industry_notifications for update to authenticated using(recipient_profile_id=auth.uid()) with check(recipient_profile_id=auth.uid());
+
+create or replace function public.record_industry_extraction(
+ p_country_id uuid,p_company_id uuid,p_resource_id uuid,p_country_resource_id uuid,p_quantity numeric,p_origin text,p_notes text default null,p_proof_url text default null,p_idempotency_key text default null
+) returns uuid language plpgsql security definer set search_path=public,auth as $$
+declare v_id uuid; v_unit text; v_key text;
+begin
+ if auth.uid() is null then raise exception 'Autenticação obrigatória.'; end if;
+ if p_quantity is null or p_quantity<=0 or nullif(trim(p_origin),'') is null then raise exception 'Quantidade e origem são obrigatórias.'; end if;
+ if p_company_id is not null and not public.can_manage_industry_company(p_company_id) then raise exception 'Sem permissão sobre a empresa informada.'; end if;
+ if p_company_id is null and not public.can_manage_industry_country(p_country_id,'resources.manage') then raise exception 'Sem permissão para registrar extração nacional.'; end if;
+ if not exists(select 1 from public.companies c where c.id=p_company_id and c.country_id=p_country_id and c.status='active') and p_company_id is not null then raise exception 'Empresa não pertence ao país ou não está ativa.'; end if;
+ select unit into v_unit from public.natural_resources where id=p_resource_id and is_active;
+ if not found then raise exception 'Recurso inexistente ou inativo.'; end if;
+ if p_country_resource_id is not null and not exists(select 1 from public.country_natural_resources cr where cr.id=p_country_resource_id and cr.country_id=p_country_id and cr.resource_id=p_resource_id and cr.status='confirmed') then raise exception 'A reserva não está confirmada para este país.'; end if;
+ v_key:=coalesce(nullif(trim(p_idempotency_key),''),gen_random_uuid()::text);
+ insert into public.extraction_records(country_id,company_id,resource_id,country_resource_id,quantity,unit_snapshot,origin_location,proof_url,notes,created_by,idempotency_key)
+ values(p_country_id,p_company_id,p_resource_id,p_country_resource_id,p_quantity,v_unit,trim(p_origin),nullif(trim(p_proof_url),''),nullif(trim(p_notes),''),auth.uid(),v_key)
+ returning id into v_id;
+ perform public.industry_audit(p_country_id,p_company_id,'extraction_requested','extraction',v_id,jsonb_build_object('quantity',p_quantity,'resource_id',p_resource_id));
+ return v_id;
+end; $$;
+
+create or replace function public.review_industry_extraction(p_extraction_id uuid,p_decision text,p_note text default null)
+returns uuid language plpgsql security definer set search_path=public,auth as $$
+declare e public.extraction_records%rowtype; v_balance numeric;
+begin
+ if p_decision not in ('approved','rejected') then raise exception 'Decisão inválida.'; end if;
+ select * into e from public.extraction_records where id=p_extraction_id for update;
+ if not found then raise exception 'Registro de extração não encontrado.'; end if;
+ if not (public.is_world_admin() or public.can_manage_industry_country(e.country_id,'resources.approve')) then raise exception 'Aprovação restrita ao Super Admin ou autoridade nacional autorizada.'; end if;
+ if e.status<>'pending' then raise exception 'Esta extração já foi analisada.'; end if;
+ if p_decision='approved' and e.country_resource_id is not null then
+  perform pg_advisory_xact_lock(hashtextextended(e.country_resource_id::text,0));
+  select greatest(confirmed_reserve-extracted_quantity,0) into v_balance from public.country_natural_resources where id=e.country_resource_id for update;
+  if v_balance is null or e.quantity>v_balance then raise exception 'Quantidade superior à reserva confirmada ainda disponível.'; end if;
+  update public.country_natural_resources set extracted_quantity=extracted_quantity+e.quantity,updated_by=auth.uid(),updated_at=now() where id=e.country_resource_id;
+ end if;
+ update public.extraction_records set status=p_decision,reviewed_by=auth.uid(),reviewed_at=now(),review_note=nullif(trim(p_note),'') where id=e.id;
+ if p_decision='approved' then
+  insert into public.inventory_movements(country_id,company_id,item_type,resource_id,movement_type,quantity,unit_snapshot,source_type,source_id,reason,idempotency_key,actor_id)
+  values(e.country_id,e.company_id,'resource',e.resource_id,'in',e.quantity,e.unit_snapshot,'extraction',e.id,'Extração aprovada', 'extraction:'||e.id::text,auth.uid());
+ end if;
+ perform public.industry_audit(e.country_id,e.company_id,'extraction_'||p_decision,'extraction',e.id,jsonb_build_object('note',p_note));
+ insert into public.industry_notifications(recipient_profile_id,country_id,event_type,title,message,entity_type,entity_id)
+ values(e.created_by,e.country_id,'extraction_'||p_decision,case when p_decision='approved' then 'Extração aprovada' else 'Extração rejeitada' end,
+ case when p_decision='approved' then 'Sua extração foi aprovada e o estoque foi atualizado.' else 'Sua extração foi rejeitada: '||coalesce(p_note,'consulte a autoridade responsável') end,'extraction',e.id);
+ return e.id;
+end; $$;
+
+create or replace function public.create_production_order(p_facility_id uuid,p_recipe_id uuid,p_batch_count integer,p_idempotency_key text)
+returns uuid language plpgsql security definer set search_path=public,auth as $$
+declare f public.industrial_facilities%rowtype; r public.production_recipes%rowtype; v_id uuid;
+begin
+ if p_batch_count is null or p_batch_count<1 or p_batch_count>1000000 then raise exception 'Quantidade de lotes inválida.'; end if;
+ select * into f from public.industrial_facilities where id=p_facility_id and status='active';
+ if not found or not public.can_manage_industry_company(f.company_id) then raise exception 'Instalação inexistente, inativa ou sem permissão.'; end if;
+ select * into r from public.production_recipes where id=p_recipe_id and status='active' and (is_global or country_id=f.country_id);
+ if not found then raise exception 'Receita ativa não disponível para este país.'; end if;
+ insert into public.production_orders(country_id,company_id,facility_id,recipe_id,batch_count,created_by,idempotency_key)
+ values(f.country_id,f.company_id,f.id,r.id,p_batch_count,auth.uid(),coalesce(nullif(trim(p_idempotency_key),''),gen_random_uuid()::text))
+ returning id into v_id;
+ perform public.industry_audit(f.country_id,f.company_id,'production_order_created','production_order',v_id,jsonb_build_object('recipe_id',r.id,'batches',p_batch_count));
+ return v_id;
+end; $$;
+
+create or replace function public.complete_production_order(p_order_id uuid)
+returns uuid language plpgsql security definer set search_path=public,auth as $$
+declare o public.production_orders%rowtype; r public.production_recipes%rowtype; i record; v_balance numeric; v_output_unit text;
+begin
+ select * into o from public.production_orders where id=p_order_id for update;
+ if not found or o.status not in ('planned','in_progress') then raise exception 'Ordem não encontrada ou não pode ser concluída.'; end if;
+ if not public.can_manage_industry_company(o.company_id) then raise exception 'Somente administradores autorizados da empresa podem concluir a produção.'; end if;
+ perform pg_advisory_xact_lock(hashtextextended(o.company_id::text,0));
+ select * into r from public.production_recipes where id=o.recipe_id and status='active';
+ if not found then raise exception 'Receita não está ativa.'; end if;
+ for i in select * from public.production_recipe_inputs where recipe_id=r.id loop
+  select coalesce(sum(case when movement_type in ('in','adjustment_in','released') then quantity else -quantity end),0)
+   into v_balance from public.inventory_movements
+   where country_id=o.country_id and company_id=o.company_id and item_type=i.item_type
+    and ((i.item_type='resource' and resource_id=i.resource_id) or (i.item_type='product' and product_id=i.product_id));
+  if v_balance < i.quantity_per_batch*o.batch_count then raise exception 'Estoque insuficiente para um ou mais insumos da receita.'; end if;
+ end loop;
+ for i in select * from public.production_recipe_inputs where recipe_id=r.id loop
+  insert into public.inventory_movements(country_id,company_id,item_type,resource_id,product_id,movement_type,quantity,unit_snapshot,source_type,source_id,reason,idempotency_key,actor_id)
+  values(o.country_id,o.company_id,i.item_type,i.resource_id,i.product_id,'out',i.quantity_per_batch*o.batch_count,i.unit_snapshot,'production',o.id,'Consumo de insumo na produção','production:'||o.id::text||':input:'||i.id::text,auth.uid());
+ end loop;
+ select unit into v_output_unit from public.product_catalog where id=r.output_product_id and is_active;
+ if not found then raise exception 'Produto de saída inexistente ou inativo.'; end if;
+ insert into public.inventory_movements(country_id,company_id,item_type,product_id,movement_type,quantity,unit_snapshot,source_type,source_id,reason,idempotency_key,actor_id)
+ values(o.country_id,o.company_id,'product',r.output_product_id,'in',r.output_quantity*o.batch_count,v_output_unit,'production',o.id,'Produto final da ordem de produção','production:'||o.id::text||':output',auth.uid());
+ update public.production_orders set status='completed',started_at=coalesce(started_at,now()),completed_at=now(),updated_at=now() where id=o.id;
+ perform public.industry_audit(o.country_id,o.company_id,'production_completed','production_order',o.id,jsonb_build_object('batches',o.batch_count,'output',r.output_quantity*o.batch_count));
+ insert into public.industry_notifications(recipient_profile_id,country_id,event_type,title,message,entity_type,entity_id)
+ select distinct m.profile_id,o.country_id,'production_completed','Produção concluída','A ordem de produção foi concluída e o estoque atualizado.','production_order',o.id
+ from public.company_members m where m.company_id=o.company_id and m.status='active';
+ return o.id;
+end; $$;
+
+create or replace view public.global_industry_rankings as
+select 'gdp'::text as ranking_type,g.country_id,c.name as country_name,sum(g.total_value)::numeric(30,6) as metric_value,
+ max(g.period_end)::date as reference_date,'Soma dos registros de PIB existentes no histórico consultado'::text as methodology
+from public.economic_gdp_records g join public.countries c on c.id=g.country_id
+where g.status='confirmed' group by g.country_id,c.name
+union all
+select 'industrial_output',m.country_id,c.name,sum(m.quantity)::numeric(30,6),max(m.created_at)::date,
+ 'Quantidade registrada como produto final em movimentos de produção confirmados'
+from public.inventory_movements m join public.countries c on c.id=m.country_id
+where m.item_type='product' and m.movement_type='in' and m.source_type='production'
+group by m.country_id,c.name
+union all
+select 'confirmed_reserves',r.country_id,c.name,sum(r.confirmed_reserve)::numeric(30,6),max(r.updated_at)::date,
+ 'Soma das reservas confirmadas cadastradas; não representa estoque disponível'
+from public.country_natural_resources r join public.countries c on c.id=r.country_id
+where r.status='confirmed' group by r.country_id,c.name
+union all
+select case when t.trade_type='export' then 'exports' else 'imports' end,
+ case when t.trade_type='export' then t.seller_country_id else t.buyer_country_id end,
+ c.name,sum(t.total_value)::numeric(30,6),max(t.updated_at)::date,
+ 'Valor contratado; não significa pagamento ou entrega concluídos'
+from public.trade_contracts t
+join public.countries c on c.id=case when t.trade_type='export' then t.seller_country_id else t.buyer_country_id end
+where t.status in ('accepted','fulfilled') group by t.trade_type,case when t.trade_type='export' then t.seller_country_id else t.buyer_country_id end,c.name;
+
+grant select on public.inventory_balances,public.global_industry_rankings to authenticated;
+grant execute on function public.can_manage_industry_company(uuid) to authenticated;
+grant execute on function public.can_manage_industry_country(uuid,text) to authenticated;
+grant execute on function public.record_industry_extraction(uuid,uuid,uuid,uuid,numeric,text,text,text,text) to authenticated;
+grant execute on function public.review_industry_extraction(uuid,text,text) to authenticated;
+grant execute on function public.create_production_order(uuid,uuid,integer,text) to authenticated;
+grant execute on function public.complete_production_order(uuid) to authenticated;
