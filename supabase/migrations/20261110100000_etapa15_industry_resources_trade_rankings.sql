@@ -60,7 +60,7 @@ create table if not exists public.industrial_facilities (
  responsible_profile_id uuid references public.profiles(id) on delete restrict,
  capacity numeric(30,6) check(capacity is null or capacity>=0),
  capacity_unit text,
- status text not null default 'pending' check(status in ('pending','active','suspended','closed')),
+ status text not null default 'pending' check(status in ('pending','active','rejected','suspended','closed')),
  notes text,
  created_by uuid not null references public.profiles(id) on delete restrict,
  approved_by uuid references public.profiles(id) on delete restrict,
@@ -350,7 +350,11 @@ returns boolean language sql stable security definer set search_path=public,auth
  select auth.uid() is not null and (
   public.is_world_admin()
   or exists(select 1 from public.companies c where c.id=p_company_id and c.status='active' and c.created_by=auth.uid())
-  or public.is_company_member(p_company_id)
+  or exists(select 1 from public.company_members m join public.companies c on c.id=m.company_id
+    join public.profiles p on p.id=m.profile_id
+    where m.company_id=p_company_id and m.profile_id=auth.uid() and m.status='active' and c.status='active'
+     and coalesce(p.account_status,'active')='active' and p.registration_status='active'
+     and (m.member_role in ('owner','director','manager') or m.permissions && array['company.manage','industry.manage','production.manage','inventory.manage','trade.manage','resources.manage']))
   or exists(select 1 from public.company_owners o join public.companies c on c.id=o.company_id
     where o.company_id=p_company_id and o.profile_id=auth.uid() and o.status='active' and c.status='active')
  );
@@ -420,17 +424,17 @@ create policy production_recipes_update on public.production_recipes for update 
 create policy production_recipe_inputs_read on public.production_recipe_inputs for select to authenticated using(exists(select 1 from public.production_recipes r where r.id=recipe_id and (r.status='active' or public.is_world_admin() or (r.country_id is not null and public.is_country_president(r.country_id)))));
 create policy production_recipe_inputs_insert on public.production_recipe_inputs for insert to authenticated with check(exists(select 1 from public.production_recipes r where r.id=recipe_id and (public.is_world_admin() or (r.country_id is not null and public.can_manage_industry_country(r.country_id,'industry.manage')))));
 create policy production_recipe_inputs_update on public.production_recipe_inputs for update to authenticated using(exists(select 1 from public.production_recipes r where r.id=recipe_id and (public.is_world_admin() or (r.country_id is not null and public.can_manage_industry_country(r.country_id,'industry.manage'))))) with check(exists(select 1 from public.production_recipes r where r.id=recipe_id and (public.is_world_admin() or (r.country_id is not null and public.can_manage_industry_country(r.country_id,'industry.manage')))));
-create policy inventory_movements_read on public.inventory_movements for select to authenticated using(public.is_world_admin() or (company_id is not null and public.can_manage_industry_company(company_id)));
+create policy inventory_movements_read on public.inventory_movements for select to authenticated using(public.is_world_admin() or (company_id is null and public.is_country_president(country_id)) or (company_id is not null and public.can_manage_industry_company(company_id)));
 create policy production_orders_read on public.production_orders for select to authenticated using(public.is_world_admin() or public.is_country_president(country_id) or public.can_manage_industry_company(company_id));
 create policy energy_facilities_read on public.energy_facilities for select to authenticated using(public.is_world_admin() or public.is_government_country_citizen(country_id) or (company_id is not null and public.can_manage_industry_company(company_id)));
 create policy energy_facilities_insert on public.energy_facilities for insert to authenticated with check(created_by=auth.uid() and (public.is_world_admin() or (company_id is not null and public.can_manage_industry_company(company_id)) or public.can_manage_industry_country(country_id,'infrastructure.manage')));
 create policy energy_facilities_update on public.energy_facilities for update to authenticated using(public.is_world_admin() or (company_id is not null and public.can_manage_industry_company(company_id)) or public.can_manage_industry_country(country_id,'infrastructure.manage')) with check(public.is_world_admin() or (company_id is not null and public.can_manage_industry_company(company_id)) or public.can_manage_industry_country(country_id,'infrastructure.manage'));
 create policy product_prices_read on public.product_prices for select to authenticated using(public.is_world_admin() or public.is_government_country_citizen(country_id));
 create policy product_prices_write on public.product_prices for insert to authenticated with check(created_by=auth.uid() and public.can_manage_industry_country(country_id,'prices.manage'));
-create policy trade_contracts_read on public.trade_contracts for select to authenticated using(public.is_world_admin() or public.is_country_president(seller_country_id) or public.is_country_president(buyer_country_id) or public.can_manage_industry_company(seller_company_id) or public.can_manage_industry_company(buyer_company_id));
+create policy trade_contracts_read on public.trade_contracts for select to authenticated using(public.is_world_admin() or public.can_manage_industry_company(seller_company_id) or public.can_manage_industry_company(buyer_company_id));
 create policy trade_contracts_insert on public.trade_contracts for insert to authenticated with check(created_by=auth.uid() and public.can_manage_industry_company(seller_company_id) and exists(select 1 from public.companies s where s.id=seller_company_id and s.country_id=seller_country_id and s.status='active') and exists(select 1 from public.companies b where b.id=buyer_company_id and b.country_id=buyer_country_id and b.status='active'));
 -- Contratos são alterados apenas por RPCs de transição de estado; clientes não editam pagamento/entrega diretamente.
-create policy shipment_records_read on public.shipment_records for select to authenticated using(exists(select 1 from public.trade_contracts t where t.id=contract_id and (public.is_world_admin() or public.is_country_president(t.seller_country_id) or public.is_country_president(t.buyer_country_id) or public.can_manage_industry_company(t.seller_company_id) or public.can_manage_industry_company(t.buyer_company_id))));
+create policy shipment_records_read on public.shipment_records for select to authenticated using(exists(select 1 from public.trade_contracts t where t.id=contract_id and (public.is_world_admin() or public.can_manage_industry_company(t.seller_company_id) or public.can_manage_industry_company(t.buyer_company_id))));
 create policy shipment_records_insert on public.shipment_records for insert to authenticated with check(created_by=auth.uid() and exists(select 1 from public.trade_contracts t where t.id=contract_id and (public.can_manage_industry_company(t.seller_company_id) or public.can_manage_industry_company(t.buyer_company_id))));
 -- Situação de remessas é alterada exclusivamente por RPC validada.
 create policy environmental_records_read on public.environmental_records for select to authenticated using(public.is_world_admin() or public.is_country_president(country_id) or public.is_government_country_citizen(country_id) and (company_id is null or public.can_manage_industry_company(company_id)) or (company_id is not null and public.can_manage_industry_company(company_id)));
@@ -440,7 +444,8 @@ create policy security_indicators_read on public.global_security_indicators for 
 create policy security_indicators_insert on public.global_security_indicators for insert to authenticated with check(recorded_by=auth.uid() and public.can_manage_industry_country(country_id,'security.manage'));
 create policy security_indicators_update on public.global_security_indicators for update to authenticated using(public.can_manage_industry_country(country_id,'security.manage')) with check(public.can_manage_industry_country(country_id,'security.manage'));
 create policy global_events_read on public.global_events for select to authenticated using(country_id is null or public.is_world_admin() or public.is_government_country_citizen(country_id));
-create policy global_events_write on public.global_events for all to authenticated using(public.is_world_admin() or (country_id is not null and public.can_manage_industry_country(country_id,'security.manage'))) with check(public.is_world_admin() or (country_id is not null and public.can_manage_industry_country(country_id,'security.manage')));
+create policy global_events_insert on public.global_events for insert to authenticated with check(created_by=auth.uid() and (public.is_world_admin() or (country_id is not null and public.can_manage_industry_country(country_id,'security.manage'))));
+create policy global_events_update on public.global_events for update to authenticated using(public.is_world_admin() or (country_id is not null and public.can_manage_industry_country(country_id,'security.manage'))) with check(public.is_world_admin() or (country_id is not null and public.can_manage_industry_country(country_id,'security.manage')));
 create policy industry_audit_read on public.industry_audit_logs for select to authenticated using(public.is_world_admin() or actor_id=auth.uid() or (country_id is not null and public.is_country_president(country_id)) or (company_id is not null and public.can_manage_industry_company(company_id)));
 create policy industry_notifications_read on public.industry_notifications for select to authenticated using(recipient_profile_id=auth.uid() or public.is_world_admin());
 create policy industry_notifications_update on public.industry_notifications for update to authenticated using(recipient_profile_id=auth.uid()) with check(recipient_profile_id=auth.uid());
@@ -626,13 +631,8 @@ begin
 end; $$;
 
 create or replace view public.global_industry_rankings as
-select 'gdp'::text as ranking_type,g.country_id,c.name as country_name,sum(g.total_value)::numeric(30,6) as metric_value,
- max(g.period_end)::date as reference_date,'Soma dos registros de PIB existentes no histórico consultado'::text as methodology
-from public.economic_gdp_records g join public.countries c on c.id=g.country_id
-where g.status='confirmed' group by g.country_id,c.name
-union all
-select 'industrial_output',m.country_id,c.name,sum(m.quantity)::numeric(30,6),max(m.created_at)::date,
- 'Quantidade registrada como produto final em movimentos de produção confirmados'
+select 'industrial_output'::text as ranking_type,m.country_id,c.name as country_name,sum(m.quantity)::numeric(30,6) as metric_value,
+ max(m.created_at)::date as reference_date,'Produção industrial acumulada registrada no livro de estoque; não representa valor monetário'::text as methodology
 from public.inventory_movements m join public.countries c on c.id=m.country_id
 where m.item_type='product' and m.movement_type='in' and m.source_type='production'
 group by m.country_id,c.name
@@ -642,13 +642,17 @@ select 'confirmed_reserves',r.country_id,c.name,sum(r.confirmed_reserve)::numeri
 from public.country_natural_resources r join public.countries c on c.id=r.country_id
 where r.status='confirmed' group by r.country_id,c.name
 union all
-select case when t.trade_type='export' then 'exports' else 'imports' end,
- case when t.trade_type='export' then t.seller_country_id else t.buyer_country_id end,
- c.name,sum(t.total_value)::numeric(30,6),max(t.updated_at)::date,
- 'Valor contratado; não significa pagamento ou entrega concluídos'
-from public.trade_contracts t
-join public.countries c on c.id=case when t.trade_type='export' then t.seller_country_id else t.buyer_country_id end
-where t.status in ('accepted','fulfilled') group by t.trade_type,case when t.trade_type='export' then t.seller_country_id else t.buyer_country_id end,c.name;
+select 'exports',t.seller_country_id,c.name,sum(t.total_value)::numeric(30,6),max(t.updated_at)::date,
+ 'Valor nominal contratado em moeda de cada contrato; moedas não normalizadas, não comparar diretamente entre moedas'
+from public.trade_contracts t join public.countries c on c.id=t.seller_country_id
+where t.trade_type in ('export','import') and t.status in ('accepted','fulfilled')
+group by t.seller_country_id,c.name
+union all
+select 'imports',t.buyer_country_id,c.name,sum(t.total_value)::numeric(30,6),max(t.updated_at)::date,
+ 'Valor nominal contratado em moeda de cada contrato; moedas não normalizadas, não comparar diretamente entre moedas'
+from public.trade_contracts t join public.countries c on c.id=t.buyer_country_id
+where t.trade_type in ('export','import') and t.status in ('accepted','fulfilled')
+group by t.buyer_country_id,c.name;
 
 grant select on public.inventory_balances,public.global_industry_rankings to authenticated;
 grant execute on function public.can_manage_industry_company(uuid) to authenticated;
