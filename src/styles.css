@@ -68,6 +68,9 @@
 @layer base {
   * { border-color: var(--color-border); }
   body {
+    min-height: 100dvh;
+    padding-bottom: env(safe-area-inset-bottom);
+    overscroll-behavior-y: contain;
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-family: var(--font-sans);
