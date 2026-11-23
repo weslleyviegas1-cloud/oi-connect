@@ -121,7 +121,7 @@ function Admin() {
           <button type="button" onClick={() => setReload(value => value + 1)} className="border px-3 py-2 text-sm hover:bg-accent">Atualizar lista</button>
         </div>
         <form onSubmit={submitSearch} className="flex flex-col gap-2 border-b p-4 sm:flex-row">
-          <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Buscar por e-mail, jogador, nickname ou número" className="min-w-0 flex-1 border bg-background px-3 py-2 text-sm outline-none focus:border-primary" />
+          <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Buscar por nome de jogador, nickname ou número" className="min-w-0 flex-1 border bg-background px-3 py-2 text-sm outline-none focus:border-primary" />
           <button type="submit" className="border border-primary bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">Pesquisar</button>
         </form>
 
