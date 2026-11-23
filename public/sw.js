@@ -1,11 +1,12 @@
-const CACHE_NAME = "world-economy-static-v2";
+const CACHE_NAME = "world-economy-static-v3";
 const PRECACHE_URLS = [
   "/offline.html",
   "/manifest.webmanifest",
   "/brand/world-economy-brand.webp",
   "/icons/icon-192.svg",
   "/icons/icon-512.svg",
-  "/icons/maskable-512.svg"
+  "/icons/maskable-512.svg",
+  "/favicon.svg"
 ];
 
 self.addEventListener("install", event => {
