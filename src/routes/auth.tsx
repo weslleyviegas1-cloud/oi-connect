@@ -100,7 +100,15 @@ function AuthPage() {
       } else {
         if (!loginEnabled) throw new Error("O login está temporariamente indisponível pelo Super Admin.");
         const { data: loginData, error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-        if (error) throw new Error("E-mail ou senha incorretos.");
+        if (error) {
+          if (error.message.toLowerCase().includes("email not confirmed")) {
+            throw new Error("Seu e-mail ainda não foi confirmado. Verifique sua caixa de entrada e a pasta de spam.");
+          }
+          if (error.message.toLowerCase().includes("invalid login credentials")) {
+            throw new Error("E-mail ou senha incorretos.");
+          }
+          throw new Error(`Falha na autenticação: ${error.message}`);
+        }
         const { data: account } = await supabase.from("profiles").select("account_status").eq("id", loginData.user.id).maybeSingle();
         if (account?.account_status === "suspended") {
           await supabase.auth.signOut();
