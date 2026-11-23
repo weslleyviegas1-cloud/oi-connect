@@ -1,88 +1,60 @@
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { usePlayer } from "@/hooks/use-player";
-import { AdminGovernance } from "@/components/admin-governance";
-import { GovernmentPortal } from "@/components/government-portal";
-import { CitizenPortal } from "@/components/citizen-portal";
-import { EconomyPortal } from "@/components/economy-portal";
-import { CurrencyPortal } from "@/components/currency-portal";
-import { CentralBankPortal } from "@/components/central-bank-portal";
-import { CommercialBankPortal } from "@/components/commercial-bank-portal";
-import { CompanyPortal } from "@/components/company-portal";
-import { TravelDocumentPortal } from "@/components/travel-document-portal";
-import { VehiclePortal } from "@/components/vehicle-portal";
-import { JusticePortal } from "@/components/justice-portal";
-import "@/components/justice-portal.css";
-import "@/components/vehicle-portal.css";
-import "@/components/travel-document-portal.css";
-import type { LucideIcon } from "lucide-react";
-import { Activity, ArrowDownUp, ArrowRight, Bell, Building2, Car, ChartNoAxesCombined, ChevronRight, FileText, Flag, Globe2, Home, Landmark, LogOut, MapPin, Menu, Settings, Shield, Trophy, Users, Wallet, X, Zap, Plus, Copy, Coins, ScrollText } from "lucide-react";
+import { AppShell } from "@/components/app-shell";
 
 export const Route = createFileRoute("/")({
   head: () => ({ meta: [
-    { title: "WORLD ECONOMY — Painel do Jogador" },
-    { name: "description", content: "Administre seu país, banco, empresas e documentos no simulador global WORLD ECONOMY." },
-    { property: "og:title", content: "WORLD ECONOMY — Painel do Jogador" },
-    { property: "og:description", content: "Seu país. Sua economia. Seu futuro." },
+    { title: "OI CONNECT — Servidor Minecraft Bedrock" },
+    { name: "description", content: "Crie sua conta, informe seu nickname Bedrock e acompanhe sua assinatura semanal do servidor OI CONNECT." },
+    { property: "og:title", content: "OI CONNECT — Servidor Minecraft Bedrock" },
+    { property: "og:description", content: "Conta, assinatura semanal e acesso ao servidor Bedrock do OI CONNECT." },
     { property: "og:type", content: "website" },
-    { name: "twitter:card", content: "summary_large_image" },
+    { name: "twitter:card", content: "summary" },
   ] }),
-  component: WorldEconomy,
+  component: Home,
 });
-type Role = "player" | "president" | "admin";
-type Tx = { id: string; kind: string; description: string; amount: number; date: string };
-type Company = { id: string; name: string; sector: string; createdAt: string };
-type GameState = { balance: number; transactions: Tx[]; companies: Company[]; documents: string[] };
-const STORE_KEY = "world-economy-demo-v1";
-const initialState: GameState = { balance: 12450.75, transactions: [], companies: [], documents: [] };
-const menu = [{label:"Início",Icon:Home},{label:"Perfil",Icon:Users},{label:"Países",Icon:Flag},{label:"Meu Governo",Icon:Landmark},{label:"Economia",Icon:ChartNoAxesCombined},{label:"Câmbio",Icon:Coins},{label:"Banco Central",Icon:Landmark},{label:"Bancos",Icon:Landmark},{label:"Empresas",Icon:Building2},{label:"Documentos",Icon:FileText},{label:"Veículos",Icon:Car},{label:"Justiça e Segurança",Icon:Shield},{label:"Forças Armadas",Icon:Shield},{label:"Configurações",Icon:Settings}];
-const money=(n:number)=>n.toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
-function WorldEconomy(){
- const player=usePlayer();const playerName=player.profile?.username??"Visitante";
- const [pName,setPName]=useState(""),[pFile,setPFile]=useState<File|null>(null),[pBusy,setPBusy]=useState(false);
- useEffect(()=>{if(player.profile)setPName(player.profile.username);},[player.profile]);
- const saveProfile=async(e:FormEvent)=>{e.preventDefault();if(pName.trim().length<3){notify("O nome precisa de pelo menos 3 letras.");return;}setPBusy(true);try{await player.saveProfile(pName,pFile);setPFile(null);notify("Perfil salvo.");}catch(err){notify(err instanceof Error?err.message:"Não foi possível salvar.");}finally{setPBusy(false);}};
- const role: Role = player.profile?.role === "super_admin" ? "admin" : player.profile?.role === "president" ? "president" : "player";
- const visibleMenu = role === "admin" ? menu.filter(item => ["Início","Perfil","Meu Governo","Economia","Câmbio","Banco Central","Bancos","Empresas","Documentos","Veículos","Justiça e Segurança"].includes(item.label)) : role === "president" ? menu.filter(item => ["Início","Perfil","Países","Meu Governo","Economia","Câmbio","Banco Central","Bancos","Empresas","Documentos","Veículos","Justiça e Segurança","Forças Armadas"].includes(item.label)) : menu.filter(item => ["Início","Perfil","Países","Meu Governo","Economia","Câmbio","Banco Central","Bancos","Empresas","Documentos","Veículos","Justiça e Segurança"].includes(item.label));
- const [active,setActive]=useState("Início"),[drawer,setDrawer]=useState(false),[notice,setNotice]=useState(""),[state,setState]=useState<GameState>(initialState),[loaded,setLoaded]=useState(false);
- const [recipient,setRecipient]=useState(""),[amount,setAmount]=useState("");
- useEffect(()=>{try{const saved=localStorage.getItem(STORE_KEY);if(saved){const parsed=JSON.parse(saved) as Partial<GameState>;setState({...initialState,...parsed});}}catch{localStorage.removeItem(STORE_KEY);}setLoaded(true);},[]);
- useEffect(()=>{if(loaded)localStorage.setItem(STORE_KEY,JSON.stringify(state));},[state,loaded]);
- const notify=useCallback((s:string)=>{setNotice(s);window.setTimeout(()=>setNotice(""),3000)},[]);
- const country=player.profile?.country_name?{name:player.profile.country_name,flag:player.profile.country_flag??"🌐"}:{name:"Não definido",flag:"🌐"};
- const roleName=role==="admin"?"Super Admin":role==="president"?"Presidente": "Cidadão";
- const go=(s:string)=>{setActive(s);setDrawer(false);};
- const transfer=(e:FormEvent)=>{e.preventDefault();const value=Number(amount.replace(",", "."));if(!recipient.trim()){notify("Informe o destinatário.");return;}if(!Number.isFinite(value)||value<=0){notify("Informe um valor válido.");return;}if(value>state.balance){notify("Saldo insuficiente para esta transferência.");return;}const tx:Tx={id:crypto.randomUUID(),kind:"Saída",description:"Transferência para "+recipient.trim(),amount:-value,date:new Date().toLocaleString("pt-BR")};setState(s=>({...s,balance:Number((s.balance-value).toFixed(2)),transactions:[tx,...s.transactions]}));setRecipient("");setAmount("");notify("Transferência simulada registrada no seu navegador.");};
- 
- const actions: [LucideIcon, string][] = role==="admin"?[[Shield,"Administração"],[Landmark,"Gerenciar bancos"],[Users,"Gerenciar jogadores"],[Activity,"Logs do sistema"],[Settings,"Configurações"]]:role==="president"?[[Coins,"Economia"],[FileText,"Documentos"],[Users,"Empresas"],[Shield,"Forças Armadas"],[Building2,"Infraestrutura"]]:[[Trophy,"Ranking global"],[ArrowDownUp,"Bancos"],[FileText,"Documentos"],[Building2,"Empresas"],[MapPin,"Países"]];
- const moduleDescription:Record<string,string>={"Ranking global":"Classificação demonstrativa. O ranking real depende de dados globais compartilhados.","Veículos":"Garagem e aquisição de veículos serão conectadas ao inventário do jogador.","Forças Armadas":"Estrutura militar e defesa nacional — módulo em desenvolvimento.","Configurações":"Preferências desta demonstração são armazenadas localmente no navegador.","Infraestrutura":"Projetos e obras nacionais serão conectados ao módulo econômico."};
- return <main className="we-app">
-  <header className="we-topbar"><button className="we-icon we-menu-button" onClick={()=>setDrawer(!drawer)} aria-label="Abrir menu">{drawer?<X/>:<Menu/>}</button><a className="we-brand" href="/"><span className="we-globe"><Globe2/></span><span><b>WORLD ECONOMY</b><small>SIMULADOR GLOBAL DE PAÍSES</small></span></a><nav className="we-topnav">{visibleMenu.slice(0,5).map(({label,Icon})=><button key={label} className={active===label?"on":""} onClick={()=>go(label)}><Icon/><span>{label}</span></button>)}</nav><div className="we-user"><button className="we-icon" onClick={()=>notify("Nenhuma notificação nova.")}><Bell/></button>{player.user?<button className="we-icon" style={{padding:0,gap:8,display:"flex"}} onClick={()=>go("Perfil")}><span className="we-avatar">{player.profile?.avatar_url?<img src={player.profile.avatar_url} alt="" style={{width:"100%",height:"100%",borderRadius:"50%",objectFit:"cover"}}/>:"🧑🏻‍💻"}</span><span style={{textAlign:"left"}}><b>{playerName}</b><small><i/> Conectado</small></span></button>:<Link className="we-primary" to="/auth">Entrar</Link>}</div></header>
-  <div className="we-layout"><aside className={`we-sidebar ${drawer?"show":""}`}><div className="we-side-brand"><span className="we-globe big"><Globe2/></span><b>WORLD ECONOMY</b><small>Simulação Global de Países</small></div><div className="we-role"><span>PERFIL DA CONTA</span><strong>{roleName}</strong></div>{visibleMenu.map(({label,Icon})=><button key={label} className={active===label?"active":""} onClick={()=>go(label)}><Icon/><span>{label==="Início"?"Painel Principal":label}</span></button>)}{role==="admin"&&<button className={active==="Administração"?"active":""} onClick={()=>go("Administração")}><Shield/><span>Administração</span></button>}<button onClick={async()=>{if(!player.user){notify("Você não está conectado.");return;}await player.signOut();notify("Você saiu da sua conta.");}}><LogOut/><span>Sair</span></button><div className="we-server"><i/> Ambiente de simulação<small>Dados da conta conectada</small></div></aside>
-  <section className="we-content">
-   {active==="Início"&&role==="admin"&&<Module title="Painel principal do Super Admin" subtitle="Indicadores oficiais, países, solicitações e atividades administrativas." Icon={Shield}><AdminGovernance notify={notify}/></Module>}{active==="Início"&&role!=="admin"&&<><section className={`we-hero hero-${role}`}><div className="we-hero-copy"><small>WORLD ECONOMY / {roleName.toUpperCase()}</small><h1>{role==="president"?"Painel Presidencial": `Bem-vindo(a), ${playerName}!`}</h1><p>Construa sua trajetória, administre recursos e escolha o futuro do seu país.</p><button className="we-primary" onClick={()=>go("Países")}>Explorar países <ArrowRight/></button></div><div className="we-hero-stamp"><Globe2/><b><CountryFlag value={country.flag} label={country.name}/> {country.name.toUpperCase()}</b><small><i/> Conta conectada ao WORLD ECONOMY</small></div></section>
-    <section className="we-metrics"><Metric Icon={Wallet} title="Sistema bancário" value="Contas e extratos" detail="Consulte seus dados bancários no módulo Bancos" tone="blue"/><Metric Icon={Flag} title="Seu país" value={country.name} detail="País associado à conta" tone="green"/><Metric Icon={Building2} title="Empresas" value="Integrado" detail="Cadastro persistente no Supabase" tone="gold"/><Metric Icon={FileText} title="ID permanente" value={player.profile?.player_number ? "#"+player.profile.player_number : "Pendente"} detail="Identificador oficial da conta" tone="purple"/></section>
-    <section className="we-dashboard"><div className="we-column"><Panel title="Contas e extratos bancários" Icon={Landmark}><div className="we-empty">Consulte saldo, contas e movimentações reais no módulo Bancos.</div><button className="we-primary" type="button" onClick={()=>go("Bancos")}>Abrir sistema bancário</button></Panel><Panel title="Vínculo nacional" Icon={Flag}><div className="we-empty">{player.profile?.country_name?`Você está registrado como membro de ${player.profile.country_name}.`:"Seu vínculo nacional será definido após o cadastro ou aprovação administrativa."}</div></Panel></div><div className="we-column"><Panel title="Acesso rápido" Icon={Zap}><div className="we-actions">{actions.map(([Icon,label])=><button key={label} onClick={()=>go(label==="Ranking global"?"Economia":label==="Administração"?"Administração":String(label))}><Icon/><span>{label}</span><ChevronRight/></button>)}</div></Panel><Panel title="Seu país em destaque" Icon={Globe2}><div className="we-country-feature"><b><CountryFlag value={country.flag} label={country.name}/></b><span><strong>{country.name}</strong><small>País atual do seu perfil</small></span></div>{player.profile?.country_spawn_x != null && player.profile?.country_spawn_y != null && player.profile?.country_spawn_z != null ? <div className="we-coordinates"><MapPin/><code>/tp {player.profile.country_spawn_x} {player.profile.country_spawn_y} {player.profile.country_spawn_z}</code><button onClick={()=>{navigator.clipboard?.writeText(`/tp ${player.profile?.country_spawn_x} ${player.profile?.country_spawn_y} ${player.profile?.country_spawn_z}`);notify("Comando copiado.")}}>Copiar</button></div> : player.profile?.global_spawn_x != null && player.profile?.global_spawn_y != null && player.profile?.global_spawn_z != null ? <div className="we-coordinates"><MapPin/><code>/tp {player.profile.global_spawn_x} {player.profile.global_spawn_y} {player.profile.global_spawn_z}</code><button onClick={()=>{navigator.clipboard?.writeText(`/tp ${player.profile?.global_spawn_x} ${player.profile?.global_spawn_y} ${player.profile?.global_spawn_z}`);notify("Comando copiado.")}}>Copiar</button></div> : <p className="we-note">As coordenadas oficiais ainda não foram cadastradas pelo Super Admin.</p>}</Panel></div></section></>}
-   {player.profile?.registration_status==="pending_presidency"&&<div style={{position:"fixed",inset:0,zIndex:1000,display:"grid",placeItems:"center",padding:20,background:"rgba(5,10,20,.98)"}}><section className="we-module" style={{width:"100%",maxWidth:520,textAlign:"center"}}><div className="we-module-heading" style={{justifyContent:"center"}}><span><Shield/></span><div><small>WORLD ECONOMY / CADASTRO</small><h1>Aguardando aprovação</h1><p>Sua solicitação de presidência foi enviada ao Super Admin.</p></div></div><p className="we-note">Você receberá acesso presidencial somente depois que o administrador aprovar a solicitação. Não é necessário enviar outra solicitação.</p><button className="we-primary" onClick={async()=>{await player.signOut();window.location.href="/auth";}}><LogOut/> Sair da conta</button></section></div>}{active==="Administração"&&role==="admin"&&<Module title="Administração global" subtitle="Cadastre países, abra ou feche solicitações de presidência e revise pedidos." Icon={Shield}><AdminGovernance notify={notify}/></Module>}{active==="Meu Governo"&&<Module title="Meu Governo" subtitle="Administração nacional, ministérios, nomeações e informações públicas do país." Icon={Landmark}>{player.profile?<GovernmentPortal profile={player.profile} notify={notify}/>:<div className="we-coming"><b>Entre na sua conta para consultar o governo.</b><Link className="we-primary" to="/auth">Entrar</Link></div>}</Module>}{active==="Perfil"&&<Module title="Seu perfil" subtitle="Nome de jogador e foto, salvos na sua conta." Icon={Users}>{!player.user?<div className="we-coming"><b>Entre para editar seu perfil</b><Link className="we-primary" to="/auth">Entrar ou criar conta</Link></div>:<form className="we-form" onSubmit={saveProfile}><div style={{display:"flex",alignItems:"center",gap:12}}><span className="we-avatar" style={{width:64,height:64,fontSize:36}}>{pFile?<img src={URL.createObjectURL(pFile)} alt="" style={{width:"100%",height:"100%",borderRadius:"50%",objectFit:"cover"}}/>:player.profile?.avatar_url?<img src={player.profile.avatar_url} alt="" style={{width:"100%",height:"100%",borderRadius:"50%",objectFit:"cover"}}/>:"🧑🏻‍💻"}</span><div><small>{player.user.email}</small><small>ID do jogador: #{player.profile?.player_number ?? "—"}</small><small>Função: {player.profile?.role === "super_admin" ? "Super Admin" : player.profile?.role === "president" ? "Presidente" : "Cidadão"}</small></div></div><label>Foto<input type="file" accept="image/*" onChange={e=>setPFile(e.target.files?.[0]??null)}/></label><label>Nome de jogador<input value={pName} onChange={e=>setPName(e.target.value)} maxLength={24} required/></label><button className="we-primary" type="submit" disabled={pBusy}>{pBusy?"Salvando...":"Salvar perfil"}</button></form>}{player.user && <CitizenPortal profileId={player.user.id} notify={notify}/>}</Module>}
-    {active==="Países"&&<Module title="Seu vínculo nacional" subtitle="A nacionalidade é vinculada à conta e não pode ser alterada pelo próprio jogador." Icon={Flag}><div className="we-country-feature"><b>{country.flag}</b><span><strong>{country.name}</strong><small>{player.profile?.role==="president"?"Presidente aprovado":player.profile?.role==="super_admin"?"Super Admin":"País associado à sua conta"}</small></span></div>{player.profile?.country_spawn_x != null && player.profile?.country_spawn_y != null && player.profile?.country_spawn_z != null ? <div className="we-coordinates"><MapPin/><code>/tp {player.profile.country_spawn_x} {player.profile.country_spawn_y} {player.profile.country_spawn_z}</code><button onClick={()=>{navigator.clipboard?.writeText(`/tp ${player.profile?.country_spawn_x} ${player.profile?.country_spawn_y} ${player.profile?.country_spawn_z}`);notify("Comando copiado.")}}>Copiar comando</button></div> : <p className="we-note">O ponto de nascimento deste país ainda não foi cadastrado.</p>}<p className="we-note">Para solicitar a presidência de um país é necessário realizar a solicitação no cadastro e aguardar a aprovação do Super Admin.</p></Module>}
-   {active==="Bancos"&&<Module title="Sistema Bancário" subtitle="Bancos comerciais, contas, transferências, crédito e extratos." Icon={Landmark}>{player.profile?<CommercialBankPortal profile={player.profile} notify={notify}/>:<div className="we-coming"><b>Entre na sua conta para acessar os bancos.</b><Link className="we-primary" to="/auth">Entrar</Link></div>}</Module>}
-   {active==="Empresas"&&<Module title="Empresas e mercado de trabalho" subtitle="Registro empresarial, vagas, contratos, folha salarial e vida profissional integrados ao sistema bancário." Icon={Building2}>{player.profile?<CompanyPortal profile={player.profile} notify={notify}/>:<div className="we-coming"><b>Entre para acessar empresas e empregos.</b><Link className="we-primary" to="/auth">Entrar</Link></div>}</Module>}
-   {active==="Veículos"&&<Module title="Veículos, concessionárias e habilitação" subtitle="Garagem, loja de veículos, documentação, licenciamento, autoescolas e carteira de habilitação integrados ao país e aos bancos." Icon={Car}>{player.profile ? <VehiclePortal profile={player.profile} notify={notify}/> : <div className="we-coming"><b>Entre na sua conta para acessar veículos e habilitação.</b><Link className="we-primary" to="/auth">Entrar</Link></div>}</Module>}
-   {active==="Justiça e Segurança"&&<Module title="Justiça, segurança e fiscalização" subtitle="Instituições nacionais, denúncias, ocorrências, fiscalização, processos, decisões e recursos da simulação." Icon={Shield}>{player.profile?<JusticePortal profile={player.profile} notify={notify}/>:<div className="we-coming"><b>Entre para acessar Justiça e Segurança.</b><Link className="we-primary" to="/auth">Entrar</Link></div>}</Module>}
-   {active==="Documentos"&&<Module title="Meus documentos" subtitle="Identidade digital e situação do passaporte dentro do WORLD ECONOMY." Icon={ScrollText}>{player.user ? <TravelDocumentPortal profile={player.profile!} notify={notify}/> : <div className="we-coming"><b>Entre para consultar seus documentos</b><Link className="we-primary" to="/auth">Entrar</Link></div>}</Module>}
-   {active==="Economia"&&<Module title={role==="admin"?"Economia Global":"Economia do Meu País"} subtitle="Indicadores, tributação, Tesouro Nacional e orçamento conectados ao banco de dados." Icon={ChartNoAxesCombined}>{player.profile?<EconomyPortal profile={player.profile} notify={notify}/>:<div className="we-coming"><b>Entre na sua conta para consultar a economia.</b><Link className="we-primary" to="/auth">Entrar</Link></div>}</Module>}
-   {active==="Banco Central"&&<Module title="Banco Central Nacional" subtitle="Emissão monetária, reservas, juros e política monetária com auditoria e aprovação." Icon={Landmark}>{player.profile?<CentralBankPortal profile={player.profile} notify={notify}/>:<div className="we-coming"><b>Entre na sua conta para consultar o Banco Central.</b><Link className="we-primary" to="/auth">Entrar</Link></div>}</Module>}
-   {active==="Câmbio"&&<Module title="Mercado Internacional de Câmbio" subtitle="Moedas nacionais, taxas oficiais e conversão informativa — sem movimentação financeira." Icon={Coins}>{player.profile?<CurrencyPortal profile={player.profile} notify={notify}/>:<div className="we-coming"><b>Entre na sua conta para consultar moedas e cotações.</b><Link className="we-primary" to="/auth">Entrar</Link></div>}</Module>}
-   {active==="Configurações"&&<Module title="Configurações da simulação" subtitle="Gerencie os dados armazenados neste navegador." Icon={Settings}><div className="we-settings-row"><div><b>Dados locais</b><small>Saldo, país, empresas e extrato deste dispositivo.</small></div><button className="we-danger" onClick={()=>{if(confirm("Apagar todos os dados desta demonstração neste navegador?")){setState(initialState);notify("Dados locais restaurados.");}}}>Restaurar demonstração</button></div><p className="we-note">Esta ação não afeta dados de outros usuários, pois ainda não existe backend compartilhado.</p></Module>}
-   {!["Perfil","Início","Países","Meu Governo","Bancos","Empresas","Documentos","Veículos","Justiça e Segurança","Economia","Câmbio","Banco Central","Configurações"].includes(active)&&<Module title={active} subtitle={moduleDescription[active]??"Este módulo está planejado para uma próxima etapa."} Icon={Activity}><div className="we-coming"><Globe2/><b>Módulo em preparação</b><p>O layout e a navegação estão prontos. As regras, permissões e persistência serão implementadas quando a estrutura de dados do jogo estiver definida.</p><button className="we-primary" onClick={()=>go("Início")}>Voltar ao painel</button></div></Module>}
-   <footer className="we-footer"><span>WORLD ECONOMY v1.1.0 | Simulação Global • Economia • Política</span><span><i/> Ambiente de simulação</span></footer>
-  </section></div>
-  <nav className="we-mobile-tabs">{visibleMenu.filter(item=>item.label!=="Perfil").slice(0,4).map(({label,Icon})=><button key={label} onClick={()=>go(label)}><Icon/><span>{label}</span></button>)}</nav>{notice&&<div className="we-toast"><span>✓</span>{notice}</div>}
- </main>;
+
+const steps = [
+  ["01", "Crie sua conta", "Cadastro com e-mail e senha."],
+  ["02", "Informe seu nickname Bedrock", "O nome exato da sua conta Xbox. Depois de confirmado, só o administrador pode alterar."],
+  ["03", "Pague a assinatura semanal", "Pagamento pelo Mercado Pago, com link individual."],
+  ["04", "Entre no servidor", "Com a assinatura ativa, seu nickname é liberado no servidor."],
+];
+
+function Home() {
+  return (
+    <AppShell>
+      <section className="grid gap-10 lg:grid-cols-[1.3fr_1fr]">
+        <div>
+          <p className="font-mono text-xs uppercase tracking-widest text-primary">Minecraft Bedrock</p>
+          <h1 className="mt-3 text-4xl font-semibold leading-tight tracking-tight sm:text-5xl">Um servidor. Acesso por assinatura semanal.</h1>
+          <p className="mt-4 max-w-xl text-lg text-muted-foreground">O OI CONNECT administra o acesso ao servidor Bedrock: sua conta, seu nickname e o status do seu pagamento em um só lugar.</p>
+          <div className="mt-8 flex flex-wrap gap-3">
+            <Link to="/auth" className="bg-primary px-5 py-2.5 font-medium text-primary-foreground hover:opacity-90">Criar conta ou entrar</Link>
+            <Link to="/conta" className="border px-5 py-2.5 hover:bg-accent">Minha conta</Link>
+          </div>
+        </div>
+        <aside className="border bg-surface p-5">
+          <h2 className="font-semibold">Situação da plataforma</h2>
+          <dl className="mt-3 text-sm">
+            <div className="flex justify-between border-b py-3"><dt className="text-muted-foreground">Contas</dt><dd>Disponível</dd></div>
+            <div className="flex justify-between border-b py-3"><dt className="text-muted-foreground">Assinaturas e pagamentos</dt><dd className="text-warning">Em preparação</dd></div>
+            <div className="flex justify-between py-3"><dt className="text-muted-foreground">Servidor</dt><dd className="text-warning">Não conectado</dd></div>
+          </dl>
+          <p className="mt-2 text-xs text-muted-foreground">O endereço de conexão será publicado quando o servidor estiver no ar.</p>
+        </aside>
+      </section>
+      <section className="mt-16">
+        <h2 className="text-xl font-semibold">Como funciona</h2>
+        <ol className="mt-6 grid border-t sm:grid-cols-2 lg:grid-cols-4">
+          {steps.map(([n, t, d]) => (
+            <li key={n} className="border-b p-5 sm:border-r">
+              <span className="font-mono text-sm text-primary">{n}</span>
+              <h3 className="mt-2 font-medium">{t}</h3>
+              <p className="mt-1 text-sm text-muted-foreground">{d}</p>
+            </li>
+          ))}
+        </ol>
+      </section>
+    </AppShell>
+  );
 }
-function CountryFlag({value,label}:{value:string;label:string}){return /^(https?:|data:image\/)/i.test(value)?<img src={value} alt={`Bandeira de ${label}`} style={{width:34,height:24,objectFit:"contain",verticalAlign:"middle"}}/>:<span>{value}</span>;}
-function Metric({Icon,title,value,detail,tone}:{Icon:LucideIcon;title:string;value:string;detail:string;tone:string}){return <article className="we-metric"><span className={`we-metric-icon ${tone}`}><Icon/></span><div><small>{title}</small><strong>{value}</strong><em>{detail}</em></div></article>}
-function Panel({title,Icon,children}:{title:string;Icon:LucideIcon;children:ReactNode}){return <section className="we-panel"><header><h2><Icon/>{title}</h2></header>{children}</section>}
-function Module({title,subtitle,Icon,children}:{title:string;subtitle:string;Icon:LucideIcon;children:ReactNode}){return <section className="we-module"><div className="we-module-heading"><span><Icon/></span><div><small>WORLD ECONOMY / MÓDULO</small><h1>{title}</h1><p>{subtitle}</p></div></div>{children}</section>}
-function Empty({text}:{text:string}){return <div className="we-empty">{text}</div>}
-function Transactions({items}:{items:Tx[]}){return <div className="we-list">{items.length===0?<Empty text="Nenhuma movimentação registrada."/>:items.map(t=><article key={t.id}><ArrowDownUp/><div><b>{t.description}</b><small>{t.date}</small></div><strong className={t.amount<0?"negative":"positive"}>{money(t.amount)}</strong></article>)}</div>}
