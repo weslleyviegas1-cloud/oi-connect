@@ -100,10 +100,10 @@ function AuthPage() {
           throw new Error("O nome na plataforma precisa ter entre 3 e 24 caracteres.");
         if (password.length < 8)
           throw new Error("A senha precisa ter pelo menos 8 caracteres.");
-        const { data, error } = await supabase.auth.signUp({
+        const { data: existingName, error: nameCheckError } = await supabase\n          .from("profiles").select("id").ilike("username", cleanName).maybeSingle();\n        if (nameCheckError) throw nameCheckError;\n        if (existingName) throw new Error("Esse nome já está em uso. Escolha outro nome na plataforma.");\n\n        const { data, error } = await supabase.auth.signUp({
           email: normalizedEmail,
           password,
-          options: { data: { username: cleanName } },
+          options: { data: { username: cleanName }, emailRedirectTo: window.location.origin + "/auth" },
         });
         if (error) throw error;
         if (!data.session) {
