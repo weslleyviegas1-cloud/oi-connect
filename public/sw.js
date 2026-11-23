@@ -2,12 +2,10 @@ const CACHE_NAME = "world-economy-static-v1";
 const PRECACHE_URLS = [
   "/offline.html",
   "/manifest.webmanifest",
-  "/icons/icon-192.png",
-  "/icons/icon-512.png",
-  "/icons/maskable-192.png",
-  "/icons/maskable-512.png",
-  "/icons/apple-touch-icon.png",
-  "/icons/mark.svg",
+  "/brand/world-economy-brand.webp",
+  "/icons/icon-192.svg",
+  "/icons/icon-512.svg",
+  "/icons/maskable-512.svg"
 ];
 
 self.addEventListener("install", event => {
@@ -40,7 +38,7 @@ self.addEventListener("fetch", event => {
     return;
   }
 
-  if (url.pathname.startsWith("/assets/") || url.pathname.startsWith("/icons/") || url.pathname === "/manifest.webmanifest") {
+  if (url.pathname.startsWith("/assets/") || url.pathname.startsWith("/icons/") || url.pathname.startsWith("/brand/") || url.pathname === "/manifest.webmanifest") {
     event.respondWith(caches.match(request).then(cached => {
       if (cached) return cached;
       return fetch(request).then(response => {
