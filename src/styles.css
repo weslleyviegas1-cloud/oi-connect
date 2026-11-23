@@ -391,3 +391,9 @@ body{margin:0;background:#050913;color:#f4f7ff}
  .we-citizen-event time{width:100%}
  .we-citizen-nav button{padding:9px 10px}
 }
+
+
+/* Hide the Lovable badge */
+#lovable-badge {
+  display: none !important;
+}
