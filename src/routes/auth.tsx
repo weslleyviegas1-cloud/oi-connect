@@ -58,6 +58,11 @@ function AuthPage() {
   return (
     <AppShell>
       <div className="mx-auto max-w-md border bg-surface p-6">
+        <div className="mb-6 flex flex-col items-center border-b pb-5 text-center">
+          <img src="/brand/world-economy-brand.webp" alt="WORLD ECONOMY" className="mb-3 size-40 border object-cover" />
+          <h1 className="text-xl font-semibold tracking-tight">WORLD ECONOMY</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Acesso ao servidor Minecraft Bedrock</p>
+        </div>
         <div className="grid grid-cols-2 border">
           {(["login", "signup"] as const).map(m => (
             <button key={m} type="button" onClick={() => { setMode(m); setMsg(""); }}

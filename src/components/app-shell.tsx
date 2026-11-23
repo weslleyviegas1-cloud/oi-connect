@@ -14,8 +14,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       <header className="border-b bg-surface">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3">
           <Link to="/" className="flex items-center gap-2 font-semibold tracking-tight">
-            <span className="grid size-7 place-items-center border border-primary bg-primary font-mono text-xs text-primary-foreground">WE</span>
-            WORLD ECONOMY
+            <img src="/brand/world-economy-brand.webp" alt="WORLD ECONOMY" className="size-12 shrink-0 border border-primary object-cover" />
+            <span className="leading-tight">WORLD ECONOMY</span>
           </Link>
           <nav className="order-last flex w-full flex-wrap items-center sm:order-none sm:w-auto sm:flex-1">
             <Link to="/" className={navClass} activeProps={active} activeOptions={{ exact: true }}>Início</Link>
@@ -41,7 +41,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </header>
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8">{children}</main>
       <footer className="border-t text-xs text-muted-foreground">
-        <div className="mx-auto max-w-6xl px-4 py-4">WORLD ECONOMY — plataforma de um servidor Minecraft Bedrock próprio.</div>
+        <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-4"><img src="/brand/world-economy-brand.webp" alt="" className="size-9 border object-cover" /><span>WORLD ECONOMY — plataforma de um servidor Minecraft Bedrock próprio.</span></div>
       </footer>
     </div>
   );

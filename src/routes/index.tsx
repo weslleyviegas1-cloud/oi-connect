@@ -25,6 +25,7 @@ function Home() {
     <AppShell>
       <section className="grid gap-10 lg:grid-cols-[1.3fr_1fr]">
         <div>
+          <img src="/brand/world-economy-brand.webp" alt="WORLD ECONOMY — identidade oficial" className="mb-6 w-full max-w-[280px] border object-cover" />
           <p className="font-mono text-xs uppercase tracking-widest text-primary">Minecraft Bedrock</p>
           <h1 className="mt-3 text-4xl font-semibold leading-tight tracking-tight sm:text-5xl">Um servidor. Acesso por assinatura semanal.</h1>
           <p className="mt-4 max-w-xl text-lg text-muted-foreground">O WORLD ECONOMY administra o acesso ao servidor Bedrock: sua conta, seu nickname e o status do seu pagamento em um só lugar.</p>
