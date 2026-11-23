@@ -40,7 +40,7 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-        run: supabase link --project-ref "minirkotshmgidgymndt" --password "$SUPABASE_DB_PASSWORD"
+        run: supabase link --project-ref "minirkotshmgidgymndt"
 
       - name: Apply pending migrations
         env:
