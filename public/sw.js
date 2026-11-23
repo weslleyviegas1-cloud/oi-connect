@@ -1,4 +1,4 @@
-const CACHE_NAME = "world-economy-static-v3";
+const CACHE_NAME = "world-economy-static-v4";
 const PRECACHE_URLS = [
   "/offline.html",
   "/manifest.webmanifest",
@@ -39,7 +39,7 @@ self.addEventListener("fetch", event => {
     return;
   }
 
-  if (url.pathname.startsWith("/assets/") || url.pathname.startsWith("/icons/") || url.pathname.startsWith("/brand/") || url.pathname === "/manifest.webmanifest") {
+  if (url.pathname.startsWith("/assets/") || url.pathname.startsWith("/icons/") || url.pathname.startsWith("/brand/") || url.pathname === "/manifest.webmanifest" || url.pathname === "/favicon.svg") {
     event.respondWith(caches.match(request).then(cached => {
       if (cached) return cached;
       return fetch(request).then(response => {
