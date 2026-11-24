@@ -1,11 +1,11 @@
-const CACHE_NAME = "world-economy-static-v4";
+const CACHE_NAME = "world-economy-static-v5";
 const PRECACHE_URLS = [
   "/offline.html",
   "/manifest.webmanifest",
   "/brand/world-economy-brand.webp",
-  "/icons/icon-192.svg",
-  "/icons/icon-512.svg",
-  "/icons/maskable-512.svg",
+  "/icons/icon-192.png",
+  "/icons/apple-touch-icon.png",
+  "/icons/maskable-192.png",
   "/favicon.svg"
 ];
 
