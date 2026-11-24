@@ -1,4 +1,4 @@
-const CACHE_NAME = "world-economy-static-v5";
+const CACHE_NAME = "world-economy-static-v6";
 const PRECACHE_URLS = [
   "/offline.html",
   "/manifest.webmanifest",
