@@ -1,9 +1,11 @@
 import type { ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { usePlayer } from "@/hooks/use-player";
+import { useInstall } from "@/hooks/use-pwa";
 
 export function AppShell({ children }: { children: ReactNode }) {
   const player = usePlayer();
+  const install = useInstall();
   const isOwner = player.profile?.role === "super_admin";
   const navClass = "px-3 py-2 text-sm text-muted-foreground hover:text-foreground";
   const active = { className: "px-3 py-2 text-sm text-foreground border-b-2 border-primary" };
@@ -12,27 +14,34 @@ export function AppShell({ children }: { children: ReactNode }) {
       <header className="border-b bg-surface">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3">
           <Link to="/" className="flex items-center gap-2 font-semibold tracking-tight">
-            <span className="grid size-7 place-items-center bg-primary font-mono text-xs text-primary-foreground">OI</span>
-            WORLD ECONOMY
+            <img src="/brand/world-economy-brand.webp" alt="WORLD ECONOMY" className="size-12 shrink-0 border border-primary object-cover" />
+            <span className="leading-tight">WORLD ECONOMY</span>
           </Link>
           <nav className="order-last flex w-full flex-wrap items-center sm:order-none sm:w-auto sm:flex-1">
             <Link to="/" className={navClass} activeProps={active} activeOptions={{ exact: true }}>Início</Link>
             <Link to="/conta" className={navClass} activeProps={active}>Minha conta</Link>
             {isOwner && <Link to="/admin" className={navClass} activeProps={active}>Administração</Link>}
           </nav>
-          {player.user ? (
-            <div className="flex items-center gap-3 text-sm">
-              <span className="hidden text-muted-foreground sm:inline">{player.user.email}</span>
-              <button type="button" onClick={() => void player.signOut()} className="border px-3 py-1.5 hover:bg-accent">Sair</button>
-            </div>
-          ) : (
-            <Link to="/auth" className="bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90">Entrar</Link>
-          )}
+          <div className="flex items-center gap-2">
+            {install.canPrompt && !install.installed && (
+              <button type="button" onClick={() => void install.promptInstall()} className="border border-primary px-3 py-1.5 text-xs font-medium text-primary hover:bg-accent">
+                Instalar aplicativo
+              </button>
+            )}
+            {player.user ? (
+              <div className="flex items-center gap-3 text-sm">
+                <span className="hidden text-muted-foreground sm:inline">{player.user.email}</span>
+                <button type="button" onClick={() => void player.signOut()} className="border px-3 py-1.5 hover:bg-accent">Sair</button>
+              </div>
+            ) : (
+              <Link to="/auth" className="border border-primary bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90">Entrar</Link>
+            )}
+          </div>
         </div>
       </header>
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8">{children}</main>
       <footer className="border-t text-xs text-muted-foreground">
-        <div className="mx-auto max-w-6xl px-4 py-4">WORLD ECONOMY — plataforma de um servidor Minecraft Bedrock próprio.</div>
+        <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-4"><img src="/brand/world-economy-brand.webp" alt="" className="size-9 border object-cover" /><span>WORLD ECONOMY — plataforma de um servidor Minecraft Bedrock próprio.</span></div>
       </footer>
     </div>
   );

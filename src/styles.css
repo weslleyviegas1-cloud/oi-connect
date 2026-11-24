@@ -1,16 +1,12 @@
 /*
- * Tailwind v4 entry: config lives here, with no tailwind.config.js or PostCSS plugin.
- * - Keep every @import in this top block, above @theme and the rest of the file. Install an
- *   npm package before @importing its CSS. Never @import a remote URL (web fonts, CDN CSS): the
- *   build resolves @import from the filesystem. Load those with a <link> in the head() of
- *   src/routes/__root.tsx and name the family in a --font-* token in @theme inline below.
+ * Tailwind v4 entry. Keep the visual system restrained: graphite surfaces,
+ * blue accent, square geometry and no decorative motion.
  */
 @import "tailwindcss" source(none);
 @source "../src";
 @import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
-
 
 @theme inline {
   --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
@@ -42,38 +38,46 @@
   --color-surface: var(--surface);
 }
 
-/* WORLD ECONOMY: grafite escuro com acento verde-musgo, cantos quase retos */
+/* WORLD ECONOMY: grafite escuro, azul técnico e geometria quase reta. */
 :root {
   color-scheme: dark;
-  --radius: 0.25rem;
-  --background: oklch(0.16 0.008 150);
-  --surface: oklch(0.19 0.009 150);
-  --foreground: oklch(0.94 0.01 120);
-  --card: oklch(0.19 0.009 150);
-  --card-foreground: oklch(0.94 0.01 120);
-  --popover: oklch(0.2 0.01 150);
-  --popover-foreground: oklch(0.94 0.01 120);
-  --primary: oklch(0.74 0.15 140);
-  --primary-foreground: oklch(0.17 0.03 145);
-  --secondary: oklch(0.24 0.01 150);
-  --secondary-foreground: oklch(0.94 0.01 120);
-  --muted: oklch(0.23 0.008 150);
-  --muted-foreground: oklch(0.68 0.015 130);
-  --accent: oklch(0.26 0.02 145);
-  --accent-foreground: oklch(0.94 0.01 120);
+  --radius: 0.2rem;
+  --background: oklch(0.16 0.008 255);
+  --surface: oklch(0.19 0.009 255);
+  --foreground: oklch(0.94 0.01 245);
+  --card: oklch(0.19 0.009 255);
+  --card-foreground: oklch(0.94 0.01 245);
+  --popover: oklch(0.2 0.01 255);
+  --popover-foreground: oklch(0.94 0.01 245);
+  --primary: oklch(0.72 0.14 250);
+  --primary-foreground: oklch(0.15 0.025 255);
+  --secondary: oklch(0.24 0.01 255);
+  --secondary-foreground: oklch(0.94 0.01 245);
+  --muted: oklch(0.23 0.008 255);
+  --muted-foreground: oklch(0.68 0.015 250);
+  --accent: oklch(0.26 0.025 250);
+  --accent-foreground: oklch(0.94 0.01 245);
   --destructive: oklch(0.65 0.19 27);
   --destructive-foreground: oklch(0.98 0 0);
   --warning: oklch(0.8 0.13 80);
-  --border: oklch(0.3 0.01 150);
-  --input: oklch(0.32 0.01 150);
-  --ring: oklch(0.74 0.15 140);
+  --border: oklch(0.3 0.012 255);
+  --input: oklch(0.32 0.012 255);
+  --ring: oklch(0.72 0.14 250);
 }
 
 @layer base {
   * { border-color: var(--color-border); }
   body {
+    min-height: 100dvh;
+    padding-bottom: env(safe-area-inset-bottom);
+    overscroll-behavior-y: contain;
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-family: var(--font-sans);
+  }
+  button, a, input, select, textarea { border-radius: 0.2rem; }
+  button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
   }
 }
